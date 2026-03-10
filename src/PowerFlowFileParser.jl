@@ -10,10 +10,16 @@ export PowerFlowDataNetwork
 export parse_file
 export CaseComparisonData
 export ComponentDiff
+export NonConformingLoadFlag
+export NonConformingReason
+export FLAGGED_IN_DATA
+export LOW_VARIATION
 export compile_base_case
 export compute_case_diff
 export unavailable_components
 export diff_summary
+export flag_nonconforming_loads
+export nonconforming_load_summary
 
 #################################################################################
 # Imports
@@ -23,6 +29,7 @@ import LinearAlgebra
 import DataStructures: SortedDict
 import Unicode: normalize
 import YAML
+import Printf: @sprintf
 
 import InfrastructureSystems
 const IS = InfrastructureSystems

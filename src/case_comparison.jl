@@ -13,6 +13,16 @@ const DEFAULT_IGNORED_FIELDS = Set([
     "index",          # positional index (not stable across files)
 ])
 
+"""Default coefficient of variation threshold below which a load is flagged as
+potentially non-conforming. A CV of 0.05 means demand varies by less than 5%
+of its mean across cases."""
+const DEFAULT_NONCONFORMING_CV_THRESHOLD = 0.05
+
+"""Default minimum absolute active power (MW) for a load to be considered in
+the non-conforming heuristic. Small loads are excluded since low variation on
+small values is not meaningful."""
+const DEFAULT_NONCONFORMING_MIN_PD = 1.0
+
 # --- Component identity helpers ---
 
 """
@@ -307,5 +317,162 @@ function diff_summary(ccd::CaseComparisonData; io::IO=stdout)
             end
             println(io, "  $comp_type: $n_missing missing, $n_status status changes, $n_other other diffs")
         end
+    end
+end
+
+# --- Non-conforming load detection ---
+
+"""
+Reason why a load was flagged as potentially non-conforming.
+"""
+@enum NonConformingReason begin
+    FLAGGED_IN_DATA       # conformity field == 0 in the parsed data
+    LOW_VARIATION         # demand varies less than the CV threshold across cases
+end
+
+"""
+A load flagged as potentially non-conforming.
+
+# Fields
+- `source_id`: The load's `source_id` vector.
+- `bus`: The bus number the load is connected to.
+- `reason`: Why the load was flagged ([`NonConformingReason`](@ref)).
+- `mean_pd`: Mean active power demand across all cases (MW, in system base).
+- `cv_pd`: Coefficient of variation of active power demand across cases
+  (`NaN` when `reason == FLAGGED_IN_DATA` and the load appears in a single case).
+- `pd_values`: Active power demand in each case, keyed by case name.
+"""
+struct NonConformingLoadFlag
+    source_id::Vector{Any}
+    bus::Int
+    reason::NonConformingReason
+    mean_pd::Float64
+    cv_pd::Float64
+    pd_values::Dict{String, Float64}
+end
+
+"""
+    flag_nonconforming_loads(ccd; cv_threshold, min_pd) -> Vector{NonConformingLoadFlag}
+
+Identify loads that are likely non-conforming based on two criteria:
+
+1. **Explicit flag**: Loads with `conformity == 0` in any case file (from PSS/E `SCALE`
+   field or MATPOWER annotation).
+2. **Low seasonal variation**: Active loads present in at least two cases where the
+   coefficient of variation (std / |mean|) of `pd` across cases falls below
+   `cv_threshold` and the absolute mean demand exceeds `min_pd`.
+
+Returns a vector of [`NonConformingLoadFlag`](@ref) sorted by descending mean demand.
+Each load appears at most once; if both criteria match, the explicit flag takes priority.
+"""
+function flag_nonconforming_loads(
+    ccd::CaseComparisonData;
+    cv_threshold::Float64=DEFAULT_NONCONFORMING_CV_THRESHOLD,
+    min_pd::Float64=DEFAULT_NONCONFORMING_MIN_PD,
+)::Vector{NonConformingLoadFlag}
+    # Collect per-load pd values and conformity flags across all cases
+    # Key: source_id string, Value: (source_id, bus, conformity_zero, pd_per_case)
+    load_info = Dict{String, @NamedTuple{
+        source_id::Vector{Any},
+        bus::Int,
+        conformity_zero::Bool,
+        pd_per_case::Dict{String, Float64},
+    }}()
+
+    for (case_name, case_pm) in ccd.cases
+        loads = get(case_pm.data, "load", nothing)
+        loads === nothing && continue
+        isempty(loads) && continue
+
+        for load in values(loads)
+            key = component_key(load)
+            pd = get(load, "pd", 0.0)::Float64
+            bus = get(load, "load_bus", 0)::Int
+            conformity = get(load, "conformity", 1)
+
+            if haskey(load_info, key)
+                info = load_info[key]
+                info.pd_per_case[case_name] = pd
+                if conformity == 0
+                    load_info[key] = (
+                        source_id=info.source_id,
+                        bus=info.bus,
+                        conformity_zero=true,
+                        pd_per_case=info.pd_per_case,
+                    )
+                end
+            else
+                load_info[key] = (
+                    source_id=load["source_id"],
+                    bus=bus,
+                    conformity_zero=(conformity == 0),
+                    pd_per_case=Dict{String, Float64}(case_name => pd),
+                )
+            end
+        end
+    end
+
+    flags = NonConformingLoadFlag[]
+
+    for (_, info) in load_info
+        pd_vals = collect(values(info.pd_per_case))
+        n = length(pd_vals)
+        mean_pd = n > 0 ? sum(pd_vals) / n : 0.0
+
+        # Criterion 1: explicitly flagged as non-conforming
+        if info.conformity_zero
+            cv = if n >= 2 && abs(mean_pd) > 0.0
+                std_pd = sqrt(sum((v - mean_pd)^2 for v in pd_vals) / (n - 1))
+                std_pd / abs(mean_pd)
+            else
+                NaN
+            end
+            push!(flags, NonConformingLoadFlag(
+                info.source_id, info.bus, FLAGGED_IN_DATA, mean_pd, cv, info.pd_per_case,
+            ))
+            continue
+        end
+
+        # Criterion 2: low variation heuristic (need at least 2 cases)
+        n < 2 && continue
+        abs(mean_pd) < min_pd && continue
+
+        std_pd = sqrt(sum((v - mean_pd)^2 for v in pd_vals) / (n - 1))
+        cv = std_pd / abs(mean_pd)
+        if cv < cv_threshold
+            push!(flags, NonConformingLoadFlag(
+                info.source_id, info.bus, LOW_VARIATION, mean_pd, cv, info.pd_per_case,
+            ))
+        end
+    end
+
+    sort!(flags; by=f -> -abs(f.mean_pd))
+    return flags
+end
+
+"""
+    nonconforming_load_summary(flags; io=stdout)
+
+Print a summary table of flagged non-conforming loads.
+"""
+function nonconforming_load_summary(
+    flags::Vector{NonConformingLoadFlag};
+    io::IO=stdout,
+)
+    isempty(flags) && (println(io, "No non-conforming loads flagged."); return)
+
+    n_explicit = count(f -> f.reason == FLAGGED_IN_DATA, flags)
+    n_heuristic = count(f -> f.reason == LOW_VARIATION, flags)
+    println(io, "Non-conforming load flags: $n_explicit explicit, $n_heuristic low-variation")
+
+    # Header
+    println(io, "  $(rpad("Source ID", 30)) $(lpad("Bus", 8)) $(lpad("Mean PD", 10)) $(lpad("CV", 8))  Reason")
+    println(io, "  $(repeat("─", 30)) $(repeat("─", 8)) $(repeat("─", 10)) $(repeat("─", 8))  $(repeat("─", 16))")
+
+    for f in flags
+        sid = join(f.source_id, "_")
+        cv_str = isnan(f.cv_pd) ? "N/A" : @sprintf("%.4f", f.cv_pd)
+        reason_str = f.reason == FLAGGED_IN_DATA ? "explicit (SCALE=0)" : "low variation"
+        println(io, "  $(rpad(sid, 30)) $(lpad(string(f.bus), 8)) $(lpad(@sprintf("%.2f", f.mean_pd), 10)) $(lpad(cv_str, 8))  $reason_str")
     end
 end
