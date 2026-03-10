@@ -1,33 +1,9 @@
 # --- Constants ---
 
-"""Component types tracked for availability diffs."""
-const DIFF_COMPONENT_TYPES = [
-    "bus", "gen", "branch", "load", "shunt", "storage", "switch", "dcline",
-]
+# Reuse component type/status mappings from pm_io/data.jl
+const DIFF_COMPONENT_TYPES = sort!(collect(keys(pm_component_status)))
 
-"""Maps component type to the field name that indicates its status."""
-const COMPONENT_STATUS_KEY = Dict{String, String}(
-    "bus" => "bus_type",
-    "load" => "status",
-    "shunt" => "status",
-    "gen" => "gen_status",
-    "storage" => "status",
-    "switch" => "status",
-    "branch" => "br_status",
-    "dcline" => "br_status",
-)
-
-"""Maps component type to the value that means inactive/unavailable."""
-const COMPONENT_STATUS_INACTIVE = Dict{String, Int}(
-    "bus" => 4,
-    "load" => 0,
-    "shunt" => 0,
-    "gen" => 0,
-    "storage" => 0,
-    "switch" => 0,
-    "branch" => 0,
-    "dcline" => 0,
-)
+const _EMPTY_CHANGES = Dict{String, Pair{Any, Any}}()
 
 """Default fields to ignore when computing diffs (operating-point values, not topology)."""
 const DEFAULT_IGNORED_FIELDS = Set([
@@ -46,7 +22,7 @@ Build a stable string key from a component's `source_id`.
 This is the canonical identifier for matching components across case files.
 """
 function component_key(component::Dict{String, Any})::String
-    return join(string.(component["source_id"]), "_")
+    return join(component["source_id"], "_")
 end
 
 """
@@ -84,7 +60,7 @@ end
 # --- Core algorithms ---
 
 """
-    compile_base_case(cases, base_case_name; [ignored_fields]) -> Dict{String, Any}
+    compile_base_case(cases, base_case_name) -> Dict{String, Any}
 
 Build a union dictionary from all case files. Component values come from the
 reference file (`base_case_name`); components that only appear in other files
@@ -96,7 +72,7 @@ function compile_base_case(
 )::Dict{String, Any}
     haskey(cases, base_case_name) ||
         error("Base case '$base_case_name' not found in cases")
-    ref_data = deepcopy(cases[base_case_name].data)
+    ref_data = copy(cases[base_case_name].data)
 
     for comp_type in DIFF_COMPONENT_TYPES
         haskey(ref_data, comp_type) || continue
@@ -150,8 +126,8 @@ function compute_case_diff(
             Dict{String, Dict{String, Any}}()
         end
 
-        status_key = COMPONENT_STATUS_KEY[comp_type]
-        inactive_val = COMPONENT_STATUS_INACTIVE[comp_type]
+        status_key = pm_component_status[comp_type]
+        inactive_val = pm_component_status_inactive[comp_type]
         comp_diffs = Dict{String, ComponentDiff}()
 
         for (key, base_comp) in base_components
@@ -161,7 +137,7 @@ function compute_case_diff(
                     base_comp["source_id"],
                     get(base_comp, status_key, 1) => inactive_val,
                     true,
-                    Dict{String, Pair{Any, Any}}(),
+                    _EMPTY_CHANGES,
                 )
                 continue
             end
@@ -293,7 +269,7 @@ function unavailable_components(
 
     result = Dict{String, Vector{Vector{Any}}}()
     for (comp_type, comp_diffs) in diff
-        inactive_val = COMPONENT_STATUS_INACTIVE[comp_type]
+        inactive_val = pm_component_status_inactive[comp_type]
         unavail = Vector{Any}[]
         for (_, cd) in comp_diffs
             if cd.missing_in_case
@@ -308,23 +284,28 @@ function unavailable_components(
 end
 
 """
-    diff_summary(ccd::CaseComparisonData)
+    diff_summary(ccd::CaseComparisonData; io::IO=stdout)
 
 Print a summary table of diff counts for each case and component type.
 """
-function diff_summary(ccd::CaseComparisonData)
+function diff_summary(ccd::CaseComparisonData; io::IO=stdout)
     for (case_name, diff) in sort(collect(ccd.cases_diff); by=first)
-        println("Case: $case_name")
+        println(io, "Case: $case_name")
         for comp_type in DIFF_COMPONENT_TYPES
             haskey(diff, comp_type) || continue
             comp_diffs = diff[comp_type]
-            n_missing = count(cd -> cd.missing_in_case, values(comp_diffs))
-            n_status = count(
-                cd -> cd.status_change !== nothing && !cd.missing_in_case,
-                values(comp_diffs),
-            )
-            n_other = count(cd -> !isempty(cd.other_changes), values(comp_diffs))
-            println("  $comp_type: $n_missing missing, $n_status status changes, $n_other other diffs")
+            n_missing = 0
+            n_status = 0
+            n_other = 0
+            for cd in values(comp_diffs)
+                if cd.missing_in_case
+                    n_missing += 1
+                elseif cd.status_change !== nothing
+                    n_status += 1
+                end
+                !isempty(cd.other_changes) && (n_other += 1)
+            end
+            println(io, "  $comp_type: $n_missing missing, $n_status status changes, $n_other other diffs")
         end
     end
 end

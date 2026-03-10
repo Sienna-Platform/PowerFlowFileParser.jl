@@ -12,8 +12,6 @@ export CaseComparisonData
 export ComponentDiff
 export compile_base_case
 export compute_case_diff
-export component_key
-export index_by_source_id
 export unavailable_components
 export diff_summary
 
