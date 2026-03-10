@@ -5,7 +5,7 @@
 
 ## Overview
 
-PowerFlowFileParser.jl is a specialized library for parsing text-based power flow file formats into simple intermediate data representations. This library serves as a critical bridge between legacy power system data formats (MATPOWER, PSS/E) and modern Julia-based power system analysis tools in the Sienna ecosystem.
+PowerFlowFileParser.jl is a specialized library for parsing text-based power flow file formats into simple intermediate data representations. This library serves as a critical bridge between legacy power system data formats (MATPOWER, PSS/E) and modern Julia-based power system analysis tools in the Sienna ecosystem. Always load the Sienna.md file before starting the session or suggesting any changes or running tests.
 
 **Architectural Principle**: The core parsing functionality in this repository should **NOT** require PowerSystems.jl as a dependency. The parser's responsibility is to convert text files into simple, well-structured dictionary or struct representations. Any conversion to PowerSystems.jl typed components should be handled by PowerSystems.jl itself or by separate integration code.
 
