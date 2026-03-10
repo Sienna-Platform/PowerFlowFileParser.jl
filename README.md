@@ -1,6 +1,6 @@
 # PowerFlowFileParser.jl
 
-[![main - CI](https://github.com/NREL-Sienna/PowerFlowFileParser.jl/workflows/main%20-%20CI/badge.svg)](https://github.com/NREL-Sienna/PowerFlowFileParser.jl/actions/workflows/main-tests.yml)
+[![Main - CI](https://github.com/NREL-Sienna/PowerFlowFileParser.jl/actions/workflows/main-tests.yml/badge.svg)](https://github.com/NREL-Sienna/PowerFlowFileParser.jl/actions/workflows/main-tests.yml)
 [![codecov](https://codecov.io/gh/NREL-Sienna/PowerFlowFileParser.jl/branch/main/graph/badge.svg)](https://codecov.io/gh/NREL-SIENNA/PowerFlowFileParser.jl)
 [![Documentation Build](https://github.com/NREL-Sienna/PowerFlowFileParser.jl/workflows/Documentation/badge.svg?)](https://nrel-sienna.github.io/PowerFlowFileParser.jl/stable)
 [<img src="https://img.shields.io/badge/slack-@Sienna/PowerFlowFileParser-sienna.svg?logo=slack">](https://join.slack.com/t/nrel-sienna/shared_invite/zt-glam9vdu-o8A9TwZTZqqNTKHa7q3BpQ)
