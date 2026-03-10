@@ -8,6 +8,14 @@ module PowerFlowFileParser
 export PowerModelsData
 export PowerFlowDataNetwork
 export parse_file
+export CaseComparisonData
+export ComponentDiff
+export compile_base_case
+export compute_case_diff
+export component_key
+export index_by_source_id
+export unavailable_components
+export diff_summary
 
 #################################################################################
 # Imports
@@ -32,6 +40,7 @@ include("powerflowdata_data.jl")
 include("power_models_data.jl")
 include("im_io.jl")
 include("pm_io.jl")
+include("case_comparison.jl")
 
 #################################################################################
 
