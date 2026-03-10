@@ -2012,7 +2012,11 @@ function _psse2pm_switch_breaker!(pm_data::Dict, pti_data::Dict, import_all::Boo
     if haskey(pti_data, "SWITCHING DEVICE")
         if pm_data["source_version"] == "35"
             for switching_device in pti_data["SWITCHING DEVICE"]
-                device_type = get(mapping_v35, switching_device["STYPE"], "other")
+                device_type = get(mapping_v35, switching_device["STYPE"], nothing)
+                if device_type === nothing
+                    @warn "Skipping unknown switching device STYPE=$(switching_device["STYPE"])"
+                    continue
+                end
                 discrete_branch_type =
                     device_type == "breaker" ? 1 : (device_type == "switch" ? 0 : 2)
 
@@ -2025,7 +2029,7 @@ function _psse2pm_switch_breaker!(pm_data::Dict, pti_data::Dict, import_all::Boo
                 )
 
                 if import_all
-                    _import_remaining_keys!(sub_data, branch)
+                    _import_remaining_keys!(sub_data, switching_device)
                 end
 
                 branch_isolated_bus_modifications!(pm_data, sub_data)

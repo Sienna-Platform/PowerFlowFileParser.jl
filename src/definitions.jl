@@ -7,6 +7,8 @@ const INFINITE_BOUND = 1e6
 const PS_MAX_LOG = parse(Int, get(ENV, "PS_MAX_LOG", "50"))
 
 const BRANCH_BUS_VOLTAGE_DIFFERENCE_TOL = 0.01
+const PARSER_TAP_RATIO_CORRECTION_TOL = 1e-4
+const ZERO_IMPEDANCE_REACTANCE_THRESHOLD = 1e-6
 
 # Winding names for three-winding transformers
 const WINDING_NAMES = Dict(
