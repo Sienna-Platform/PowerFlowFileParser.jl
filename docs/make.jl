@@ -13,7 +13,8 @@ pages = OrderedDict(
     ],
     "Explanation" => Any[
         "Architecture" => "explanation/arch_design.md",
-        "Main Data Structures" => "explanation/arch_design.md"
+        "Main Data Structures" => "explanation/data_structs.md",
+        "Case Comparison" => "explanation/case_comparison.md",
     ],
     "Reference" => Any[
         "Quick Reference" => "reference/stub.md",
