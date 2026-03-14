@@ -262,6 +262,21 @@ function CaseComparisonData(
     return CaseComparisonData(cases, base_case_name; ignored_fields=ignored_fields)
 end
 
+# --- Bus classification helpers ---
+
+"""True if the component's `source_id` indicates a star bus (3-winding transformer junction)."""
+_is_starbus(cd::ComponentDiff) = length(cd.source_id) >= 1 && cd.source_id[1] == "transformer"
+
+const _BUS_TYPE_LABELS = Dict(1 => "PQ", 2 => "PV", 3 => "Slack", 4 => "Isolated")
+_bus_type_label(bt) = get(_BUS_TYPE_LABELS, bt, "Unknown($bt)")
+
+"""
+    _bus_transition_label(status_change) -> String
+
+Format a bus_type transition as a readable string, e.g. "PV → Isolated".
+"""
+_bus_transition_label(sc::Pair) = "$(_bus_type_label(sc.first)) → $(_bus_type_label(sc.second))"
+
 # --- Query helpers ---
 
 """
@@ -294,9 +309,47 @@ function unavailable_components(
 end
 
 """
+    _print_bus_diff(io, comp_diffs)
+
+Print a detailed breakdown of bus diffs, separating regular buses from star buses
+and showing bus-type transition counts.
+"""
+function _print_bus_diff(io::IO, comp_diffs::Dict{String, ComponentDiff})
+    # Partition into regular vs star buses
+    regular = ComponentDiff[]
+    star = ComponentDiff[]
+    for cd in values(comp_diffs)
+        push!(_is_starbus(cd) ? star : regular, cd)
+    end
+
+    for (label, group) in [("bus (regular)", regular), ("bus (star/3W-xfmr)", star)]
+        isempty(group) && continue
+        n_missing = count(cd -> cd.missing_in_case, group)
+        n_other = count(cd -> !isempty(cd.other_changes), group)
+
+        # Tally bus_type transitions
+        transitions = Dict{String, Int}()
+        for cd in group
+            cd.missing_in_case && continue
+            cd.status_change === nothing && continue
+            key = _bus_transition_label(cd.status_change)
+            transitions[key] = get(transitions, key, 0) + 1
+        end
+        n_status = sum(values(transitions); init=0)
+
+        println(io, "  $label: $n_missing missing, $n_status status changes, $n_other other diffs")
+        for (tr, cnt) in sort(collect(transitions); by=last, rev=true)
+            println(io, "    $tr: $cnt")
+        end
+    end
+end
+
+"""
     diff_summary(ccd::CaseComparisonData; io::IO=stdout)
 
 Print a summary table of diff counts for each case and component type.
+Buses are split into regular buses and star buses (3-winding transformer junctions)
+with per-transition breakdowns.
 """
 function diff_summary(ccd::CaseComparisonData; io::IO=stdout)
     for (case_name, diff) in sort(collect(ccd.cases_diff); by=first)
@@ -304,6 +357,12 @@ function diff_summary(ccd::CaseComparisonData; io::IO=stdout)
         for comp_type in DIFF_COMPONENT_TYPES
             haskey(diff, comp_type) || continue
             comp_diffs = diff[comp_type]
+
+            if comp_type == "bus"
+                _print_bus_diff(io, comp_diffs)
+                continue
+            end
+
             n_missing = 0
             n_status = 0
             n_other = 0
@@ -318,6 +377,17 @@ function diff_summary(ccd::CaseComparisonData; io::IO=stdout)
             println(io, "  $comp_type: $n_missing missing, $n_status status changes, $n_other other diffs")
         end
     end
+end
+
+function Base.show(io::IO, ccd::CaseComparisonData)
+    n_cases = length(ccd.cases)
+    n_diff = length(ccd.cases_diff)
+    println(io, "CaseComparisonData: $n_cases cases, $n_diff compared to base")
+    diff_summary(ccd; io=io)
+end
+
+function Base.show(io::IO, ::MIME"text/plain", ccd::CaseComparisonData)
+    show(io, ccd)
 end
 
 # --- Non-conforming load detection ---
