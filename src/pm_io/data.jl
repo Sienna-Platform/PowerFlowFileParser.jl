@@ -1,5 +1,5 @@
 # tools for working with a PowerModels data dict structure
-
+#=
 ""
 function calc_branch_t(branch::Dict{String, <:Any})
     tap_ratio = branch["tap"]
@@ -115,7 +115,7 @@ function _calc_max_cost_index(data::Dict{String, <:Any})
 
     return max_index
 end
-
+=#
 "maps component types to status parameters"
 const pm_component_status = Dict(
     "bus" => "bus_type",
@@ -260,6 +260,7 @@ of the network data.  Significant multinetwork space savings can often be
 achieved by building application specific methods of building multinetwork
 with minimal data replication.
 """
+#=
 function replicate(
     sn_data::Dict{String, <:Any},
     count::Int;
@@ -268,7 +269,7 @@ function replicate(
     pm_global_keys = Set(["baseMVA", "per_unit"])
     return im_replicate(sn_data, count, union(global_keys, pm_global_keys))
 end
-
+=#
 ""
 function _apply_func!(data::Dict{String, <:Any}, key::String, func)
     if haskey(data, key)
@@ -434,7 +435,7 @@ function _make_per_unit!(data::Dict{String, <:Any}, mva_base::Real)
         end
     end
 end
-
+#=
 "Transforms network data into mixed-units (inverse of per-unit)"
 function make_mixed_units!(data::Dict{String, <:Any})
     if haskey(data, "per_unit") && data["per_unit"] == true
@@ -582,7 +583,7 @@ function _make_mixed_units!(data::Dict{String, <:Any})
         end
     end
 end
-
+=#
 ""
 function _rescale_cost_model!(comp::Dict{String, <:Any}, scale::Real)
     if "model" in keys(comp) && "cost" in keys(comp)
@@ -600,7 +601,7 @@ function _rescale_cost_model!(comp::Dict{String, <:Any}, scale::Real)
         end
     end
 end
-
+#=
 "computes the generator cost from given network data"
 function calc_gen_cost(data::Dict{String, <:Any})
     @assert("per_unit" in keys(data) && data["per_unit"])
@@ -1027,7 +1028,7 @@ function _calc_power_balance(data::Dict{String, <:Any})
 
     return Dict{String, Any}("bus" => deltas)
 end
-
+=#
 ""
 function check_conductors(data::Dict{String, <:Any})
     if ismultinetwork(data)
@@ -1167,7 +1168,7 @@ function correct_thermal_limits!(data::Dict{String, <:Any})
 
     return modified
 end
-
+#=
 "checks that each branch has a reasonable current rating-a, if not computes one"
 function correct_current_limits!(data::Dict{String, <:Any})
     if ismultinetwork(data)
@@ -1236,7 +1237,7 @@ function correct_current_limits!(data::Dict{String, <:Any})
 
     return modified
 end
-
+=#
 "checks that all parallel branches have the same orientation"
 function correct_branch_directions!(data::Dict{String, <:Any})
     if ismultinetwork(data)
@@ -1998,7 +1999,7 @@ function simplify_cost_terms!(data::Dict{String, <:Any})
 
     return (modified_gen, modified_dcline)
 end
-
+#=
 "ensures all polynomial costs functions have the same number of terms"
 function standardize_cost_terms!(data::Dict{String, <:Any}; order = -1)
     comp_max_order = 1
@@ -2860,7 +2861,7 @@ function _resolve_swithces!(data::Dict{String, <:Any})
     data["switch"] = Dict{String, Any}()
     return
 end
-
+=#
 """
 Move gentype and genfuel fields to be subfields of gen
 """

@@ -1772,14 +1772,15 @@ function _psse2pm_dcline!(pm_data::Dict, pti_data::Dict, import_all::Bool)
             sub_data["ac_setpoint_to"] = to_bus["ACSET"]
 
             # ALOSS, MINLOSS in kW, and BLOSS in kW/A. Divide by a 1000 to transform into MW, and divide by baseMVA to normalize to per-unit.
-            sub_data["converter_loss_from"] = LinearCurve(
+            sub_data["converter_loss_from"] = IS.LinearCurve(
                 from_bus["BLOSS"] / (1000.0 * baseMVA),
                 (from_bus["ALOSS"] + from_bus["MINLOSS"]) / (1000.0 * baseMVA),
             )
-            sub_data["converter_loss_to"] = LinearCurve(
+            sub_data["converter_loss_to"] = IS.LinearCurve(
                 to_bus["BLOSS"] / (1000.0 * baseMVA),
                 (to_bus["ALOSS"] + to_bus["MINLOSS"]) / (1000.0 * baseMVA),
             )
+            # since IS is an allowed dep in this repo, using IS.LinearCurve
 
             sub_data["pf"] = 0.0
             sub_data["pt"] = 0.0
