@@ -147,7 +147,7 @@ function _import_remaining_keys!(comp_dest::Dict, comp_src::Dict; exclude = [])
                 comp_dest[key] = v
             else
                 if key != "index"
-                    @warn("duplicate key $(key), please post an issue")
+                    #@warn("duplicate key $(key), please post an issue")
                 end
             end
         end
