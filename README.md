@@ -14,4 +14,4 @@ Contributions to the development and enhancement of PowerFlowFileParser.jl is we
 
 ## License
 
-PowerFlowFileParser.jl is released under a BSD [license](https://github.com/Sienna-Platform/PowerFlowFileParser.jl/blob/main/LICENSE). PowerFlowFileParser.jl has been developed as part of the Sienna platform at the U.S. Department of Energy's National Laboratory of the Rockies ([NLR](https://www.nlr.gov/))
+PowerFlowFileParser.jl is released under a BSD [license](https://github.com/Sienna-Platform/PowerFlowFileParser.jl/blob/main/LICENSE). PowerFlowFileParser.jl has been developed as part of the Sienna platform at the U.S. Department of Energy's National Laboratory of the Rockies ([NLR](https://www.nlr.gov/)), formerly known as NREL.
