@@ -28,14 +28,14 @@ makedocs(
     format = Documenter.HTML(
         prettyurls = haskey(ENV, "GITHUB_ACTIONS"),
         size_threshold = nothing,),
-    sitename = "github.com/NREL-Sienna/PowerFlowFileParser.jl",
+    sitename = "github.com/Sienna-Platform/PowerFlowFileParser.jl",
     authors = "Sienna Team",
     pages = Any[p for p in pages],
     draft = false,
 )
 
 deploydocs(
-    repo="github.com/NREL-Sienna/PowerFlowFileParser.jl",
+    repo="github.com/Sienna-Platform/PowerFlowFileParser.jl",
     target="build",
     branch="gh-pages",
     devbranch="main",
