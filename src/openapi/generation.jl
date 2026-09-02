@@ -189,6 +189,26 @@ function _gen_base_and_limits(pm_gen::Dict, gen_name::AbstractString, sys_mbase:
     ramp_limits
 end
 
+"""Thermal `:status` enum from a pm dict's `"gen_status"` flag: zero is `"OFFLINE"`,
+nonzero is `"ONLINE"`. `Bool <: Integer`, so this one method also covers PSS/E's
+`_determine_injector_status`, which sometimes stores a `Bool` rather than Matpower's `Int`
+column (the previous `Bool(...)` coercion this replaces)."""
+function _thermal_status(gen_name::AbstractString, gen_status::Integer)
+    if iszero(gen_status)
+        return "OFFLINE"
+    else
+        return "ONLINE"
+    end
+end
+
+function _thermal_status(gen_name::AbstractString, gen_status)
+    throw(
+        IS.DataFormatError(
+            "generator $gen_name has non-integer gen_status: $gen_status",
+        ),
+    )
+end
+
 """Thermal generator; the cost branch lives in `make_thermal_cost` (cost.jl)."""
 function make_thermal_generator!(
     sys::OpenAPISystem,
@@ -207,7 +227,7 @@ function make_thermal_generator!(
     set_value!(component, :id, register!(reg, "ThermalStandard", gen_name))
     set_value!(component, :name, gen_name)
     set_value!(component, :available, Bool(pm_gen["gen_status"]))
-    set_value!(component, :status, Bool(pm_gen["gen_status"]))
+    set_value!(component, :status, _thermal_status(gen_name, pm_gen["gen_status"]))
     set_value!(component, :bus, bus_id)
     set_value!(component, :active_power,
         _natural_value(pm_gen["pg"] * base_conversion, mbase),

@@ -61,7 +61,11 @@ end
         @test PFP.get_value(gen, :active_power_limits).max ≈
               d["pmax"] * base_conversion * mbase
         @test PFP.get_value(gen, :base_power) == mbase
-        @test PFP.get_value(gen, :status) == d["gen_status"]
+        if iszero(d["gen_status"])
+            @test PFP.get_value(gen, :status) == "OFFLINE"
+        else
+            @test PFP.get_value(gen, :status) == "ONLINE"
+        end
         @test PFP.get_value(gen, :prime_mover_type) == "OT"
         @test PFP.get_value(gen, :fuel) == "OTHER"
         bus = _bus_component(sys, d["gen_bus"])
@@ -105,6 +109,22 @@ end
     # so COMPONENT_BASE's pu = natural_MW / mbase collapses back to plain `pmax`.
     @test PFP.get_value(gen, :ramp_limits).up ≈ d["pmax"]
     @test PFP.get_value(gen, :ramp_limits).down ≈ d["pmax"]
+end
+
+@testset "an out-of-service Matpower generator maps to OFFLINE, an in-service one to ONLINE" begin
+    base_d = Dict{String, Any}(
+        "mbase" => 100.0, "pg" => 0.0, "qg" => 0.0, "pmax" => 10.0, "pmin" => 0.0,
+        "qmax" => 5.0, "qmin" => -5.0,
+    )
+    for (gen_status, expected) in ((0, "OFFLINE"), (1, "ONLINE"))
+        sys = PFP.OpenAPISystem(100.0)
+        reg = PFP.get_registry(sys)
+        bus = _register_test_bus!(sys)
+        d = merge(base_d, Dict{String, Any}("gen_status" => gen_status))
+        PFP.make_thermal_generator!(sys, reg, bus, d, "g1", 100.0)
+        gen = only(PFP.get_components(sys, "ThermalStandard"))
+        @test PFP.get_value(gen, :status) == expected
+    end
 end
 
 @testset "every 14-bus generator's real POLYNOMIAL cost (model=2) matches the hand-derived coefficients" begin
