@@ -122,8 +122,19 @@ function make_switched_admittance!(
         Int(get(d, "regulated_bus_number", 0)),
         "1",
     )
-    if haskey(d, "initial_status")
-        set_value!(component, :initial_status, d["initial_status"])
+    if haskey(d, "number_engaged")
+        set_value!(component, :number_engaged, d["number_engaged"])
+    end
+    # PSS/E BINIT. Always present in a SWITCHED SHUNT record (pti.jl defaults it to 0.0), so
+    # a parsed switched shunt always carries a solved admittance and downstream reads it
+    # rather than summing blocks -- which is what PSS/E itself does with the value.
+    if haskey(d, "solved_admittance")
+        set_value!(
+            component,
+            :solved_admittance,
+            d["solved_admittance"] * base_power,
+            "MVAr",
+        )
     end
     add_component!(sys, component)
     set_component_ext!(sys, component, get(d, "ext", Dict{String, Any}()))

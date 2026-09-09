@@ -146,11 +146,12 @@ end
     @test !haskey(pm_v33["bus"][3], "area_slack")
 end
 
-@testset "PSSE pre-v35 switched shunt blocks start out of service" begin
-    # Pre-v35 SWITCHED SHUNT records have no per-block status field, so the parser has to
-    # fabricate one. BINIT already carries the total in-service admittance into `bs`, so
-    # every block must start at zero whatever MODSW says; an in-service block would
-    # double-count the admittance BINIT has already contributed.
+@testset "PSSE pre-v35 switched shunts carry BINIT separately from the blocks" begin
+    # Pre-v35 SWITCHED SHUNT records have no per-block status field, so how many steps of
+    # each block are engaged is unknown and `number_engaged` is zero-filled to record that.
+    # BINIT is the device's actual admittance and now lands in its own `solved_admittance`
+    # key rather than in `bs`, so nothing has to be reconstructed from the blocks and there
+    # is no double-count to avoid. See PowerSystems.jl#1774.
     raw = read_fixture(FOURTEEN_BUS_FIXTURE)
     pm_data = parse_file(IOBuffer(raw); filetype = "raw")
     @test pm_data["source_version"] == "33"
@@ -158,7 +159,11 @@ end
     shunts = collect(values(pm_data["switched_shunt"]))
     @test !isempty(shunts)
     for shunt in shunts
-        @test shunt["initial_status"] == zeros(Int, length(shunt["y_increment"]))
+        @test shunt["number_engaged"] == zeros(Int, length(shunt["y_increment"]))
+        # BINIT no longer masquerades as a fixed base admittance.
+        @test shunt["gs"] == 0.0
+        @test shunt["bs"] == 0.0
+        @test haskey(shunt, "solved_admittance")
     end
 
     # Bus 101's record is MODSW=1, which an earlier mode-specific patch already zeroed.
@@ -171,7 +176,9 @@ end
     @test shunt_101["control_mode"] == 3
     @test shunt_101["step_number"] == [5]
     @test length(shunt_101["y_increment"]) == 1
-    @test shunt_101["initial_status"] == [0]
+    @test shunt_101["number_engaged"] == [0]
+    # BINIT = 50 MVAr on a 100 MVA base, per-unitized alongside bs/y_increment.
+    @test shunt_101["solved_admittance"] == 0.5
 end
 
 @testset "PSSE transformer CM=2 magnetizing susceptance is inductive" begin

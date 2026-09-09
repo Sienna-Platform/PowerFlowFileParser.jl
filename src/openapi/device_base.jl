@@ -138,6 +138,10 @@ const _DEVICEBASE_INSTANCE_DISPATCHED = Dict{Tuple{String, Symbol}, Symbol}(
     ("SwitchedAdmittance", :Y) => :skip,
     ("SwitchedAdmittance", :Y_increase) => :skip,
     ("SwitchedAdmittance", :admittance_limits) => :skip,
+    # BINIT (PowerSystems.jl#1774) is the same COMPONENT_MVAR-on-system-base quantity as `Y`
+    # and `Y_increase` above -- PSY's own to_openapi scales it by the SYSTEM base in both
+    # document conventions -- so it takes their classification, not a device-base conversion.
+    ("SwitchedAdmittance", :solved_admittance) => :skip,
     # parameter_units/dc_voltage_units/admittance_units always "NATURAL_UNITS" for the
     # PSS/E-native LCC/VSC fields (dc_branch.jl) -- fixed ohm/kV/S regardless of the
     # run's power_units, the mirror image of the COMPONENT_BASE cases above.

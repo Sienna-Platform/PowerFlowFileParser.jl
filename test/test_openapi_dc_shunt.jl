@@ -101,13 +101,16 @@ end
     )
     # The fixture's bus-101 SWITCHED SHUNT record declares BINIT = 50.00 and B1 = 100.00,
     # so both must read back in the RAW's own MVAr rather than the pm dict's 0.5/1.0 pu.
-    @test _matches_nt(PFP.get_value(shunt, :Y), (real = 0.0, imag = 50.0))
+    # BINIT is the SOLVED admittance, not a fixed base: it lands in `solved_admittance` and
+    # `Y` stays zero, since a PSS/E switched shunt has no fixed base term (#1774).
+    @test _matches_nt(PFP.get_value(shunt, :Y), (real = 0.0, imag = 0.0))
+    @test PFP.get_value(shunt, :solved_admittance) == 50.0
     @test only(y_increase).imag == 100.0
     @test _matches_nt(
         PFP.get_value(shunt, :admittance_limits),
         (min = d["admittance_limits"][1], max = d["admittance_limits"][2]),
     )
-    @test PFP.get_value(shunt, :initial_status) == d["initial_status"]
+    @test PFP.get_value(shunt, :number_engaged) == d["number_engaged"]
 end
 
 @testset "_switched_admittance_control_mode rejects an unrecognized MODSW code" begin

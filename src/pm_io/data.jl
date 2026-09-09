@@ -340,6 +340,9 @@ function _make_per_unit!(data::Dict{String, <:Any}, mva_base::Real)
             _apply_func!(sw_shunt, "gs", rescale)
             _apply_func!(sw_shunt, "bs", rescale)
             _apply_func!(sw_shunt, "y_increment", rescale)
+            # BINIT is an admittance like the two above and must be per-unitized with them;
+            # skipping it here would leave it a factor of baseMVA too large downstream.
+            _apply_func!(sw_shunt, "solved_admittance", rescale)
         end
     end
 
