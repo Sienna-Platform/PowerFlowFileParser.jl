@@ -897,7 +897,14 @@ function _psse2pm_shunt!(pm_data::Dict, pti_data::Dict, import_all::Bool, nb)
                 get(sub_data, "sw_id", "1"),
             )
             sub_data["gs"] = 0.0
-            sub_data["bs"] = pop!(switched_shunt, "BINIT")
+            # A PSS/E switched shunt has no fixed base admittance: the record carries only
+            # BINIT (the solved/initial total susceptance) and the per-block increments. BINIT
+            # is therefore NOT a `bs` -- it is the device's solved admittance, and goes to its
+            # own field so downstream can tell "solved total" from "fixed base + blocks"
+            # instead of inferring it from a zeroed block-status vector.
+            # See PowerSystems.jl#1774.
+            sub_data["bs"] = 0.0
+            sub_data["solved_admittance"] = pop!(switched_shunt, "BINIT")
             sub_data["status"] = _determine_injector_status(
                 switched_shunt,
                 pm_data,
@@ -944,18 +951,19 @@ function _psse2pm_shunt!(pm_data::Dict, pti_data::Dict, import_all::Bool, nb)
                 )
                 initial_ss_status_sorted =
                     sort(collect(keys(initial_ss_status)); by = x -> parse(Int, x[2:end]))
-                sub_data["initial_status"] =
+                sub_data["number_engaged"] =
                     [initial_ss_status[k] for k in initial_ss_status_sorted]
-                sub_data["initial_status"] =
-                    sub_data["initial_status"][1:length(sub_data["step_number"])]
+                sub_data["number_engaged"] =
+                    sub_data["number_engaged"][1:length(sub_data["step_number"])]
 
                 sub_data["ext"]["NREG"] = pop!(switched_shunt, "NREG")
             elseif pm_data["source_version"] ∈ ("30", "32", "33")
-                # Pre-v35 SWITCHED SHUNT records carry no per-block status field. BINIT
-                # already holds the total in-service admittance, which `bs` above passes
-                # on, so every block must start out of service whatever MODSW says —
-                # counting any of them in would double-count that same admittance.
-                sub_data["initial_status"] = zeros(Int, length(sub_data["y_increment"]))
+                # Pre-v35 SWITCHED SHUNT records carry no per-block status field, so how
+                # many steps of each block are engaged is simply unknown. The device's
+                # actual admittance is BINIT, now carried in `solved_admittance` above, so
+                # nothing has to be reconstructed from the blocks; zeros here record "no
+                # per-block information", not "every block is out of service".
+                sub_data["number_engaged"] = zeros(Int, length(sub_data["y_increment"]))
             else
                 error("Unsupported PSS(R)E source version: $(pm_data["source_version"])")
             end
