@@ -177,4 +177,8 @@ make_renewable_cost() =
 
 """Operating cost for an interruptible load: PSCB never derives one from pm data."""
 make_load_cost() =
-    PC.LoadCost(; cost_type = "LOAD", variable_operation_cost = _zero_cost_curve(), fixed = 0.0)
+    PC.LoadCost(;
+        cost_type = "LOAD",
+        variable_operation_cost = _zero_cost_curve(),
+        fixed = 0.0,
+    )

@@ -357,8 +357,13 @@ generically is exact — mirrors PowerSystems' own per-shape `_minmax_po_scaled`
 function _devicebase_scale(x::T, base::Float64) where {T <: IC.APIModel}
     return T(;
         (
-            f => (f === :additional_properties ? getfield(x, f) :
-                  _devicebase_scale(getfield(x, f), base)) for f in fieldnames(T)
+            f => (
+                if f === :additional_properties
+                    getfield(x, f)
+                else
+                    _devicebase_scale(getfield(x, f), base)
+                end
+            ) for f in fieldnames(T)
         )...,
     )
 end

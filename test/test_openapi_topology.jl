@@ -87,11 +87,15 @@ end
     @test PFP.get_value(zone, :base_power) == 100.0
 end
 
-@testset "Area gets a zero peak, matching the oracle's asymmetry with LoadZone" begin
+@testset "Area leaves peak absent, matching the oracle's asymmetry with LoadZone" begin
+    # Unlike LoadZone, `_ensure_area!` never sums bus loads onto an Area, and the new
+    # immutable model no longer defaults an unset optional field to zero (see "unset
+    # properties are absent, not null" in test_openapi_serialize.jl) — so the field
+    # this component never staged stays genuinely `Absent`, not a phantom 0.0.
     sys = PFP.build_openapi_system(fourteen_bus_pm_data())
     area = only(PFP.get_components(sys, "Area"))
-    @test PFP.get_value(area, :peak_active_power) == 0.0
-    @test PFP.get_value(area, :peak_reactive_power) == 0.0
+    @test PFP.get_value(area, :peak_active_power) === PFP.ABSENT
+    @test PFP.get_value(area, :peak_reactive_power) === PFP.ABSENT
     @test PFP.get_value(area, :base_power) == 100.0
 end
 

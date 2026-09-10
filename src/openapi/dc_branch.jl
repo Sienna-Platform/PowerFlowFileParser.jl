@@ -236,13 +236,20 @@ function make_vscline!(
     set_value!(
         component,
         :converter_loss_from,
-        PC.InputOutputCurve(;
-            curve_type = "INPUT_OUTPUT",
-            function_data = PC.InputOutputCurveFunctionData(
-                IC.LinearFunctionData(;
-                    function_type = "LINEAR",
-                    proportional_term = IS.get_proportional_term(d["converter_loss_from"]),
-                    constant_term = IS.get_constant_term(d["converter_loss_from"]),
+        PC.LossCurve(;
+            power_units = IC.UnitSystem("NATURAL_UNITS"),
+            value_curve = PC.LossValueCurve(
+                PC.InputOutputCurve(;
+                    curve_type = "INPUT_OUTPUT",
+                    function_data = PC.InputOutputCurveFunctionData(
+                        IC.LinearFunctionData(;
+                            function_type = "LINEAR",
+                            proportional_term = IS.get_proportional_term(
+                                d["converter_loss_from"],
+                            ),
+                            constant_term = IS.get_constant_term(d["converter_loss_from"]),
+                        ),
+                    ),
                 ),
             ),
         ),
@@ -253,7 +260,7 @@ function make_vscline!(
         (min = d["qminf"] * sys_mbase, max = d["qmaxf"] * sys_mbase), "MVAr")
     set_value!(component, :power_factor_weighting_fraction_from,
         d["power_factor_weighting_fraction_from"], "1")
-    set_value!(component, :remote_bus_control_from, _psse_remote_bus(d, "REMOT_FROM"))
+    _set_nullable!(component, :remote_bus_control_from, _psse_remote_bus(d, "REMOT_FROM"))
     set_value!(component, :rmpct_from, get(get(d, "ext", Dict()), "RMPCT_FROM", 100.0), "1")
     set_value!(component, :reactive_power_to, get(d, "qt", 0.0) * sys_mbase, "MVAr")
     if d["dc_voltage_control_to"]
@@ -274,13 +281,20 @@ function make_vscline!(
     set_value!(
         component,
         :converter_loss_to,
-        PC.InputOutputCurve(;
-            curve_type = "INPUT_OUTPUT",
-            function_data = PC.InputOutputCurveFunctionData(
-                IC.LinearFunctionData(;
-                    function_type = "LINEAR",
-                    proportional_term = IS.get_proportional_term(d["converter_loss_to"]),
-                    constant_term = IS.get_constant_term(d["converter_loss_to"]),
+        PC.LossCurve(;
+            power_units = IC.UnitSystem("NATURAL_UNITS"),
+            value_curve = PC.LossValueCurve(
+                PC.InputOutputCurve(;
+                    curve_type = "INPUT_OUTPUT",
+                    function_data = PC.InputOutputCurveFunctionData(
+                        IC.LinearFunctionData(;
+                            function_type = "LINEAR",
+                            proportional_term = IS.get_proportional_term(
+                                d["converter_loss_to"],
+                            ),
+                            constant_term = IS.get_constant_term(d["converter_loss_to"]),
+                        ),
+                    ),
                 ),
             ),
         ),
@@ -291,12 +305,31 @@ function make_vscline!(
         (min = d["qmint"] * sys_mbase, max = d["qmaxt"] * sys_mbase), "MVAr")
     set_value!(component, :power_factor_weighting_fraction_to,
         d["power_factor_weighting_fraction_to"], "1")
-    set_value!(component, :remote_bus_control_to, _psse_remote_bus(d, "REMOT_TO"))
+    _set_nullable!(component, :remote_bus_control_to, _psse_remote_bus(d, "REMOT_TO"))
     set_value!(component, :rmpct_to, get(get(d, "ext", Dict()), "RMPCT_TO", 100.0), "1")
     set_value!(component, :rated_dc_voltage, d["rated_dc_voltage"], "kV")
     set_value!(component, :base_power, sys_mbase, "MVA")
     add_component!(sys, component)
     set_component_ext!(sys, component, get(d, "ext", Dict{String, Any}()))
+    return
+end
+
+"""
+Assign a field whose declared type keeps `Nothing` as a real schema value (not merely
+the optional-field placeholder every generated field also carries): units.jl's
+`_concrete_field_type` always strips both `Absent` and `Nothing` before computing the
+single concrete type `_coerce` builds, on the assumption that `Nothing` is only ever that
+placeholder, so `_coerce` cannot construct a bare `nothing` for a field like
+`remote_bus_control_from`/`_to`, whose schema spells "regulates its own terminal bus" as an
+explicit `null` rather than an absent field. Only these two fields need this today; a
+non-`nothing` value still goes through the normal `set_value!` enforcement.
+"""
+function _set_nullable!(s::Staged, prop::Symbol, value)
+    if isnothing(value)
+        s.fields[prop] = nothing
+    else
+        set_value!(s, prop, value)
+    end
     return
 end
 

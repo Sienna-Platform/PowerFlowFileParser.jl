@@ -2,7 +2,7 @@ function _serialize_test_system(; power_units::AbstractString = "NATURAL_UNITS")
     sys = PFP.OpenAPISystem(100.0; power_units = power_units)
     reg = PFP.get_registry(sys)
 
-    bus = PFP.PO.ACBus()
+    bus = PFP.stage(PFP.PC.ACBus)
     PFP.set_value!(bus, :id, PFP.register_bus!(reg, 101, "Abel"))
     PFP.set_value!(bus, :number, 101)
     PFP.set_value!(bus, :name, "Abel")
@@ -11,13 +11,13 @@ function _serialize_test_system(; power_units::AbstractString = "NATURAL_UNITS")
     PFP.set_value!(bus, :base_voltage, 138.0, "kV")
     PFP.add_component!(sys, bus)
 
-    area = PFP.PO.Area()
+    area = PFP.stage(PFP.PC.Area)
     PFP.set_value!(area, :id, PFP.register!(reg, "Area", "1"))
     PFP.set_value!(area, :name, "1")
     PFP.set_value!(area, :base_power, PFP.get_base_power(sys), "MVA")
     PFP.add_component!(sys, area)
 
-    geo = PFP.IC.GeographicInfo()
+    geo = PFP.stage(PFP.IC.GeographicInfo)
     PFP.set_value!(geo, :id, PFP.next_id!(reg))
     PFP.set_value!(geo, :geo_json, Dict{String, Any}("type" => "Point"))
     PFP.add_supplemental_attribute!(sys, geo, PFP.get_value(bus, :id))
@@ -127,15 +127,21 @@ end
     @test read(a, String) == read(b, String)
 end
 
-@testset "every emitted component satisfies check_required" begin
+# OpenAPI.jl 1.x dropped the mutable-model runtime `check_required` came from; a
+# materialized component is a `Base.@kwdef struct` whose non-defaulted (i.e.
+# schema-required) fields Julia itself refuses to leave unassigned, so there is no longer
+# a separate required-field check to run after the fact. The equivalent guarantee under
+# the new runtime is that `_encode` — which schema-validates the full object, not just
+# field presence — succeeds on every emitted component.
+@testset "every emitted component round-trips through _encode" begin
     sys = _serialize_test_system()
     for type_name in PFP.component_type_names(sys)
         for component in PFP.get_components(sys, type_name)
-            @test OpenAPI.check_required(component)
+            @test OpenAPI.Runtime._encode(component) isa JSON.Object
         end
     end
     for association in PFP.get_document(sys).supplemental_attribute_associations
-        @test OpenAPI.check_required(association)
+        @test OpenAPI.Runtime._encode(association) isa JSON.Object
     end
 end
 

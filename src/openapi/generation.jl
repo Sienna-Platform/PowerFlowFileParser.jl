@@ -275,16 +275,18 @@ function _make_hydro_dispatch_body!(
     set_value!(component, :name, gen_name)
     set_value!(component, :available, Bool(pm_gen["gen_status"]))
     set_value!(component, :bus, bus_id)
-    # See make_thermal_generator! — operation_cost (a required oneOf) must be staged
-    # before any power-family field below.
+    # operation_cost and prime_mover_type are both required enum/oneOf fields: `_shadow`
+    # cannot placeholder either (an enum wrapper constructs positionally, not by keyword,
+    # and a oneOf has no single concrete type to default), so both must be staged before
+    # any power-family field below, each of which needs a shadow of its own.
     set_value!(component, :operation_cost, make_hydro_cost())
+    set_value!(component, :prime_mover_type, prime_mover_type(get(pm_gen, "type", "OT")))
     set_value!(component, :active_power,
         _natural_value(pm_gen["pg"] * base_conversion, mbase),
         "MW")
     set_value!(component, :reactive_power,
         _natural_value(pm_gen["qg"] * base_conversion, mbase), "MVAr")
     set_value!(component, :rating, _natural_value(rating, mbase), "MVA")
-    set_value!(component, :prime_mover_type, prime_mover_type(get(pm_gen, "type", "OT")))
     set_value!(component, :active_power_limits, _natural_value(active_power_limits, mbase),
         "MW")
     set_value!(component, :reactive_power_limits,
@@ -353,16 +355,18 @@ function make_renewable_dispatch!(
     set_value!(component, :name, gen_name)
     set_value!(component, :available, Bool(pm_gen["gen_status"]))
     set_value!(component, :bus, bus_id)
-    # See make_thermal_generator! — operation_cost (a required oneOf) must be staged
-    # before any power-family field below.
+    # operation_cost and prime_mover_type are both required enum/oneOf fields: `_shadow`
+    # cannot placeholder either (an enum wrapper constructs positionally, not by keyword,
+    # and a oneOf has no single concrete type to default), so both must be staged before
+    # any power-family field below, each of which needs a shadow of its own.
     set_value!(component, :operation_cost, make_renewable_cost())
+    set_value!(component, :prime_mover_type, prime_mover_type(get(pm_gen, "type", "OT")))
     set_value!(component, :active_power,
         _natural_value(pm_gen["pg"] * base_conversion, mbase),
         "MW")
     set_value!(component, :reactive_power,
         _natural_value(pm_gen["qg"] * base_conversion, mbase), "MVAr")
     set_value!(component, :rating, _natural_value(rating, mbase), "MVA")
-    set_value!(component, :prime_mover_type, prime_mover_type(get(pm_gen, "type", "OT")))
     set_value!(component, :reactive_power_limits,
         _natural_value(reactive_power_limits, mbase), "MVAr")
     set_value!(component, :power_factor, 1.0, "1")
@@ -389,6 +393,10 @@ function make_renewable_nondispatch!(
     set_value!(component, :name, gen_name)
     set_value!(component, :available, Bool(pm_gen["gen_status"]))
     set_value!(component, :bus, bus_id)
+    # prime_mover_type is a required enum field: `_shadow` cannot placeholder it (it
+    # constructs positionally, not by keyword), so it must be staged before any
+    # power-family field below, each of which needs a shadow of its own.
+    set_value!(component, :prime_mover_type, prime_mover_type(get(pm_gen, "type", "OT")))
     set_value!(component, :active_power,
         _natural_value(pm_gen["pg"] * base_conversion, mbase),
         "MW")
@@ -396,7 +404,6 @@ function make_renewable_nondispatch!(
         _natural_value(pm_gen["qg"] * base_conversion, mbase), "MVAr")
     set_value!(component, :rating,
         _natural_value(Float64(pm_gen["pmax"]) * base_conversion, mbase), "MVA")
-    set_value!(component, :prime_mover_type, prime_mover_type(get(pm_gen, "type", "OT")))
     set_value!(component, :power_factor, 1.0, "1")
     set_value!(component, :base_power, mbase, "MVA")
     add_component!(sys, component)

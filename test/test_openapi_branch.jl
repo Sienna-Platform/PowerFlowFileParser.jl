@@ -28,7 +28,7 @@ end
 `_make_transformer_circuit!` maker directly rather than through `build_openapi_system`."""
 function _register_bus!(sys::PFP.OpenAPISystem, number::Int, name::AbstractString)
     reg = PFP.get_registry(sys)
-    bus = PFP.PO.ACBus()
+    bus = PFP.stage(PFP.PC.ACBus)
     id = PFP.register_bus!(reg, number, name)
     PFP.set_value!(bus, :id, id)
     PFP.set_value!(bus, :number, number)

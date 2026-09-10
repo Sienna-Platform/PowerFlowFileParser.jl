@@ -15,7 +15,7 @@ end
 maker directly rather than through `build_openapi_system`."""
 function _register_test_bus!(sys::PFP.OpenAPISystem)
     reg = PFP.get_registry(sys)
-    bus = PFP.PO.ACBus()
+    bus = PFP.stage(PFP.PC.ACBus)
     id = PFP.register_bus!(reg, 1, "b1")
     PFP.set_value!(bus, :id, id)
     PFP.set_value!(bus, :number, 1)
@@ -139,10 +139,12 @@ end
         # PowerTableDataParser's own test convention.
         cost = PFP.get_value(gen, :operation_cost).value
         @test cost.fixed == 0.0
-        @test cost.start_up == 0.0
+        @test cost.start_up.value == 0.0
         @test cost.shut_down == 0.0
-        variable = cost.variable_operation_cost
-        @test variable.power_units == "COMPONENT_BASE"
+        # variable_operation_cost is a `ProductionVariableCostCurve` oneOf wrapper
+        # (`Union{CostCurve, FuelCurve}`) now, one `.value` deep from the CostCurve itself.
+        variable = cost.variable_operation_cost.value
+        @test variable.power_units.value == "COMPONENT_BASE"
         function_data = variable.value_curve.value.function_data.value
         @test function_data.quadratic_term == 0.0
         @test function_data.proportional_term == 1.0
@@ -163,7 +165,7 @@ end
         c1, c0 = d["cost"]
         expected_proportional = c1 / sys_mbase
         cost = PFP.get_value(gen, :operation_cost).value
-        fd = cost.variable_operation_cost.value_curve.value.function_data.value
+        fd = cost.variable_operation_cost.value.value_curve.value.function_data.value
         @test fd.proportional_term ≈ expected_proportional
         @test fd.constant_term == 0.0
         @test cost.fixed == 0.0
@@ -189,7 +191,7 @@ end
 
         cost = PFP.get_value(gen, :operation_cost).value
         @test cost.fixed ≈ fixed
-        fd = cost.variable_operation_cost.value_curve.value.function_data.value
+        fd = cost.variable_operation_cost.value.value_curve.value.function_data.value
         @test fd.function_type == "PIECEWISE_LINEAR"
         @test length(fd.points) == length(points)
         for (p, (x, y)) in zip(fd.points, points)
@@ -210,10 +212,13 @@ end
         100.0,
     )
     @test cost.fixed == 0.0
-    @test cost.start_up == 0.0
+    @test cost.start_up.value == 0.0
     @test cost.shut_down == 0.0
-    @test cost.variable_operation_cost.power_units == "NATURAL_UNITS"
-    fd = cost.variable_operation_cost.value_curve.value.function_data.value
+    # variable_operation_cost is a `ProductionVariableCostCurve` oneOf wrapper
+    # (`Union{CostCurve, FuelCurve}`) now, one `.value` deep from the CostCurve itself.
+    cost_curve = cost.variable_operation_cost.value
+    @test cost_curve.power_units.value == "NATURAL_UNITS"
+    fd = cost_curve.value_curve.value.function_data.value
     @test fd.function_type == "LINEAR"
     @test fd.proportional_term == 0.0
     @test fd.constant_term == 0.0
@@ -392,8 +397,19 @@ end
     # never reach a document containing it without first hitting the recorded VSC
     # voltage-control gap (`_vsc_voltage_control_unsupported`), so it is exactly the kind
     # of "not yet classified" field the guard exists for.
+    vsc = PFP.stage(PFP.PO.TwoTerminalVSCLine)
+    PFP.set_value!(vsc, :id, 1)
+    PFP.set_value!(vsc, :name, "vsc")
+    PFP.set_value!(vsc, :available, true)
+    PFP.set_value!(vsc, :arc, 0)
+    PFP.set_value!(vsc, :power_units, "NATURAL_UNITS")
+    PFP.set_value!(vsc, :active_power_flow, 0.0, "MW")
+    PFP.set_value!(vsc, :active_power_limits_from, (min = 0.0, max = 0.0), "MW")
+    PFP.set_value!(vsc, :active_power_limits_to, (min = 0.0, max = 0.0), "MW")
+    PFP.set_value!(vsc, :rating, 0.0, "MVA")
+    PFP.set_value!(vsc, :base_power, 100.0, "MVA")
     @test_throws ErrorException PFP._devicebase_classification(
-        PFP.PO.TwoTerminalVSCLine(),
+        PFP.materialize(vsc),
         "TwoTerminalVSCLine",
         :dc_setpoint_from,
     )
