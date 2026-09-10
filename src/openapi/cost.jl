@@ -95,7 +95,7 @@ Thermal generation cost from a MATPOWER-shaped `pm_gen`'s `"model"`/`"cost"` fie
 Model `1` is PIECEWISE_LINEAR, `2` is POLYNOMIAL (MATPOWER manual Table B-4). A generator
 carrying neither key gets a zero natural-unit cost curve, matching PSCB's own fallback
 (and its warning). The resulting variable cost is `COMPONENT_BASE` per-unit — PSCB's
-`CostCurve(_, IS.DU)` — never natural units, unlike the zero-cost fallback.
+`CostCurve(_, IS.CU)` — never natural units, unlike the zero-cost fallback.
 """
 function make_thermal_cost(gen_name::AbstractString, pm_gen::Dict, sys_mbase::Float64)
     if !haskey(pm_gen, "model")
