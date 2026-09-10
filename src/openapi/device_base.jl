@@ -8,7 +8,7 @@
 # divides each power-family field by the component's own device base (or, for a type with
 # no device base of its own, the system base) — the exact inverse of what PowerSystems' own
 # `NaturalUnit` importer does (`src/openapi/import_handwritten.jl`/`src/models/generated/*.jl` there),
-# so that PowerSystems' `DeviceBaseUnit` importer reading this document's numbers directly
+# so that PowerSystems' `ComponentBaseUnit` importer reading this document's numbers directly
 # reproduces the same System a `NATURAL_UNITS` document produces through `NaturalUnit`.
 #
 # ── Field classification, mechanical path ───────────────────────────────────────
@@ -26,7 +26,7 @@
 #     device base exactly like its MW siblings in every PowerSystems converter checked).
 #
 # Two cases the mechanical rule cannot see, found by diffing PowerSystems'
-# `to_openapi(..., ::DeviceBaseUnit)` against `::NaturalUnit)` field-by-field in
+# `to_openapi(..., ::ComponentBaseUnit)` against `::NaturalUnit)` field-by-field in
 # `export_handwritten.jl`:
 #   - `Area`/`LoadZone.peak_active_power`/`peak_reactive_power` (and
 #     `TransmissionInterface.active_power_flow_limits`, not reachable from this package's
@@ -58,7 +58,7 @@
 #      FIXED value for these discriminators, independent of the run's `power_units` —
 #      confirmed by grepping every `set_value!(_, :*_units, ...)` call in this directory —
 #      so the field's own representation never depends on the run's convention either,
-#      and PowerSystems' own converters confirm it is identical between `DeviceBaseUnit`/
+#      and PowerSystems' own converters confirm it is identical between `ComponentBaseUnit`/
 #      `NaturalUnit` in every case checked. These are `:skip`.
 #   2. A **natural-unit choice** among sibling units of the SAME quantity
 #      (`EnergyReservoirStorage.energy_units`: "MWH" vs "MWMIN", both genuine energy units)
@@ -121,11 +121,11 @@ const _DEVICEBASE_INSTANCE_DISPATCHED = Dict{Tuple{String, Symbol}, Symbol}(
     # (Voltage/pu for VOLTAGE-family objectives, MW/MVAr for ACTIVE_POWER_FLOW/
     # REACTIVE_POWER_FLOW/CONTROL_OF_DC_LINE-family objectives) -- but PowerSystems' own
     # to_openapi calls the SAME unscaled `_minmax_po(get_controlled_quantity_limits(circuit))`
-    # in BOTH the DeviceBaseUnit and NaturalUnit methods (export_handwritten.jl:166-167 and
+    # in BOTH the ComponentBaseUnit and NaturalUnit methods (export_handwritten.jl:166-167 and
     # :195-196) -- i.e. PSY never scales this field by base_power regardless of document
     # convention OR control_objective. A first cut of this registry made it `:dynamic`
     # (converting the power-flow-family branches) purely from the schema's declared
-    # quantity, without checking PSY's actual DU/NU pair -- wrong, and invisible on the
+    # quantity, without checking PSY's actual CU/NU pair -- wrong, and invisible on the
     # 14-bus fixture because every circuit there is control_objective = "FIXED" (a
     # VOLTAGE-family, already-`:skip` branch either way). Static `:skip`, matching
     # `control_limits`.

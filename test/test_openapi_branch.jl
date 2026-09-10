@@ -314,7 +314,7 @@ end
     # COMPONENT_BASE registry classify it `:dynamic` (converting the power-flow-family
     # branches by the circuit's own base_power). That was wrong: PowerSystems' own
     # `to_openapi` calls the SAME unscaled `_minmax_po(get_controlled_quantity_limits(...))`
-    # in BOTH `DeviceBaseUnit` and `NaturalUnit` (export_handwritten.jl:166-167, :195-196) —
+    # in BOTH `ComponentBaseUnit` and `NaturalUnit` (export_handwritten.jl:166-167, :195-196) —
     # this field never scales with the document convention, regardless of
     # `control_objective`. Invisible on the 14-bus fixture because every circuit there is
     # `control_objective = "FIXED"` (already `:skip` either way) — this test uses

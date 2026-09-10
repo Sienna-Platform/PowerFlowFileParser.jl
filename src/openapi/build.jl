@@ -74,7 +74,7 @@ a caller never mistakes a partial document for a complete one.
 values as computed; `"COMPONENT_BASE"` additionally runs [`apply_device_base_conversion!`](@ref)
 over the built document, converting every power-family field into per-unit on the
 component's own device base (or the system base, for the few types with none of their own) —
-the document PowerSystems' `DeviceBaseUnit` importer expects. Keyword arguments — the
+the document PowerSystems' `ComponentBaseUnit` importer expects. Keyword arguments — the
 `*_name_formatter`s the PSS/E metadata reimport path needs — are threaded through to every
 reader unconsumed.
 """

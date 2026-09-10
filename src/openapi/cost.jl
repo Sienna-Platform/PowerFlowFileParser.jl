@@ -19,7 +19,7 @@ function _zero_vom_cost()
 end
 
 """A `CostCurve` with a zero linear value curve, matching PSCB's `zero(CostCurve)`
-(`NaturalUnit`, not `DeviceBaseUnit`) — the fallback for every generator/load type that
+(`NaturalUnit`, not `ComponentBaseUnit`) — the fallback for every generator/load type that
 has no cost data to read from a PowerModels dict."""
 function _zero_cost_curve()
     return PC.CostCurve(;
