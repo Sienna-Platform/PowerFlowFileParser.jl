@@ -117,7 +117,7 @@ end
     @test PFP.get_value(circuit, :base_voltage_primary) == d["base_voltage_from"]
     @test PFP.get_value(circuit, :base_voltage_secondary) == d["base_voltage_to"]
     # rating is per-unit-on-system-base in the raw pm dict (PowerModels' generic branch
-    # correction) but the circuit's rating field is device-base pu (PSY.DU); this fixture
+    # correction) but the circuit's rating field is component-base pu (PSY.CU); this fixture
     # cannot distinguish the two bases (base_power == sys_mbase) — the synthetic cases in
     # test_openapi_transformer_discriminators.jl do.
     @test PFP.get_value(circuit, :rating) ≈ d["rate_a"] * d["base_power"]
@@ -314,7 +314,7 @@ end
     # COMPONENT_BASE registry classify it `:dynamic` (converting the power-flow-family
     # branches by the circuit's own base_power). That was wrong: PowerSystems' own
     # `to_openapi` calls the SAME unscaled `_minmax_po(get_controlled_quantity_limits(...))`
-    # in BOTH `DeviceBaseUnit` and `NaturalUnit` (export_handwritten.jl:166-167, :195-196) —
+    # in BOTH `ComponentBaseUnit` and `NaturalUnit` (export_handwritten.jl:166-167, :195-196) —
     # this field never scales with the document convention, regardless of
     # `control_objective`. Invisible on the 14-bus fixture because every circuit there is
     # `control_objective = "FIXED"` (already `:skip` either way) — this test uses
