@@ -134,9 +134,12 @@ const _DEVICEBASE_INSTANCE_DISPATCHED = Dict{Tuple{String, Symbol}, Symbol}(
     # confirms this is fixed-natural, multiplied by the SYSTEM base in both document
     # conventions (export_handwritten.jl's FixedAdmittance section), not document-unit-
     # system-governed at all (same shape as Area/LoadZone's peak fields).
-    ("FixedAdmittance", :Y) => :skip,
-    ("SwitchedAdmittance", :Y) => :skip,
-    ("SwitchedAdmittance", :Y_increase) => :skip,
+    # `FixedAdmittance.Y` is lowercase `y` now (the JSON key stays `Y`); `SwitchedAdmittance`
+    # dropped its own fixed `Y` field entirely, replaced by `solved_admittance` (same
+    # admittance_units-discriminated unit as `y_increase`, so the same `:skip`).
+    ("FixedAdmittance", :y) => :skip,
+    ("SwitchedAdmittance", :y_increase) => :skip,
+    ("SwitchedAdmittance", :solved_admittance) => :skip,
     ("SwitchedAdmittance", :admittance_limits) => :skip,
     # BINIT (PowerSystems.jl#1774) is the same COMPONENT_MVAR-on-system-base quantity as `Y`
     # and `Y_increase` above -- PSY's own to_openapi scales it by the SYSTEM base in both
@@ -255,44 +258,50 @@ end
 
 """A copy of `o` with `power_units` set to `power_units` and every other field held
 exactly as-is — probes a field's instance dispatch without mutating the real component
-(see [`_power_units_only_dispatch`](@ref)). `nothing` passes the generated constructor's
-own enum validation (unlike an invalid string, which would raise `OpenAPI.ValidationException`
-there instead of letting the probe reach the declared-quantity method it targets)."""
+(see [`_power_units_only_dispatch`](@ref))."""
 function _with_power_units(
     o::T,
-    power_units::Union{Nothing, AbstractString},
-) where {T <: OpenAPI.APIModel}
+    power_units::AbstractString,
+) where {T <: IC.APIModel}
     return T(;
         (
-            f => (f === :power_units ? power_units : getfield(o, f)) for f in fieldnames(T)
+            f => (f === :power_units ? IC.UnitSystem(power_units) : getfield(o, f))
+            for f in fieldnames(T)
         )...,
     )
 end
 
 """
-Whether `prop`'s instance-level dispatch actually branches on `power_units`, rather than
-depending only on some other, unaccounted-for discriminator that happens to resolve
-today regardless of what `power_units` holds. `representative`'s own fields (other than
-`power_units`) are already whatever the real reader that built it set them to; poisoning
-`power_units` alone to `nothing` and checking whether resolution fails BECAUSE of it (the
-schema's generated error always names the deciding field, e.g. `"...no unit declared for
-power_units=..."`) is the only test that distinguishes the two without requiring every one
-of this schema's other discriminators to be listed here. Every ordinary power-family field
-across the 32 power-bearing types resolves this way (confirmed against the current
-schema); a field genuinely gated by another discriminator (`power_mode`,
-`parameter_units`, `dc_control_from`, ...) instead must go through the explicit
-`_DEVICEBASE_INSTANCE_DISPATCHED` registry and its loud error on a miss, never through
-this fallback.
+Whether `prop`'s instance-level dispatch resolves consistently across both of `power_units`'
+valid values, `representative`'s own fields (other than `power_units`) held exactly as the
+real reader that built it set them.
+
+Every generated component now declares `power_units` a required, enum-validated field (no
+`nothing`/`ABSENT` "unset" state), unlike the pre-1.0 runtime, so this can no longer poison
+it with an out-of-domain sentinel and read the schema's own error message naming the
+deciding field — the technique the previous runtime supported. Resolving successfully
+under BOTH valid values is the closest still-available signal: every ordinary power-family
+field across the 32 power-bearing types resolves this way today (confirmed against the
+current schema, and unaffected by this change — `power_units` staying required only
+removes the invalid-sentinel probe, not the underlying dispatch). A field genuinely gated
+by another discriminator (`power_mode`, `parameter_units`, `dc_control_from`, ...) instead
+must go through the explicit `_DEVICEBASE_INSTANCE_DISPATCHED` registry and its loud error
+on a miss, never through this fallback — and since that registry is checked first
+(`_devicebase_classification`'s `!haskey(...) && ...`), this function is only ever reached
+for a pair already confirmed NOT to need one of those siblings, so a resolution failure
+here means a real gap the registry has not been taught about yet, not a false positive.
 """
 function _power_units_only_dispatch(representative::T, prop::Symbol) where {T}
-    poisoned = _with_power_units(representative, nothing)
-    try
-        IC.declared_quantity(poisoned, Val(prop))
-    catch e
-        e isa ErrorException || rethrow()
-        return occursin("power_units=", e.msg)
+    for power_units in ("NATURAL_UNITS", "COMPONENT_BASE")
+        variant = _with_power_units(representative, power_units)
+        try
+            IC.declared_quantity(variant, Val(prop))
+        catch e
+            e isa ErrorException || rethrow()
+            return false
+        end
     end
-    return false
+    return true
 end
 
 """
@@ -337,14 +346,21 @@ function _devicebase_classification(
 end
 
 _devicebase_scale(::Nothing, ::Float64) = nothing
+_devicebase_scale(::Absent, ::Float64) = ABSENT
 _devicebase_scale(x::Real, base::Float64) = Float64(x) / base
 
 """A compound field (`MinMax`/`UpDown`/`FromTo`/`FromToToFrom`, ...): every one of these PO
-types holds only `Real`/`Nothing` leaves, so scaling every field generically is exact —
-mirrors PowerSystems' own per-shape `_minmax_po_scaled`/`_updown_po_scaled_optional`/...
-without needing one method per compound type here."""
-function _devicebase_scale(x::T, base::Float64) where {T <: OpenAPI.APIModel}
-    return T(; (f => _devicebase_scale(getfield(x, f), base) for f in fieldnames(T))...)
+types holds only `Real`/`Nothing`/`Absent` leaves (plus the `additional_properties` every
+generated struct carries, held as-is rather than scaled), so scaling every field
+generically is exact — mirrors PowerSystems' own per-shape `_minmax_po_scaled`/
+`_updown_po_scaled_optional`/... without needing one method per compound type here."""
+function _devicebase_scale(x::T, base::Float64) where {T <: IC.APIModel}
+    return T(;
+        (
+            f => (f === :additional_properties ? getfield(x, f) :
+                  _devicebase_scale(getfield(x, f), base)) for f in fieldnames(T)
+        )...,
+    )
 end
 
 """Own device base for `po`, naming `key`/`prop` in the error when the type has neither a
@@ -359,6 +375,55 @@ function _devicebase_own_base(po, key::AbstractString, prop::Symbol)
         )
     end
     return Float64(po.base_power)
+end
+
+"""
+Every field-level verdict for `T.prop` (`key`'s type), classified once from `representative`
+— every component of a given type shares this run's `power_units`, stamped uniformly by
+[`add_component!`](@ref), so one classification pass per type is enough.
+"""
+function _devicebase_classifications(representative::T, key::AbstractString) where {T}
+    classifications = Dict{Symbol, Symbol}()
+    for prop in fieldnames(T)
+        classifications[prop] = _devicebase_classification(representative, key, prop)
+    end
+    return classifications
+end
+
+"""
+`po` rebuilt with every `:skip`-classified field held as-is and every convertible field
+scaled by its resolved base — components are immutable, so a converted component replaces
+rather than mutates the original."""
+function _devicebase_rebuild(
+    po::T,
+    key::AbstractString,
+    classifications::Dict{Symbol, Symbol},
+    system_base::Float64,
+) where {T}
+    kwargs = Dict{Symbol, Any}()
+    for prop in fieldnames(T)
+        classification = classifications[prop]
+        if classification === :skip
+            kwargs[prop] = getfield(po, prop)
+            continue
+        end
+        resolved = if classification === :dynamic
+            _devicebase_dynamic(key, prop, po)
+        else
+            classification
+        end
+        if resolved === :skip
+            kwargs[prop] = getfield(po, prop)
+            continue
+        end
+        base = if resolved === :convert_system
+            system_base
+        else
+            _devicebase_own_base(po, key, prop)
+        end
+        kwargs[prop] = _devicebase_scale(getfield(po, prop), base)
+    end
+    return T(; kwargs...)
 end
 
 """
@@ -377,24 +442,9 @@ function apply_device_base_conversion!(sys::OpenAPISystem)
     for key in component_type_names(sys)
         components = get_components(sys, key)
         isempty(components) && continue
-        T = eltype(components)
-        for prop in fieldnames(T)
-            classification = _devicebase_classification(first(components), key, prop)
-            classification === :skip && continue
-            for po in components
-                resolved = if classification === :dynamic
-                    _devicebase_dynamic(key, prop, po)
-                else
-                    classification
-                end
-                resolved === :skip && continue
-                base = if resolved === :convert_system
-                    system_base
-                else
-                    _devicebase_own_base(po, key, prop)
-                end
-                setproperty!(po, prop, _devicebase_scale(getproperty(po, prop), base))
-            end
+        classifications = _devicebase_classifications(first(components), key)
+        for (ix, po) in enumerate(components)
+            components[ix] = _devicebase_rebuild(po, key, classifications, system_base)
         end
     end
     return sys

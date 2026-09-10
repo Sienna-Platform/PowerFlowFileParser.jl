@@ -80,7 +80,7 @@ function _make_standard_load!(
     name::AbstractString,
     base_power::Float64,
 )
-    load = PO.StandardLoad()
+    load = stage(PO.StandardLoad)
     _set_load_identity!(load, reg, "StandardLoad", name, bus_id, d["status"], base_power)
     set_value!(load, :conformity, _conformity_string(Int(d["conformity"])))
     _set_zip_fields!(load, d, base_power)
@@ -96,7 +96,7 @@ function _make_interruptible_standardload!(
     name::AbstractString,
     base_power::Float64,
 )
-    load = PO.InterruptibleStandardLoad()
+    load = stage(PO.InterruptibleStandardLoad)
     _set_load_identity!(load, reg, "InterruptibleStandardLoad", name, bus_id, d["status"],
         base_power)
     set_value!(load, :operation_cost, make_load_cost())
@@ -114,7 +114,7 @@ function _make_power_load!(
     name::AbstractString,
     base_power::Float64,
 )
-    load = PO.PowerLoad()
+    load = stage(PO.PowerLoad)
     _set_load_identity!(load, reg, "PowerLoad", name, bus_id, d["status"], base_power)
     set_value!(load, :active_power, d["pd"] * base_power, "MW")
     set_value!(load, :reactive_power, d["qd"] * base_power, "MVAr")
@@ -143,7 +143,7 @@ function _make_dgen_renewable!(
     name = string(load_name, "_dgen")
     active_power = dgen["pg"] * base_power
     reactive_power = dgen["qg"] * base_power
-    component = PO.RenewableNonDispatch()
+    component = stage(PO.RenewableNonDispatch)
     set_value!(component, :id, register!(reg, "RenewableNonDispatch", name))
     set_value!(component, :name, name)
     set_value!(component, :available, Bool(dgen["status"]))

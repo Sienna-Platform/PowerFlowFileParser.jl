@@ -108,7 +108,7 @@ function _ensure_area!(sys::OpenAPISystem, data::Dict, name::AbstractString)
     if has_id(reg, "Area", name)
         return get_id(reg, "Area", name)
     end
-    area = PO.Area()
+    area = stage(PC.Area)
     id = register!(reg, "Area", name)
     set_value!(area, :id, id)
     set_value!(area, :name, name)
@@ -155,7 +155,7 @@ function read_loadzones!(sys::OpenAPISystem, data::Dict; kwargs...)
     for zone in zones
         name = _get_name(zone)
         active, reactive = get(peaks, zone, (0.0, 0.0))
-        load_zone = PO.LoadZone()
+        load_zone = stage(PC.LoadZone)
         set_value!(load_zone, :id, register!(reg, "LoadZone", name))
         set_value!(load_zone, :name, name)
         set_value!(load_zone, :peak_active_power, active, "MW")
@@ -190,7 +190,7 @@ function read_bus!(sys::OpenAPISystem, data::Dict; kwargs...)
         area_id = _ensure_area!(sys, data, _get_area_name(d["area"]))
         zone_id = get_id(reg, "LoadZone", _get_zone_name(d["zone"]))
 
-        bus = PO.ACBus()
+        bus = stage(PC.ACBus)
         set_value!(bus, :id, register_bus!(reg, number, name))
         set_value!(bus, :number, number)
         set_value!(bus, :name, name)
@@ -202,13 +202,15 @@ function read_bus!(sys::OpenAPISystem, data::Dict; kwargs...)
         set_value!(bus, :angle, d["va"], "rad")
         set_value!(bus, :magnitude, d["vm"], "pu")
         set_value!(bus, :voltage_limits, (min = d["vmin"], max = d["vmax"]), "pu")
-        add_component!(sys, bus)
 
         # PSS/E's extended-bus-number slack convention (ISW), mapped onto "area_slack"
-        # while parsing; overrides whatever bus_type said, matching the oracle.
+        # while parsing; overrides whatever bus_type said, matching the oracle. Must be
+        # staged before add_component! materializes the bus — components are immutable
+        # once built, so a later set_value! would no longer reach the stored copy.
         if get(d, "area_slack", false)
             set_value!(bus, :bustype, "SLACK")
         end
+        add_component!(sys, bus)
     end
     return
 end
@@ -221,7 +223,7 @@ Parallel circuits (PSS/E allows several `CKT`s on one bus pair) share one arc.
 function add_arc!(sys::OpenAPISystem, from_id::Int, to_id::Int)
     id, created = arc_id!(get_registry(sys), from_id, to_id)
     if created
-        arc = PO.Arc()
+        arc = stage(PC.Arc)
         set_value!(arc, :id, id)
         set_value!(arc, :from_id, from_id)
         set_value!(arc, :to_id, to_id)

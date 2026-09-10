@@ -223,12 +223,17 @@ function make_thermal_generator!(
     _is_likely_motor_load(pm_gen, gen_name)
     extras = _generator_ext(pm_gen)
 
-    component = PO.ThermalStandard()
+    component = stage(PO.ThermalStandard)
     set_value!(component, :id, register!(reg, "ThermalStandard", gen_name))
     set_value!(component, :name, gen_name)
     set_value!(component, :available, Bool(pm_gen["gen_status"]))
     set_value!(component, :status, _thermal_status(gen_name, pm_gen["gen_status"]))
     set_value!(component, :bus, bus_id)
+    # operation_cost is a required oneOf field: `_shadow` cannot placeholder it (a oneOf
+    # has no single concrete type to default), so it must be staged before any power-family
+    # field below, each of which needs a shadow of its own (its declared unit depends on
+    # this component's own power_units).
+    set_value!(component, :operation_cost, make_thermal_cost(gen_name, pm_gen, sys_mbase))
     set_value!(component, :active_power,
         _natural_value(pm_gen["pg"] * base_conversion, mbase),
         "MW")
@@ -241,7 +246,6 @@ function make_thermal_generator!(
         _natural_value(reactive_power_limits, mbase), "MVAr")
     set_optional_value!(component, :ramp_limits, _natural_value(ramp_limits, mbase),
         "MW/min")
-    set_value!(component, :operation_cost, make_thermal_cost(gen_name, pm_gen, sys_mbase))
     set_value!(component, :base_power, mbase, "MVA")
     set_value!(component, :prime_mover_type, prime_mover_type(get(pm_gen, "type", "OT")))
     set_value!(component, :fuel, thermal_fuel(get(pm_gen, "fuel", "OTHER")))
@@ -266,11 +270,14 @@ function _make_hydro_dispatch_body!(
     mbase, base_conversion, active_power_limits, reactive_power_limits, rating,
     ramp_limits = _gen_base_and_limits(pm_gen, gen_name, sys_mbase)
 
-    component = PO.HydroDispatch()
+    component = stage(PO.HydroDispatch)
     set_value!(component, :id, register!(reg, "HydroDispatch", gen_name))
     set_value!(component, :name, gen_name)
     set_value!(component, :available, Bool(pm_gen["gen_status"]))
     set_value!(component, :bus, bus_id)
+    # See make_thermal_generator! — operation_cost (a required oneOf) must be staged
+    # before any power-family field below.
+    set_value!(component, :operation_cost, make_hydro_cost())
     set_value!(component, :active_power,
         _natural_value(pm_gen["pg"] * base_conversion, mbase),
         "MW")
@@ -284,7 +291,6 @@ function _make_hydro_dispatch_body!(
         _natural_value(reactive_power_limits, mbase), "MVAr")
     set_optional_value!(component, :ramp_limits, _natural_value(ramp_limits, mbase),
         "MW/min")
-    set_value!(component, :operation_cost, make_hydro_cost())
     set_value!(component, :base_power, mbase, "MVA")
     add_component!(sys, component)
     return
@@ -342,11 +348,14 @@ function make_renewable_dispatch!(
     # second multiply is the double-application the docstring names.
     rating = rating * base_conversion
 
-    component = PO.RenewableDispatch()
+    component = stage(PO.RenewableDispatch)
     set_value!(component, :id, register!(reg, "RenewableDispatch", gen_name))
     set_value!(component, :name, gen_name)
     set_value!(component, :available, Bool(pm_gen["gen_status"]))
     set_value!(component, :bus, bus_id)
+    # See make_thermal_generator! — operation_cost (a required oneOf) must be staged
+    # before any power-family field below.
+    set_value!(component, :operation_cost, make_renewable_cost())
     set_value!(component, :active_power,
         _natural_value(pm_gen["pg"] * base_conversion, mbase),
         "MW")
@@ -357,7 +366,6 @@ function make_renewable_dispatch!(
     set_value!(component, :reactive_power_limits,
         _natural_value(reactive_power_limits, mbase), "MVAr")
     set_value!(component, :power_factor, 1.0, "1")
-    set_value!(component, :operation_cost, make_renewable_cost())
     set_value!(component, :base_power, mbase, "MVA")
     add_component!(sys, component)
     return
@@ -376,7 +384,7 @@ function make_renewable_nondispatch!(
     mbase = _device_base_power(pm_gen, gen_name, sys_mbase)
     base_conversion = sys_mbase / mbase
 
-    component = PO.RenewableNonDispatch()
+    component = stage(PO.RenewableNonDispatch)
     set_value!(component, :id, register!(reg, "RenewableNonDispatch", gen_name))
     set_value!(component, :name, gen_name)
     set_value!(component, :available, Bool(pm_gen["gen_status"]))
@@ -412,7 +420,7 @@ function make_synchronous_condenser!(
     rating = max(abs(pm_gen["qmax"]), abs(pm_gen["qmin"])) * base_conversion
     extras = _generator_ext(pm_gen)
 
-    component = PO.SynchronousCondenser()
+    component = stage(PO.SynchronousCondenser)
     set_value!(component, :id, register!(reg, "SynchronousCondenser", gen_name))
     set_value!(component, :name, gen_name)
     set_value!(component, :available, Bool(pm_gen["gen_status"]))
@@ -451,11 +459,26 @@ function make_storage!(
     # per-unit value, not a true MVA base — see docstring.
     thermal_rating = Float64(d["thermal_rating"])
 
-    component = PO.EnergyReservoirStorage()
+    component = stage(PO.EnergyReservoirStorage)
     set_value!(component, :id, register!(reg, "EnergyReservoirStorage", storage_name))
     set_value!(component, :name, storage_name)
     set_value!(component, :available, Bool(d["status"]))
     set_value!(component, :bus, bus_id)
+    # See make_thermal_generator! — operation_cost (a required oneOf) must be staged
+    # before any field below needing a shadow (storage_capacity's declared unit depends
+    # on this component's own energy_units).
+    # fixed/shut_down are schema-required now (PSCB never derives them from pm data
+    # either, hence zero); start_up wraps in PC.StorageCostStartUp (see cost.jl's header).
+    set_value!(
+        component,
+        :operation_cost,
+        PC.StorageCost(;
+            cost_type = "STORAGE",
+            fixed = 0.0,
+            shut_down = 0.0,
+            start_up = PC.StorageCostStartUp(0.0),
+        ),
+    )
     set_value!(component, :prime_mover_type, "BA")
     set_value!(component, :storage_technology_type, "OTHER_CHEM")
     set_value!(component, :storage_capacity, _natural_value(energy_rating, thermal_rating),
@@ -493,7 +516,6 @@ function make_storage!(
         "MVAr",
     )
     set_value!(component, :base_power, thermal_rating, "MVA")
-    set_value!(component, :operation_cost, PC.StorageCost(; start_up = 0.0))
     add_component!(sys, component)
     return
 end

@@ -19,7 +19,7 @@ function make_fixed_admittance!(
 )
     base_power = get_base_power(sys)
 
-    component = PO.FixedAdmittance()
+    component = stage(PO.FixedAdmittance)
     set_value!(component, :id, register!(reg, "FixedAdmittance", name))
     set_value!(component, :name, name)
     set_value!(component, :available, Bool(d["status"]))
@@ -28,7 +28,7 @@ function make_fixed_admittance!(
     set_value!(component, :admittance_units, "COMPONENT_MVAR")
     set_value!(
         component,
-        :Y,
+        :y,
         (real = d["gs"] * base_power, imag = d["bs"] * base_power),
         "MVAr",
     )
@@ -57,25 +57,25 @@ function _switched_admittance_control_mode(code::Integer)
 end
 
 """
-Assign `Y_increase`: an array of complex admittances sharing `admittance_units`'s
+Assign `y_increase`: an array of complex admittances sharing `admittance_units`'s
 discriminated unit. `units.jl`'s generic compound-value path builds ONE compound object
 per call and cannot construct a `Vector` of them; this is the only array-of-compound
 shape any reader needs, so it reuses `units.jl`'s private `_declared`/`_convert` here
 rather than extending `set_value!` for a single call site.
 """
 function _set_y_increase!(
-    component,
+    component::Staged,
     values::Vector{ComplexF64},
     source_unit::AbstractString,
 )
-    target, quantity = _declared(component, :Y_increase)
+    target, quantity = _declared(component, :y_increase)
     converted = [
         IC.ComplexNumber(;
-            real = _convert(component, :Y_increase, real(v), source_unit, target, quantity),
-            imag = _convert(component, :Y_increase, imag(v), source_unit, target, quantity),
+            real = _convert(component, :y_increase, real(v), source_unit, target, quantity),
+            imag = _convert(component, :y_increase, imag(v), source_unit, target, quantity),
         ) for v in values
     ]
-    setproperty!(component, :Y_increase, converted)
+    component.fields[:y_increase] = converted
     return
 end
 
@@ -86,7 +86,14 @@ Switched admittance (PSS/E `SWITCHED SHUNT`).
 controlled-voltage band, not an admittance band, despite the oracle's field name — a
 pre-existing PSCB naming quirk reproduced faithfully, not fixed here. Being voltages, they
 are outside `_make_per_unit!`'s admittance rescale and take no `base_power` factor, unlike
-`Y` and `Y_increase`.
+`solved_admittance` and `y_increase`.
+
+The schema dropped `SwitchedAdmittance`'s own fixed `Y` field (the total admittance is now
+`number_engaged` * `y_increase`, unless `solved_admittance` overrides it): `d["bs"]`
+(PSS/E BINIT, the solved-case total) now lands on `solved_admittance` instead, and
+`d["gs"]` (always `0.0` for a switched shunt) has no remaining target. `initial_status`
+(already per-block Vector{Int} from `psse.jl`) is `number_engaged` now, not a bare status
+flag.
 """
 function make_switched_admittance!(
     sys::OpenAPISystem,
@@ -98,18 +105,12 @@ function make_switched_admittance!(
     control_mode = _switched_admittance_control_mode(Int(d["control_mode"]))
     base_power = get_base_power(sys)
 
-    component = PO.SwitchedAdmittance()
+    component = stage(PO.SwitchedAdmittance)
     set_value!(component, :id, register!(reg, "SwitchedAdmittance", name))
     set_value!(component, :name, name)
     set_value!(component, :available, Bool(d["status"]))
     set_value!(component, :bus, bus_id)
     set_value!(component, :admittance_units, "COMPONENT_MVAR")
-    set_value!(
-        component,
-        :Y,
-        (real = d["gs"] * base_power, imag = d["bs"] * base_power),
-        "MVAr",
-    )
     set_value!(component, :number_of_steps, d["step_number"])
     _set_y_increase!(component, d["y_increment"] * base_power, "MVAr")
     admittance_limits = d["admittance_limits"]
@@ -170,7 +171,7 @@ function make_facts!(
     end
     control_mode = _facts_control_mode(Int(d["control_mode"]))
 
-    component = PO.FACTSControlDevice()
+    component = stage(PO.FACTSControlDevice)
     set_value!(component, :id, register!(reg, "FACTSControlDevice", name))
     set_value!(component, :name, name)
     set_value!(component, :available, Bool(d["available"]))

@@ -10,15 +10,24 @@
 # `data["vscline"]` and `data["interarea_transfer"]` are NOT native PowerModels sections;
 # see the per-maker docstrings below for how PFFP's own `psse.jl` pre-scales their fields.
 
-"""A linear `TwoTerminalLoss` curve from a pm dict's `loss0`/`loss1` fields, shared by
-`TwoTerminalLCCLine` and `TwoTerminalGenericHVDCLine`."""
+"""A linear `LossCurve` from a pm dict's `loss0`/`loss1` fields, shared by
+`TwoTerminalLCCLine` and `TwoTerminalGenericHVDCLine`. `TwoTerminalLoss` no longer exists
+(the two per-owner loss wrappers collapsed into this one shared `LossCurve`); `power_units`
+is fixed `"NATURAL_UNITS"` here since loss0/loss1 arrive unscaled regardless of the run's
+own `power_units` convention (see this file's header), the same fixed-natural pattern
+`cost.jl`'s `_zero_cost_curve` uses."""
 function _two_terminal_loss(d::Dict)
-    return PC.TwoTerminalLoss(
-        PC.InputOutputCurve(;
-            function_data = PC.InputOutputCurveFunctionData(
-                IC.LinearFunctionData(;
-                    proportional_term = d["loss1"],
-                    constant_term = d["loss0"],
+    return PC.LossCurve(;
+        power_units = IC.UnitSystem("NATURAL_UNITS"),
+        value_curve = PC.LossValueCurve(
+            PC.InputOutputCurve(;
+                curve_type = "INPUT_OUTPUT",
+                function_data = PC.InputOutputCurveFunctionData(
+                    IC.LinearFunctionData(;
+                        function_type = "LINEAR",
+                        proportional_term = d["loss1"],
+                        constant_term = d["loss0"],
+                    ),
                 ),
             ),
         ),
@@ -36,7 +45,7 @@ function make_lcc_line!(
     sys_mbase::Float64,
 )
     arc_id = add_arc!(sys, from_id, to_id)
-    component = PO.TwoTerminalLCCLine()
+    component = stage(PO.TwoTerminalLCCLine)
     set_value!(component, :id, register!(reg, "TwoTerminalLCCLine", name))
     set_value!(component, :name, name)
     set_value!(component, :available, Bool(d["available"]))
@@ -107,7 +116,7 @@ function make_generic_hvdc_line!(
     sys_mbase::Float64,
 )
     arc_id = add_arc!(sys, from_id, to_id)
-    component = PO.TwoTerminalGenericHVDCLine()
+    component = stage(PO.TwoTerminalGenericHVDCLine)
     set_value!(component, :id, register!(reg, "TwoTerminalGenericHVDCLine", name))
     set_value!(component, :name, name)
     set_value!(component, :available, d["br_status"] == 1)
@@ -190,7 +199,7 @@ function make_vscline!(
     sys_mbase::Float64,
 )
     arc_id = add_arc!(sys, from_id, to_id)
-    component = PO.TwoTerminalVSCLine()
+    component = stage(PO.TwoTerminalVSCLine)
     set_value!(component, :id, register!(reg, "TwoTerminalVSCLine", name))
     set_value!(component, :name, name)
     set_value!(component, :available, Bool(d["available"]))
@@ -228,8 +237,10 @@ function make_vscline!(
         component,
         :converter_loss_from,
         PC.InputOutputCurve(;
+            curve_type = "INPUT_OUTPUT",
             function_data = PC.InputOutputCurveFunctionData(
                 IC.LinearFunctionData(;
+                    function_type = "LINEAR",
                     proportional_term = IS.get_proportional_term(d["converter_loss_from"]),
                     constant_term = IS.get_constant_term(d["converter_loss_from"]),
                 ),
@@ -264,8 +275,10 @@ function make_vscline!(
         component,
         :converter_loss_to,
         PC.InputOutputCurve(;
+            curve_type = "INPUT_OUTPUT",
             function_data = PC.InputOutputCurveFunctionData(
                 IC.LinearFunctionData(;
+                    function_type = "LINEAR",
                     proportional_term = IS.get_proportional_term(d["converter_loss_to"]),
                     constant_term = IS.get_constant_term(d["converter_loss_to"]),
                 ),
@@ -396,7 +409,7 @@ function read_area_interchanges!(sys::OpenAPISystem, data::Dict; kwargs...)
         end
         name = "$(area_from_name)_$(area_to_name)_$(transfer_id)"
 
-        component = PO.AreaInterchange()
+        component = stage(PO.AreaInterchange)
         set_value!(component, :id, register!(reg, "AreaInterchange", name))
         set_value!(component, :name, name)
         set_value!(component, :available, true)
