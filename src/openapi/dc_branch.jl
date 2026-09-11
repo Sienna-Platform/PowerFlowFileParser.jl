@@ -10,13 +10,11 @@
 # `data["vscline"]` and `data["interarea_transfer"]` are NOT native PowerModels sections;
 # see the per-maker docstrings below for how PFFP's own `psse.jl` pre-scales their fields.
 
-"""A linear `LossCurve` from a pm dict's `loss0`/`loss1` fields, shared by
-`TwoTerminalLCCLine` and `TwoTerminalGenericHVDCLine`. `TwoTerminalLoss` no longer exists
-(the two per-owner loss wrappers collapsed into this one shared `LossCurve`); `power_units`
-is fixed `"NATURAL_UNITS"` here since loss0/loss1 arrive unscaled regardless of the run's
-own `power_units` convention (see this file's header), the same fixed-natural pattern
-`cost.jl`'s `_zero_cost_curve` uses."""
-function _two_terminal_loss(d::Dict)
+"""A linear `LossCurve` with fixed `"NATURAL_UNITS"` power units, shared by every
+converter/two-terminal loss curve site: loss values arrive unscaled regardless of the
+run's own `power_units` convention (see this file's header), the same fixed-natural
+pattern `cost.jl`'s `_zero_cost_curve` uses."""
+function _loss_curve(proportional_term::Float64, constant_term::Float64)
     return PC.LossCurve(;
         power_units = IC.UnitSystem("NATURAL_UNITS"),
         value_curve = PC.LossValueCurve(
@@ -25,13 +23,20 @@ function _two_terminal_loss(d::Dict)
                 function_data = PC.InputOutputCurveFunctionData(
                     IC.LinearFunctionData(;
                         function_type = "LINEAR",
-                        proportional_term = d["loss1"],
-                        constant_term = d["loss0"],
+                        proportional_term = proportional_term,
+                        constant_term = constant_term,
                     ),
                 ),
             ),
         ),
     )
+end
+
+"""A linear `LossCurve` from a pm dict's `loss0`/`loss1` fields, shared by
+`TwoTerminalLCCLine` and `TwoTerminalGenericHVDCLine`. `TwoTerminalLoss` no longer exists
+(the two per-owner loss wrappers collapsed into this one shared `LossCurve`)."""
+function _two_terminal_loss(d::Dict)
+    return _loss_curve(d["loss1"], d["loss0"])
 end
 
 """Two-terminal LCC HVDC line (PSS/E)."""
@@ -236,22 +241,9 @@ function make_vscline!(
     set_value!(
         component,
         :converter_loss_from,
-        PC.LossCurve(;
-            power_units = IC.UnitSystem("NATURAL_UNITS"),
-            value_curve = PC.LossValueCurve(
-                PC.InputOutputCurve(;
-                    curve_type = "INPUT_OUTPUT",
-                    function_data = PC.InputOutputCurveFunctionData(
-                        IC.LinearFunctionData(;
-                            function_type = "LINEAR",
-                            proportional_term = IS.get_proportional_term(
-                                d["converter_loss_from"],
-                            ),
-                            constant_term = IS.get_constant_term(d["converter_loss_from"]),
-                        ),
-                    ),
-                ),
-            ),
+        _loss_curve(
+            IS.get_proportional_term(d["converter_loss_from"]),
+            IS.get_constant_term(d["converter_loss_from"]),
         ),
     )
     set_value!(component, :max_dc_current_from, d["max_dc_current_from"], "A")
@@ -281,22 +273,9 @@ function make_vscline!(
     set_value!(
         component,
         :converter_loss_to,
-        PC.LossCurve(;
-            power_units = IC.UnitSystem("NATURAL_UNITS"),
-            value_curve = PC.LossValueCurve(
-                PC.InputOutputCurve(;
-                    curve_type = "INPUT_OUTPUT",
-                    function_data = PC.InputOutputCurveFunctionData(
-                        IC.LinearFunctionData(;
-                            function_type = "LINEAR",
-                            proportional_term = IS.get_proportional_term(
-                                d["converter_loss_to"],
-                            ),
-                            constant_term = IS.get_constant_term(d["converter_loss_to"]),
-                        ),
-                    ),
-                ),
-            ),
+        _loss_curve(
+            IS.get_proportional_term(d["converter_loss_to"]),
+            IS.get_constant_term(d["converter_loss_to"]),
         ),
     )
     set_value!(component, :max_dc_current_to, d["max_dc_current_to"], "A")

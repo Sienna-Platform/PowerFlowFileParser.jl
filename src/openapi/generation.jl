@@ -229,10 +229,8 @@ function make_thermal_generator!(
     set_value!(component, :available, Bool(pm_gen["gen_status"]))
     set_value!(component, :status, _thermal_status(gen_name, pm_gen["gen_status"]))
     set_value!(component, :bus, bus_id)
-    # operation_cost is a required oneOf field: `_shadow` cannot placeholder it (a oneOf
-    # has no single concrete type to default), so it must be staged before any power-family
-    # field below, each of which needs a shadow of its own (its declared unit depends on
-    # this component's own power_units).
+    # operation_cost is a required oneOf field `_shadow` can't placeholder (see `stage`'s
+    # docstring); stage it before any power-family field below.
     set_value!(component, :operation_cost, make_thermal_cost(gen_name, pm_gen, sys_mbase))
     set_value!(component, :active_power,
         _natural_value(pm_gen["pg"] * base_conversion, mbase),
@@ -275,10 +273,9 @@ function _make_hydro_dispatch_body!(
     set_value!(component, :name, gen_name)
     set_value!(component, :available, Bool(pm_gen["gen_status"]))
     set_value!(component, :bus, bus_id)
-    # operation_cost and prime_mover_type are both required enum/oneOf fields: `_shadow`
-    # cannot placeholder either (an enum wrapper constructs positionally, not by keyword,
-    # and a oneOf has no single concrete type to default), so both must be staged before
-    # any power-family field below, each of which needs a shadow of its own.
+    # operation_cost and prime_mover_type are both required enum/oneOf fields `_shadow`
+    # can't placeholder (see `stage`'s docstring); stage both before any power-family
+    # field below.
     set_value!(component, :operation_cost, make_hydro_cost())
     set_value!(component, :prime_mover_type, prime_mover_type(get(pm_gen, "type", "OT")))
     set_value!(component, :active_power,
@@ -355,10 +352,9 @@ function make_renewable_dispatch!(
     set_value!(component, :name, gen_name)
     set_value!(component, :available, Bool(pm_gen["gen_status"]))
     set_value!(component, :bus, bus_id)
-    # operation_cost and prime_mover_type are both required enum/oneOf fields: `_shadow`
-    # cannot placeholder either (an enum wrapper constructs positionally, not by keyword,
-    # and a oneOf has no single concrete type to default), so both must be staged before
-    # any power-family field below, each of which needs a shadow of its own.
+    # operation_cost and prime_mover_type are both required enum/oneOf fields `_shadow`
+    # can't placeholder (see `stage`'s docstring); stage both before any power-family
+    # field below.
     set_value!(component, :operation_cost, make_renewable_cost())
     set_value!(component, :prime_mover_type, prime_mover_type(get(pm_gen, "type", "OT")))
     set_value!(component, :active_power,
@@ -393,9 +389,8 @@ function make_renewable_nondispatch!(
     set_value!(component, :name, gen_name)
     set_value!(component, :available, Bool(pm_gen["gen_status"]))
     set_value!(component, :bus, bus_id)
-    # prime_mover_type is a required enum field: `_shadow` cannot placeholder it (it
-    # constructs positionally, not by keyword), so it must be staged before any
-    # power-family field below, each of which needs a shadow of its own.
+    # prime_mover_type is a required enum field `_shadow` can't placeholder (see `stage`'s
+    # docstring); stage it before any power-family field below.
     set_value!(component, :prime_mover_type, prime_mover_type(get(pm_gen, "type", "OT")))
     set_value!(component, :active_power,
         _natural_value(pm_gen["pg"] * base_conversion, mbase),

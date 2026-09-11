@@ -134,16 +134,15 @@ const _DEVICEBASE_INSTANCE_DISPATCHED = Dict{Tuple{String, Symbol}, Symbol}(
     # confirms this is fixed-natural, multiplied by the SYSTEM base in both document
     # conventions (export_handwritten.jl's FixedAdmittance section), not document-unit-
     # system-governed at all (same shape as Area/LoadZone's peak fields).
-    # `FixedAdmittance.Y` is lowercase `y` now (the JSON key stays `Y`); `SwitchedAdmittance`
-    # dropped its own fixed `Y` field entirely, replaced by `solved_admittance` (same
-    # admittance_units-discriminated unit as `y_increase`, so the same `:skip`).
+    # `FixedAdmittance.Y` is lowercase `y` now (the JSON key stays `Y`).
     ("FixedAdmittance", :y) => :skip,
     ("SwitchedAdmittance", :y_increase) => :skip,
-    ("SwitchedAdmittance", :solved_admittance) => :skip,
     ("SwitchedAdmittance", :admittance_limits) => :skip,
     # BINIT (PowerSystems.jl#1774) is the same COMPONENT_MVAR-on-system-base quantity as `Y`
     # and `Y_increase` above -- PSY's own to_openapi scales it by the SYSTEM base in both
     # document conventions -- so it takes their classification, not a device-base conversion.
+    # `solved_admittance` replaced SwitchedAdmittance's old fixed `Y` field entirely, sharing
+    # `y_increase`'s admittance_units-discriminated unit, hence the same `:skip`.
     ("SwitchedAdmittance", :solved_admittance) => :skip,
     # parameter_units/dc_voltage_units/admittance_units always "NATURAL_UNITS" for the
     # PSS/E-native LCC/VSC fields (dc_branch.jl) -- fixed ohm/kV/S regardless of the

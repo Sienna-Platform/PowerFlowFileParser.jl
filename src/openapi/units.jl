@@ -276,8 +276,6 @@ end
 
 """Whether the sibling property holding a per-unit value's base has been assigned."""
 _base_is_set(s::Staged, base_prop::Symbol) = haskey(s.fields, base_prop)
-_base_is_set(o::IC.APIModel, base_prop::Symbol) =
-    !(getproperty(o, base_prop) isa Absent) && !isnothing(getproperty(o, base_prop))
 
 """
 The assigned base, rejected unless it is positive.
@@ -289,18 +287,6 @@ output file has been truncated.
 """
 function _checked_base(s::Staged{T}, prop::Symbol, base_prop::Symbol) where {T}
     base = get_value(s, base_prop)
-    if base <= 0
-        throw(
-            IS.DataFormatError(
-                "$(nameof(T)).$prop is per-unit on $base_prop, which is $base; " *
-                "the base must be positive",
-            ),
-        )
-    end
-    return base
-end
-function _checked_base(o::T, prop::Symbol, base_prop::Symbol) where {T <: IC.APIModel}
-    base = getproperty(o, base_prop)
     if base <= 0
         throw(
             IS.DataFormatError(
@@ -466,20 +452,15 @@ get_value(s::Staged, prop::Symbol) = _unwrap(s.fields[prop])
 get_value(o::IC.APIModel, prop::Symbol) = _unwrap(getproperty(o, prop))
 
 _declared_read(s::Staged, prop::Symbol) = _declared(s, prop)
-_declared_read(o::T, prop::Symbol) where {T <: IC.APIModel} =
-    (IC.declared_unit(o, Val(prop)), IC.declared_quantity(o, Val(prop)))
 
 _has_unit_base(::Staged{T}, prop::Symbol) where {T} = IC.has_unit_base(T, Val(prop))
-_has_unit_base(o::T, prop::Symbol) where {T <: IC.APIModel} = IC.has_unit_base(T, Val(prop))
 
 _unit_base_of(::Staged{T}, prop::Symbol) where {T} = IC.unit_base(T, Val(prop))
-_unit_base_of(o::T, prop::Symbol) where {T <: IC.APIModel} = IC.unit_base(T, Val(prop))
 
 _declared_type(::Staged{T}) where {T} = T
-_declared_type(o::IC.APIModel) = typeof(o)
 
 """Return the value of `prop` expressed in `unit`. Works on a still-staged object (mid-build
-reads, e.g. after a sibling field it depends on) or an already-materialized one."""
+reads, e.g. after a sibling field it depends on)."""
 function get_value(o, prop::Symbol, unit::AbstractString)
     source, quantity = _declared_read(o, prop)
     value = get_value(o, prop)

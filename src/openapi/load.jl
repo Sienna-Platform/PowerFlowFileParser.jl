@@ -148,9 +148,8 @@ function _make_dgen_renewable!(
     set_value!(component, :name, name)
     set_value!(component, :available, Bool(dgen["status"]))
     set_value!(component, :bus, bus_id)
-    # prime_mover_type is a required enum field: `_shadow` cannot placeholder it (it
-    # constructs positionally, not by keyword), so it must be staged before active_power
-    # below, whose declared unit depends on a shadow.
+    # prime_mover_type is a required enum field `_shadow` can't placeholder (see `stage`'s
+    # docstring); stage it before active_power below.
     set_value!(component, :prime_mover_type, "OT")
     set_value!(component, :active_power, active_power, "MW")
     set_value!(component, :reactive_power, reactive_power, "MVAr")
