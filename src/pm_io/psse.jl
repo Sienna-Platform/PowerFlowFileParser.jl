@@ -945,7 +945,7 @@ function _psse2pm_shunt!(
                 get(sub_data, "sw_id", "1"),
             )
             sub_data["gs"] = 0.0
-            # The device's solved admittance it goes to its own `solved_admittance` key
+            # The device's solved admittance goes to its own `solved_admittance` key
             # so downstream can tell "solved total" from "total based on engaged blocks,"
             # which differ in continuous mode.
             sub_data["bs"] = 0.0
@@ -994,10 +994,12 @@ function _psse2pm_shunt!(
                 error("Unsupported PSS(R)E source version: $(pm_data["source_version"])")
             end
 
-            # only keep BINIT where it states the device's actual admittance
+            # only keep BINIT where it states the device's actual admittance. The swing-bus
+            # rule is about the RAW's own bus I, so it reads `bus_number`: a node-breaker
+            # `shunt_bus` can be a node-bus still initialized to PQ at this point.
             if _binit_is_authoritative(
                 Int(sub_data["control_mode"]),
-                pm_data["bus"][sub_data["shunt_bus"]]["bus_type"],
+                pm_data["bus"][bus_number]["bus_type"],
                 has_block_status,
                 solved_case,
             )
