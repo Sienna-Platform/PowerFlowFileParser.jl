@@ -828,12 +828,52 @@ function _psse2pm_load!(pm_data::Dict, pti_data::Dict, import_all::Bool, nb)
 end
 
 """
-Whether `key` names one of a SWITCHED SHUNT record's up-to-eight admittance-block columns
-for `prefix` — `N1`..`N8` (step counts) or `B1`..`B8` (admittances). Exact, so a future
-column merely starting with the same letter is not swept in.
+The admittance blocks a SWITCHED SHUNT record defines, in the order they switch on.
+
+PSS(R)E describes block `i` by a step count `Ni` and a per-step admittance `Bi` (plus, in
+v35, a status `Si`), and reads them as a contiguous run starting at block 1.
 """
-function _is_switched_shunt_block(key::AbstractString, prefix::Char)
-    return ncodeunits(key) == 2 && key[1] == prefix && '1' <= key[2] <= '8'
+function _switched_shunt_blocks(switched_shunt::Dict)
+    step_number = Int[]
+    y_increment = Float64[]
+    for i in 1:8
+        steps = get(switched_shunt, "N$i", 0)
+        increment = get(switched_shunt, "B$i", 0.0)
+        # Edge case: per the POM, a zero value for `Ni` or `Bi` terminates the list early. 
+        (steps == 0 || increment == 0.0) && break
+        push!(step_number, steps)
+        push!(y_increment, increment)
+    end
+    return step_number, y_increment
+end
+
+# PSS(R)E MODSW codes that adjust the shunt in discrete steps: 1 (local voltage) and the
+# remote-quantity modes 3/4/5. Mode 0 is locked and mode 2 is continuous; both are handled
+# separately in `_binit_is_authoritative`.
+const _DISCRETE_SWITCHED_SHUNT_MODES = (1, 3, 4, 5)
+
+"""
+Whether a SWITCHED SHUNT record's `BINIT` should be used as the device's admittance. Per the
+POM, this is the case when one of the following is met:
+
+  * the shunt is locked (`MODSW == 0`), or sits on a type 3 (swing) bus;
+  * the shunt is continuously controlled (`MODSW == 2`);
+  * the record carries no per-block status (versions before v35);
+  * the caller declares the case solved.
+
+Otherwise, BINIT is only a starting value, and device admittance is calculated
+from the engaged blocks.
+"""
+function _binit_is_authoritative(
+    control_mode::Int,
+    bus_type::Int,
+    has_block_status::Bool,
+    solved_case::Bool,
+)
+    solved_case && return true
+    has_block_status || return true
+    bus_type == PM_BUS_TYPE_REF && return true
+    return !(control_mode in _DISCRETE_SWITCHED_SHUNT_MODES)
 end
 
 """
@@ -842,9 +882,17 @@ end
 Parses PSS(R)E-style Fixed and Switched Shunt data into a PowerModels-style
 Dict. "source_id" is given by `["I", "ID"]` for Fixed Shunts, and `["I", "SWREM"]`
 for Switched Shunts, as given by the PSS(R)E Fixed and Switched Shunts
-specifications.
+specifications. `solved_case` declares the RAW to have been written out from a converged
+power flow, which decides whether each switched shunt keeps its BINIT — see
+`_binit_is_authoritative`.
 """
-function _psse2pm_shunt!(pm_data::Dict, pti_data::Dict, import_all::Bool, nb)
+function _psse2pm_shunt!(
+    pm_data::Dict,
+    pti_data::Dict,
+    import_all::Bool,
+    nb,
+    solved_case::Bool,
+)
     @info "Parsing PSS(R)E Fixed & Switched Shunt data into a PowerModels Dict..."
 
     # bus records may have already contributed shunt entries
@@ -897,14 +945,11 @@ function _psse2pm_shunt!(pm_data::Dict, pti_data::Dict, import_all::Bool, nb)
                 get(sub_data, "sw_id", "1"),
             )
             sub_data["gs"] = 0.0
-            # A PSS/E switched shunt has no fixed base admittance: the record carries only
-            # BINIT (the solved/initial total susceptance) and the per-block increments. BINIT
-            # is therefore NOT a `bs` -- it is the device's solved admittance, and goes to its
-            # own field so downstream can tell "solved total" from "fixed base + blocks"
-            # instead of inferring it from a zeroed block-status vector.
-            # See PowerSystems.jl#1774.
+            # The device's solved admittance it goes to its own `solved_admittance` key
+            # so downstream can tell "solved total" from "total based on engaged blocks,"
+            # which differ in continuous mode.
             sub_data["bs"] = 0.0
-            sub_data["solved_admittance"] = pop!(switched_shunt, "BINIT")
+            binit = pop!(switched_shunt, "BINIT")
             sub_data["status"] = _determine_injector_status(
                 switched_shunt,
                 pm_data,
@@ -916,13 +961,10 @@ function _psse2pm_shunt!(pm_data::Dict, pti_data::Dict, import_all::Bool, nb)
                 (pop!(switched_shunt, "VSWLO"), pop!(switched_shunt, "VSWHI"))
 
             # N1..N8 hold the step count of each admittance block, B1..B8 its admittance.
-            step_numbers = Dict(
-                k => v for (k, v) in switched_shunt if _is_switched_shunt_block(k, 'N')
-            )
-            step_numbers_sorted =
-                sort(collect(keys(step_numbers)); by = x -> parse(Int, x[2:end]))
-            sub_data["step_number"] = [step_numbers[k] for k in step_numbers_sorted]
-            sub_data["step_number"] = sub_data["step_number"][sub_data["step_number"] .!= 0]
+            step_number, y_increment = _switched_shunt_blocks(switched_shunt)
+            sub_data["step_number"] = step_number
+            # `y_increment` is an admittance: the record's Bi is a susceptance.
+            sub_data["y_increment"] = complex.(0.0, y_increment)
 
             sub_data["control_mode"] = switched_shunt["MODSW"]
             # pti.jl names the regulated-bus column "SWREM" for every source version,
@@ -935,37 +977,31 @@ function _psse2pm_shunt!(pm_data::Dict, pti_data::Dict, import_all::Bool, nb)
                 "RMIDNT" => switched_shunt["RMIDNT"],
             )
 
-            y_increment = Dict(
-                k => v for
-                (k, v) in switched_shunt if _is_switched_shunt_block(k, 'B')
-            )
-            y_increment_sorted =
-                sort(collect(keys(y_increment)); by = x -> parse(Int, x[2:end]))
-            sub_data["y_increment"] = [y_increment[k] for k in y_increment_sorted]im
-            sub_data["y_increment"] = sub_data["y_increment"][sub_data["y_increment"] .!= 0]
-
-            if pm_data["source_version"] == "35"
-                initial_ss_status = Dict(
-                    k => v for
-                    (k, v) in switched_shunt if startswith(k, "S") && isdigit(last(k))
-                )
-                initial_ss_status_sorted =
-                    sort(collect(keys(initial_ss_status)); by = x -> parse(Int, x[2:end]))
-                sub_data["number_engaged"] =
-                    [initial_ss_status[k] for k in initial_ss_status_sorted]
-                sub_data["number_engaged"] =
-                    sub_data["number_engaged"][1:length(sub_data["step_number"])]
+            has_block_status = pm_data["source_version"] == "35"
+            if has_block_status
+                # Si are block statuses, not step counts, so 1 => all steps on.
+                sub_data["number_engaged"] = [
+                    get(switched_shunt, "S$i", 1) != 0 ? steps : 0 for
+                    (i, steps) in enumerate(step_number)
+                ]
 
                 sub_data["ext"]["NREG"] = pop!(switched_shunt, "NREG")
             elseif pm_data["source_version"] ∈ ("30", "32", "33")
-                # Pre-v35 SWITCHED SHUNT records carry no per-block status field, so how
-                # many steps of each block are engaged is simply unknown. The device's
-                # actual admittance is BINIT, now carried in `solved_admittance` above, so
-                # nothing has to be reconstructed from the blocks; zeros here record "no
-                # per-block information", not "every block is out of service".
-                sub_data["number_engaged"] = zeros(Int, length(sub_data["y_increment"]))
+                # Pre-v35 SWITCHED SHUNT records carry no per-block status, so initialize to 
+                # all-off and take admittance from BINIT.
+                sub_data["number_engaged"] = zeros(Int, length(step_number))
             else
                 error("Unsupported PSS(R)E source version: $(pm_data["source_version"])")
+            end
+
+            # only keep BINIT where it states the device's actual admittance
+            if _binit_is_authoritative(
+                Int(sub_data["control_mode"]),
+                pm_data["bus"][sub_data["shunt_bus"]]["bus_type"],
+                has_block_status,
+                solved_case,
+            )
+                sub_data["solved_admittance"] = binit
             end
 
             sub_data["index"] = length(pm_data["switched_shunt"]) + 1
@@ -2650,13 +2686,16 @@ end
 
 Converts PSS(R)E-style data parsed from a PTI raw file, passed by `pti_data`
 into a format suitable for use internally in PowerModels. Imports all remaining
-data from the PTI file if `import_all` is true (Default: false).
+data from the PTI file if `import_all` is true (Default: false). Set `solved_case` when the
+file was written out after a converged power flow, so that every switched shunt's BINIT is
+taken as its solved admittance (see `_binit_is_authoritative`).
 """
 function _pti_to_powermodels!(
     pti_data::Dict;
     import_all = false,
     validate = true,
     correct_branch_rating = true,
+    solved_case = false,
 )::Dict
     pm_data = Dict{String, Any}()
 
@@ -2694,7 +2733,7 @@ function _pti_to_powermodels!(
     _psse2pm_transformer!(pm_data, pti_data, import_all, nb)
     # Injectors need to be parsed after branches and transformers to find topologically connected buses
     _psse2pm_load!(pm_data, pti_data, import_all, nb)
-    _psse2pm_shunt!(pm_data, pti_data, import_all, nb)
+    _psse2pm_shunt!(pm_data, pti_data, import_all, nb, solved_case)
     _psse2pm_generator!(pm_data, pti_data, import_all, nb)
     _migrate_node_breaker_gen_bus_type!(pm_data, nb)
     _psse2pm_facts!(pm_data, pti_data, import_all)

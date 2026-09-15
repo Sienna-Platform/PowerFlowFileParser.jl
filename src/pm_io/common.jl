@@ -4,17 +4,21 @@
         import_all = false,
         validate = true,
         correct_branch_rating = true,
+        solved_case = false,
     )
 
 Parses a Matpower .m `file` or PTI (PSS(R)E-v33) .raw `file` into a
 PowerModels data structure. All fields from PTI files will be imported if
-`import_all` is true (Default: false).
+`import_all` is true (Default: false). Set `solved_case` when a .raw file was written out
+after a converged power flow: its switched shunts then take BINIT as their solved
+admittance rather than reconstructing one from the engaged blocks.
 """
 function parse_file(
     file::String;
     import_all = false,
     validate = true,
     correct_branch_rating = true,
+    solved_case = false,
 )
     pm_data = open(file) do io
         pm_data = parse_file(
@@ -22,6 +26,7 @@ function parse_file(
             import_all = import_all,
             validate = validate,
             correct_branch_rating = correct_branch_rating,
+            solved_case = solved_case,
             filetype = split(lowercase(file), '.')[end],
         )
     end
@@ -34,6 +39,7 @@ function parse_file(
     import_all = false,
     validate = true,
     correct_branch_rating = true,
+    solved_case = false,
     filetype = "json",
 )
     if filetype == "m"
@@ -44,6 +50,7 @@ function parse_file(
             import_all = import_all,
             validate = validate,
             correct_branch_rating = correct_branch_rating,
+            solved_case = solved_case,
         )
     elseif filetype == "json"
         pm_data = parse_json(io; validate = validate)
