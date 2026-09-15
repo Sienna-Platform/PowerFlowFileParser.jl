@@ -1,7 +1,9 @@
 function _bus(id::Int, name::AbstractString)
-    bus = PFP.PO.ACBus()
+    bus = PFP.stage(PFP.PC.ACBus)
     PFP.set_value!(bus, :id, id)
     PFP.set_value!(bus, :name, name)
+    PFP.set_value!(bus, :available, true)
+    PFP.set_value!(bus, :number, id)
     return bus
 end
 
@@ -19,9 +21,10 @@ end
     PFP.add_component!(sys, _bus(1, "Abel"))
     PFP.add_component!(sys, _bus(2, "Adams"))
 
-    area = PFP.PO.Area()
+    area = PFP.stage(PFP.PC.Area)
     PFP.set_value!(area, :id, 3)
     PFP.set_value!(area, :name, "1")
+    PFP.set_value!(area, :base_power, 100.0, "MVA")
     PFP.add_component!(sys, area)
 
     @test PFP.component_type_names(sys) == ["ACBus", "Area"]
@@ -31,10 +34,21 @@ end
 
 @testset "component_type_names is sorted for deterministic output" begin
     sys = PFP.OpenAPISystem(100.0)
-    line = PFP.PO.Line()
+
+    line = PFP.stage(PFP.PO.Line)
     PFP.set_value!(line, :id, 1)
     PFP.set_value!(line, :name, "L1")
+    PFP.set_value!(line, :available, true)
+    PFP.set_value!(line, :arc, 0)
+    PFP.set_value!(line, :active_power_flow, 0.0, "MW")
+    PFP.set_value!(line, :reactive_power_flow, 0.0, "MVAr")
+    PFP.set_value!(line, :base_power, 100.0, "MVA")
+    PFP.set_value!(line, :r, 0.01, "pu")
+    PFP.set_value!(line, :x, 0.1, "pu")
+    PFP.set_value!(line, :rating, 1.0, "MVA")
+    PFP.set_value!(line, :angle_limits, (min = -0.5, max = 0.5), "rad")
     PFP.add_component!(sys, line)
+
     PFP.add_component!(sys, _bus(2, "Abel"))
     @test PFP.component_type_names(sys) == ["ACBus", "Line"]
 end
@@ -43,7 +57,7 @@ end
     sys = PFP.OpenAPISystem(100.0)
     PFP.add_component!(sys, _bus(1, "Abel"))
     PFP.add_component!(sys, _bus(2, "Adams"))
-    @test eltype(PFP.get_components(sys, "ACBus")) == PFP.PO.ACBus
+    @test eltype(PFP.get_components(sys, "ACBus")) == PFP.PC.ACBus
 end
 
 @testset "get_components on an absent type is empty, not an error" begin
@@ -62,7 +76,7 @@ end
 @testset "add_supplemental_attribute! records the attribute and its link" begin
     sys = PFP.OpenAPISystem(100.0)
     PFP.add_component!(sys, _bus(1, "Abel"))
-    geo = PFP.IC.GeographicInfo()
+    geo = PFP.stage(PFP.IC.GeographicInfo)
     PFP.set_value!(geo, :id, 2)
     PFP.set_value!(geo, :geo_json, Dict{String, Any}("type" => "Point"))
     PFP.add_supplemental_attribute!(sys, geo, 1)
@@ -71,7 +85,8 @@ end
     @test PFP.get_value(assoc, :attribute_id) == 2
     @test PFP.get_value(assoc, :component_id) == 1
     @test PFP.get_value(assoc, :component_type) == "ACBus"
-    @test only(PFP.get_supplemental_attributes(sys, "GeographicInfo")) === geo
+    materialized_geo = only(PFP.get_supplemental_attributes(sys, "GeographicInfo"))
+    @test PFP.get_value(materialized_geo, :id) == 2
 end
 
 @testset "add_service_association! records a membership row" begin

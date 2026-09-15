@@ -58,7 +58,7 @@ function make_switch_breaker!(
     arc_id = add_arc!(sys, from_id, to_id)
     state = Int(d["state"])
 
-    component = PO.DiscreteControlledACBranch()
+    component = stage(PO.DiscreteControlledACBranch)
     set_value!(component, :id, register!(reg, "DiscreteControlledACBranch", name))
     set_value!(component, :name, name)
     set_value!(component, :available, Bool(state))

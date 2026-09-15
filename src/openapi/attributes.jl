@@ -40,6 +40,7 @@ function _impedance_correction_curves(data::Dict)
             continue
         end
         curve = IC.PiecewiseLinearData(;
+            function_type = "PIECEWISE_LINEAR",
             points = [IC.XYCoords(; x = x[i], y = y[i]) for i in eachindex(x)],
         )
         control_mode =
@@ -67,7 +68,7 @@ function _new_impedance_correction_attribute!(
     transformer_id::Int,
 )
     curve, control_mode = curves[table_number]
-    attribute = PO.ImpedanceCorrectionData()
+    attribute = stage(PO.ImpedanceCorrectionData)
     set_value!(attribute, :id, next_id!(get_registry(sys)))
     set_value!(attribute, :table_number, table_number)
     set_value!(attribute, :impedance_correction_curve, curve)
@@ -89,7 +90,7 @@ shared attribute and multiple associations — see the file header.
 """
 function _attach_impedance_correction!(
     sys::OpenAPISystem,
-    cache::Dict{Tuple{Int, String}, PO.ImpedanceCorrectionData},
+    cache::Dict{Tuple{Int, String}, Staged{PO.ImpedanceCorrectionData}},
     curves::Dict{Int, Tuple{IC.PiecewiseLinearData, String}},
     d::Dict,
     table_key::AbstractString,
@@ -139,7 +140,7 @@ function read_substations!(sys::OpenAPISystem, data::Dict; kwargs...)
         bus_ids = unique(get_bus_id(reg, Int(node["bus"])) for node in nodes)
         name = string(d["name"])
 
-        attribute = PO.Substation()
+        attribute = stage(PO.Substation)
         set_value!(attribute, :id, register!(reg, "Substation", name))
         set_value!(attribute, :name, name)
         set_value!(attribute, :number, number)
@@ -170,7 +171,7 @@ function read_impedance_corrections!(sys::OpenAPISystem, data::Dict; kwargs...)
     bus_lookup = _pm_bus_lookup(sys)
     _get_branch_name = get(kwargs, :branch_name_formatter, _get_pm_branch_name)
     _get_3w_name = get(kwargs, :xfrm_3w_name_formatter, _get_pm_3w_name)
-    cache = Dict{Tuple{Int, String}, PO.ImpedanceCorrectionData}()
+    cache = Dict{Tuple{Int, String}, Staged{PO.ImpedanceCorrectionData}}()
 
     for (_, d) in _sorted_pm_entries(get(data, "branch", Dict{String, Any}()))
         if !haskey(d, "correction_table")

@@ -67,12 +67,12 @@ end
     @test PFP.get_value(shunt, :available) == d["status"]
     @test PFP.get_value(shunt, :admittance_units) == "COMPONENT_MVAR"
     @test _matches_nt(
-        PFP.get_value(shunt, :Y),
+        PFP.get_value(shunt, :y),
         (real = d["gs"] * base, imag = d["bs"] * base),
     )
     # The fixture's bus-111 FIXED SHUNT record declares GL/BL as 100.000/200.000, so
     # COMPONENT_MVAR must read back as the RAW's own MW/MVAr, not the pm dict's 1.0/2.0 pu.
-    @test _matches_nt(PFP.get_value(shunt, :Y), (real = 100.0, imag = 200.0))
+    @test _matches_nt(PFP.get_value(shunt, :y), (real = 100.0, imag = 200.0))
 end
 
 @testset "SwitchedAdmittance: control mode mapping, natural Y/Y_increase, admittance_limits passthrough" begin
@@ -87,12 +87,8 @@ end
         PFP.get_value(s, :bus) == PFP.get_bus_id(PFP.get_registry(sys), 101)
     )
     @test PFP.get_value(shunt, :control_mode) == "DISCRETE_VOLTAGE"
-    @test _matches_nt(
-        PFP.get_value(shunt, :Y),
-        (real = d["gs"] * base, imag = d["bs"] * base),
-    )
     @test PFP.get_value(shunt, :number_of_steps) == d["step_number"]
-    y_increase = PFP.get_value(shunt, :Y_increase)
+    y_increase = PFP.get_value(shunt, :y_increase)
     @test length(y_increase) == length(d["y_increment"])
     @test all(
         y_increase[i].real == real(d["y_increment"][i]) * base &&
@@ -101,9 +97,10 @@ end
     )
     # The fixture's bus-101 SWITCHED SHUNT record declares BINIT = 50.00 and B1 = 100.00,
     # so both must read back in the RAW's own MVAr rather than the pm dict's 0.5/1.0 pu.
-    # BINIT is the SOLVED admittance, not a fixed base: it lands in `solved_admittance` and
-    # `Y` stays zero, since a PSS/E switched shunt has no fixed base term (#1774).
-    @test _matches_nt(PFP.get_value(shunt, :Y), (real = 0.0, imag = 0.0))
+    # BINIT is the SOLVED admittance: a PSS/E switched shunt has no fixed base term
+    # (#1774), so SwitchedAdmittance dropped the fixed `Y` field entirely — total
+    # admittance is `number_engaged` steps of `y_increase`, with `solved_admittance`
+    # overriding when present.
     @test PFP.get_value(shunt, :solved_admittance) == 50.0
     @test only(y_increase).imag == 100.0
     @test _matches_nt(
@@ -333,8 +330,12 @@ end
     @test PFP.get_value(vsc_dc, :dc_control_from) == "DC_VOLTAGE"
     @test PFP.get_value(vsc_dc, :setpoint_voltage_units) == "COMPONENT_BASE"
     @test PFP.get_value(vsc_dc, :dc_setpoint_from) == 1.03
-    @test PFP.get_value(vsc_dc, :voltage_units) == "NATURAL_UNITS"
-    @test _matches_nt(PFP.get_value(vsc_dc, :voltage_limits_from), (min = 0.0, max = 999.9))
+    # make_vscline! has no pm dict source for voltage_units/voltage_limits_from — PSS/E's
+    # VSC record carries no DC-bus voltage bound — so both stay genuinely unset rather than
+    # defaulting to some placeholder range (see "unset properties are absent, not null" in
+    # test_openapi_serialize.jl).
+    @test PFP.get_value(vsc_dc, :voltage_units) === PFP.ABSENT
+    @test PFP.get_value(vsc_dc, :voltage_limits_from) === PFP.ABSENT
 
     d_ac = _synthetic_vscline_dict()
     d_ac["ac_voltage_control_from"] = true
@@ -349,8 +350,9 @@ end
     @test PFP.get_value(vsc_ac, :ac_control_from) == "AC_VOLTAGE"
     @test PFP.get_value(vsc_ac, :setpoint_voltage_units) == "COMPONENT_BASE"
     @test PFP.get_value(vsc_ac, :ac_setpoint_from) == 1.02
-    @test PFP.get_value(vsc_ac, :voltage_units) == "NATURAL_UNITS"
-    @test _matches_nt(PFP.get_value(vsc_ac, :voltage_limits_to), (min = 0.0, max = 999.9))
+    # See the vsc_dc case above: voltage_units/voltage_limits_to have no pm dict source.
+    @test PFP.get_value(vsc_ac, :voltage_units) === PFP.ABSENT
+    @test PFP.get_value(vsc_ac, :voltage_limits_to) === PFP.ABSENT
 end
 
 @testset "TwoTerminalVSCLine: dc_setpoint_from/to convert correctly under DC_VOLTAGE and DC_VOLTAGE_DROOP" begin
@@ -364,7 +366,8 @@ end
     # unit "pu" equals the COMPONENT_BASE-branch declared unit "pu", and "pu"
     # carries no fixed conversion factor (to_default: null in
     # Core/units.json) -- there is nothing left to scale.
-    vsc = PFP.PO.TwoTerminalVSCLine()
+    vsc = PFP.stage(PFP.PO.TwoTerminalVSCLine)
+    PFP.set_value!(vsc, :power_units, "NATURAL_UNITS")
     PFP.set_value!(vsc, :dc_control_from, "DC_VOLTAGE")
     PFP.set_value!(vsc, :setpoint_voltage_units, "COMPONENT_BASE")
     PFP.set_value!(vsc, :dc_setpoint_from, 515.0 / 500.0, "pu")
@@ -400,7 +403,8 @@ end
     # happens before this value reaches PSY. Passing "pu" here is again an
     # identity: source unit "pu" equals the AC_VOLTAGE/COMPONENT_BASE-branch
     # declared unit "pu".
-    vsc = PFP.PO.TwoTerminalVSCLine()
+    vsc = PFP.stage(PFP.PO.TwoTerminalVSCLine)
+    PFP.set_value!(vsc, :power_units, "NATURAL_UNITS")
     PFP.set_value!(vsc, :ac_control_from, "AC_VOLTAGE")
     PFP.set_value!(vsc, :setpoint_voltage_units, "COMPONENT_BASE")
     PFP.set_value!(vsc, :ac_setpoint_from, 1.02, "pu")

@@ -26,7 +26,12 @@
     @test PFP.get_value(switch, :active_power_flow) == 0.0
     @test PFP.get_value(switch, :reactive_power_flow) == 0.0
     @test PFP.get_value(switch, :base_power) == 100.0  # sys_mbase
-    @test PFP.get_value(switch, :normal_branch_status) == "CLOSED"  # schema default, unset
+    # OpenAPI.jl 1.x dropped the mutable-model runtime that used to auto-populate an
+    # unset field from the JSON schema's own `default`; a `@kwdef` struct's field default
+    # is uniformly `ABSENT`, so a field read_switch_breaker! never stages (there is no pm
+    # dict source for a "normal" as-designed status, only the current one) now stays
+    # genuinely absent rather than reading back the schema's documented "CLOSED" default.
+    @test PFP.get_value(switch, :normal_branch_status) === PFP.ABSENT
 
     breaker = only(
         c for c in PFP.get_components(sys, "DiscreteControlledACBranch") if

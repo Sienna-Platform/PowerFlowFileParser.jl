@@ -93,16 +93,16 @@ why each component states the convention it was written in.
 uses_per_unit(sys::OpenAPISystem) = sys.power_units == "COMPONENT_BASE"
 
 """
-Add `component` to the document, first stamping this run's `power_units` onto it when
+Materialize `staged` into the document, first stamping this run's `power_units` onto it when
 its PO type declares the field — the per-component wire-contract requirement every
 power-bearing type carries (a component with none, e.g. a pure topology row, is
 untouched).
 """
-function add_component!(sys::OpenAPISystem, component::T) where {T <: OpenAPI.APIModel}
+function add_component!(sys::OpenAPISystem, staged::Staged{T}) where {T <: IC.APIModel}
     if hasfield(T, :power_units)
-        setproperty!(component, :power_units, sys.power_units)
+        set_value!(staged, :power_units, sys.power_units)
     end
-    PD.add_component!(get_document(sys), component)
+    PD.add_component!(get_document(sys), materialize(staged))
     return
 end
 
@@ -116,10 +116,10 @@ caller need not know it.
 """
 function add_supplemental_attribute!(
     sys::OpenAPISystem,
-    attribute::OpenAPI.APIModel,
+    attribute::Staged,
     component_id::Int,
 )
-    PD.add_supplemental_attribute!(get_document(sys), attribute, component_id)
+    PD.add_supplemental_attribute!(get_document(sys), materialize(attribute), component_id)
     return
 end
 
@@ -139,17 +139,17 @@ disagree.
 """
 function add_supplemental_attribute_association!(
     sys::OpenAPISystem,
-    attribute::OpenAPI.APIModel,
+    attribute::Staged{T},
     component_id::Int,
     component_type::AbstractString,
-)
+) where {T}
     push!(
         get_document(sys).supplemental_attribute_associations,
         IC.SupplementalAttributeAssociation(;
             component_id = component_id,
             component_type = String(component_type),
             attribute_id = get_value(attribute, :id),
-            attribute_type = string(nameof(typeof(attribute))),
+            attribute_type = string(nameof(T)),
         ),
     )
     return

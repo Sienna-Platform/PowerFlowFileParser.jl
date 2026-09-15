@@ -10,19 +10,33 @@
 # `data["vscline"]` and `data["interarea_transfer"]` are NOT native PowerModels sections;
 # see the per-maker docstrings below for how PFFP's own `psse.jl` pre-scales their fields.
 
-"""A linear `TwoTerminalLoss` curve from a pm dict's `loss0`/`loss1` fields, shared by
-`TwoTerminalLCCLine` and `TwoTerminalGenericHVDCLine`."""
-function _two_terminal_loss(d::Dict)
-    return PC.TwoTerminalLoss(
-        PC.InputOutputCurve(;
-            function_data = PC.InputOutputCurveFunctionData(
-                IC.LinearFunctionData(;
-                    proportional_term = d["loss1"],
-                    constant_term = d["loss0"],
+"""A linear `LossCurve` with fixed `"NATURAL_UNITS"` power units, shared by every
+converter/two-terminal loss curve site: loss values arrive unscaled regardless of the
+run's own `power_units` convention (see this file's header), the same fixed-natural
+pattern `cost.jl`'s `_zero_cost_curve` uses."""
+function _loss_curve(proportional_term::Float64, constant_term::Float64)
+    return PC.LossCurve(;
+        power_units = IC.UnitSystem("NATURAL_UNITS"),
+        value_curve = PC.LossValueCurve(
+            PC.InputOutputCurve(;
+                curve_type = "INPUT_OUTPUT",
+                function_data = PC.InputOutputCurveFunctionData(
+                    IC.LinearFunctionData(;
+                        function_type = "LINEAR",
+                        proportional_term = proportional_term,
+                        constant_term = constant_term,
+                    ),
                 ),
             ),
         ),
     )
+end
+
+"""A linear `LossCurve` from a pm dict's `loss0`/`loss1` fields, shared by
+`TwoTerminalLCCLine` and `TwoTerminalGenericHVDCLine`. `TwoTerminalLoss` no longer exists
+(the two per-owner loss wrappers collapsed into this one shared `LossCurve`)."""
+function _two_terminal_loss(d::Dict)
+    return _loss_curve(d["loss1"], d["loss0"])
 end
 
 """Two-terminal LCC HVDC line (PSS/E)."""
@@ -36,7 +50,7 @@ function make_lcc_line!(
     sys_mbase::Float64,
 )
     arc_id = add_arc!(sys, from_id, to_id)
-    component = PO.TwoTerminalLCCLine()
+    component = stage(PO.TwoTerminalLCCLine)
     set_value!(component, :id, register!(reg, "TwoTerminalLCCLine", name))
     set_value!(component, :name, name)
     set_value!(component, :available, Bool(d["available"]))
@@ -107,7 +121,7 @@ function make_generic_hvdc_line!(
     sys_mbase::Float64,
 )
     arc_id = add_arc!(sys, from_id, to_id)
-    component = PO.TwoTerminalGenericHVDCLine()
+    component = stage(PO.TwoTerminalGenericHVDCLine)
     set_value!(component, :id, register!(reg, "TwoTerminalGenericHVDCLine", name))
     set_value!(component, :name, name)
     set_value!(component, :available, d["br_status"] == 1)
@@ -190,7 +204,7 @@ function make_vscline!(
     sys_mbase::Float64,
 )
     arc_id = add_arc!(sys, from_id, to_id)
-    component = PO.TwoTerminalVSCLine()
+    component = stage(PO.TwoTerminalVSCLine)
     set_value!(component, :id, register!(reg, "TwoTerminalVSCLine", name))
     set_value!(component, :name, name)
     set_value!(component, :available, Bool(d["available"]))
@@ -227,13 +241,9 @@ function make_vscline!(
     set_value!(
         component,
         :converter_loss_from,
-        PC.InputOutputCurve(;
-            function_data = PC.InputOutputCurveFunctionData(
-                IC.LinearFunctionData(;
-                    proportional_term = IS.get_proportional_term(d["converter_loss_from"]),
-                    constant_term = IS.get_constant_term(d["converter_loss_from"]),
-                ),
-            ),
+        _loss_curve(
+            IS.get_proportional_term(d["converter_loss_from"]),
+            IS.get_constant_term(d["converter_loss_from"]),
         ),
     )
     set_value!(component, :max_dc_current_from, d["max_dc_current_from"], "A")
@@ -242,7 +252,7 @@ function make_vscline!(
         (min = d["qminf"] * sys_mbase, max = d["qmaxf"] * sys_mbase), "MVAr")
     set_value!(component, :power_factor_weighting_fraction_from,
         d["power_factor_weighting_fraction_from"], "1")
-    set_value!(component, :remote_bus_control_from, _psse_remote_bus(d, "REMOT_FROM"))
+    _set_nullable!(component, :remote_bus_control_from, _psse_remote_bus(d, "REMOT_FROM"))
     set_value!(component, :rmpct_from, get(get(d, "ext", Dict()), "RMPCT_FROM", 100.0), "1")
     set_value!(component, :reactive_power_to, get(d, "qt", 0.0) * sys_mbase, "MVAr")
     if d["dc_voltage_control_to"]
@@ -263,13 +273,9 @@ function make_vscline!(
     set_value!(
         component,
         :converter_loss_to,
-        PC.InputOutputCurve(;
-            function_data = PC.InputOutputCurveFunctionData(
-                IC.LinearFunctionData(;
-                    proportional_term = IS.get_proportional_term(d["converter_loss_to"]),
-                    constant_term = IS.get_constant_term(d["converter_loss_to"]),
-                ),
-            ),
+        _loss_curve(
+            IS.get_proportional_term(d["converter_loss_to"]),
+            IS.get_constant_term(d["converter_loss_to"]),
         ),
     )
     set_value!(component, :max_dc_current_to, d["max_dc_current_to"], "A")
@@ -278,12 +284,31 @@ function make_vscline!(
         (min = d["qmint"] * sys_mbase, max = d["qmaxt"] * sys_mbase), "MVAr")
     set_value!(component, :power_factor_weighting_fraction_to,
         d["power_factor_weighting_fraction_to"], "1")
-    set_value!(component, :remote_bus_control_to, _psse_remote_bus(d, "REMOT_TO"))
+    _set_nullable!(component, :remote_bus_control_to, _psse_remote_bus(d, "REMOT_TO"))
     set_value!(component, :rmpct_to, get(get(d, "ext", Dict()), "RMPCT_TO", 100.0), "1")
     set_value!(component, :rated_dc_voltage, d["rated_dc_voltage"], "kV")
     set_value!(component, :base_power, sys_mbase, "MVA")
     add_component!(sys, component)
     set_component_ext!(sys, component, get(d, "ext", Dict{String, Any}()))
+    return
+end
+
+"""
+Assign a field whose declared type keeps `Nothing` as a real schema value (not merely
+the optional-field placeholder every generated field also carries): units.jl's
+`_concrete_field_type` always strips both `Absent` and `Nothing` before computing the
+single concrete type `_coerce` builds, on the assumption that `Nothing` is only ever that
+placeholder, so `_coerce` cannot construct a bare `nothing` for a field like
+`remote_bus_control_from`/`_to`, whose schema spells "regulates its own terminal bus" as an
+explicit `null` rather than an absent field. Only these two fields need this today; a
+non-`nothing` value still goes through the normal `set_value!` enforcement.
+"""
+function _set_nullable!(s::Staged, prop::Symbol, value)
+    if isnothing(value)
+        s.fields[prop] = nothing
+    else
+        set_value!(s, prop, value)
+    end
     return
 end
 
@@ -396,7 +421,7 @@ function read_area_interchanges!(sys::OpenAPISystem, data::Dict; kwargs...)
         end
         name = "$(area_from_name)_$(area_to_name)_$(transfer_id)"
 
-        component = PO.AreaInterchange()
+        component = stage(PO.AreaInterchange)
         set_value!(component, :id, register!(reg, "AreaInterchange", name))
         set_value!(component, :name, name)
         set_value!(component, :available, true)

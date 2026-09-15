@@ -80,7 +80,7 @@ function _make_standard_load!(
     name::AbstractString,
     base_power::Float64,
 )
-    load = PO.StandardLoad()
+    load = stage(PO.StandardLoad)
     _set_load_identity!(load, reg, "StandardLoad", name, bus_id, d["status"], base_power)
     set_value!(load, :conformity, _conformity_string(Int(d["conformity"])))
     _set_zip_fields!(load, d, base_power)
@@ -96,7 +96,7 @@ function _make_interruptible_standardload!(
     name::AbstractString,
     base_power::Float64,
 )
-    load = PO.InterruptibleStandardLoad()
+    load = stage(PO.InterruptibleStandardLoad)
     _set_load_identity!(load, reg, "InterruptibleStandardLoad", name, bus_id, d["status"],
         base_power)
     set_value!(load, :operation_cost, make_load_cost())
@@ -114,7 +114,7 @@ function _make_power_load!(
     name::AbstractString,
     base_power::Float64,
 )
-    load = PO.PowerLoad()
+    load = stage(PO.PowerLoad)
     _set_load_identity!(load, reg, "PowerLoad", name, bus_id, d["status"], base_power)
     set_value!(load, :active_power, d["pd"] * base_power, "MW")
     set_value!(load, :reactive_power, d["qd"] * base_power, "MVAr")
@@ -143,15 +143,17 @@ function _make_dgen_renewable!(
     name = string(load_name, "_dgen")
     active_power = dgen["pg"] * base_power
     reactive_power = dgen["qg"] * base_power
-    component = PO.RenewableNonDispatch()
+    component = stage(PO.RenewableNonDispatch)
     set_value!(component, :id, register!(reg, "RenewableNonDispatch", name))
     set_value!(component, :name, name)
     set_value!(component, :available, Bool(dgen["status"]))
     set_value!(component, :bus, bus_id)
+    # prime_mover_type is a required enum field `_shadow` can't placeholder (see `stage`'s
+    # docstring); stage it before active_power below.
+    set_value!(component, :prime_mover_type, "OT")
     set_value!(component, :active_power, active_power, "MW")
     set_value!(component, :reactive_power, reactive_power, "MVAr")
     set_value!(component, :rating, hypot(dgen["pg"], dgen["qg"]) * base_power, "MVA")
-    set_value!(component, :prime_mover_type, "OT")
     set_value!(component, :power_factor, 1.0, "1")
     set_value!(component, :base_power, base_power, "MVA")
     add_component!(sys, component)

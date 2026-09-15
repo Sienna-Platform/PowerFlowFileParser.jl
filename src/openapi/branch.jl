@@ -252,7 +252,7 @@ function _make_transformer_circuit!(
     reactive_power_flow::Real,
 )
     arc_id = add_arc!(sys, from_id, to_id)
-    circuit = PO.TransformerCircuit()
+    circuit = stage(PO.TransformerCircuit)
     set_value!(circuit, :id, next_id!(reg))
     set_value!(circuit, :available, available)
     set_value!(circuit, :arc, arc_id)
@@ -293,7 +293,7 @@ function make_line!(
     available = _branch_available(d["br_status"] == 1, from_isolated, to_isolated)
     arc_id = add_arc!(sys, from_id, to_id)
 
-    line = PO.Line()
+    line = stage(PO.Line)
     set_value!(line, :id, register!(reg, "Line", name))
     set_value!(line, :name, name)
     set_value!(line, :available, available)
@@ -339,7 +339,7 @@ function make_switch_from_zero_impedance_branch!(
     end
     @warn "Branch $name has zero impedance and available = $available; converting to a DiscreteControlledACBranch of type SWITCH with available = $available and branch_status = $status"
 
-    component = PO.DiscreteControlledACBranch()
+    component = stage(PO.DiscreteControlledACBranch)
     set_value!(component, :id, register!(reg, "DiscreteControlledACBranch", name))
     set_value!(component, :name, name)
     set_value!(component, :available, available)
@@ -423,7 +423,7 @@ function make_transformer_2w!(
         reactive_power_flow = get(d, "qf", 0.0) * base_power,
     )
 
-    component = PO.TwoWindingTransformer()
+    component = stage(PO.TwoWindingTransformer)
     set_value!(component, :id, register!(reg, "TwoWindingTransformer", name))
     set_value!(component, :name, name)
     set_value!(component, :circuit, circuit_id)
@@ -491,7 +491,7 @@ function make_3w_transformer!(
         reactive_power_flow = d["reactive_power_flow_tertiary"],
     )
 
-    component = PO.ThreeWindingTransformer()
+    component = stage(PO.ThreeWindingTransformer)
     set_value!(component, :id, register!(reg, "ThreeWindingTransformer", name))
     set_value!(component, :name, name)
     set_value!(component, :primary_circuit, primary_circuit)
