@@ -146,6 +146,92 @@ end
     @test !haskey(pm_v33["bus"][3], "area_slack")
 end
 
+@testset "PSSE v35 switched shunts: block statuses, and when BINIT is believed" begin
+    # Si is a block status, so an in-service block engages all Ni of its steps. BINIT is
+    # only the device's admittance where PSS/E would not have adjusted it. See issue #57.
+    file = joinpath(@__DIR__, "fixtures", "v35_switched_shunt.raw")
+    pm_data = PowerModelsData(file).data
+    @test pm_data["source_version"] == "35"
+
+    shunts = values(pm_data["switched_shunt"])
+    at(bus, id) = only(
+        v for v in shunts if v["shunt_bus"] == bus && strip(v["sw_id"]) == id
+    )
+
+    # MODSW=1 on a type 1 bus: BINIT (60 MVAr) is only a starting value, so it is dropped
+    # and the engaged blocks stand -- 3 steps of B1, none of the out-of-service B2.
+    adjusted = at(2, "1")
+    @test adjusted["control_mode"] == 1
+    @test !haskey(adjusted, "solved_admittance")
+    @test adjusted["step_number"] == [3, 2]
+    @test adjusted["y_increment"] == [0.1im, 0.2im]
+    @test adjusted["number_engaged"] == [3, 0]
+
+    # MODSW=0: locked at BINIT, which PSS/E never moves.
+    locked = at(2, "2")
+    @test locked["control_mode"] == 0
+    @test locked["solved_admittance"] == 0.45
+    @test locked["number_engaged"] == [2]
+
+    # MODSW=2: the admittance is off the step ladder, so the blocks cannot express it.
+    continuous = at(2, "3")
+    @test continuous["control_mode"] == 2
+    @test continuous["solved_admittance"] == 0.375
+
+    # A shunt on the type 3 (swing) bus is locked whatever MODSW says.
+    swing = at(1, "1")
+    @test swing["control_mode"] == 1
+    @test swing["solved_admittance"] == 0.25
+
+    # The bus-3 record has N2=0, which terminates the block list: the nonzero B3 columns
+    # past it are not a third block.
+    terminated = at(3, "1")
+    @test terminated["step_number"] == [2]
+    @test terminated["y_increment"] == [0.08im]
+    @test terminated["number_engaged"] == [2]
+
+    # Declaring the case solved takes BINIT at face value everywhere.
+    solved = PowerModelsData(file; solved_case = true).data
+    solved_at(bus, id) = only(
+        v for v in values(solved["switched_shunt"]) if
+        v["shunt_bus"] == bus && strip(v["sw_id"]) == id
+    )
+    @test solved_at(2, "1")["solved_admittance"] == 0.6
+    @test solved_at(3, "1")["solved_admittance"] == 0.16
+    @test solved_at(2, "1")["number_engaged"] == [3, 0]
+end
+
+@testset "PSSE switched shunt swing-bus rule survives a node-breaker split" begin
+    # The type 3 rule is about the RAW's own bus I, not the node-bus the shunt routes onto:
+    # `_prepare_node_breaker!` initializes those to PQ, and only a generator promotes one
+    # back -- in a pass that runs after this section.
+    raw = read_fixture(joinpath(@__DIR__, "fixtures", "synthetic_v35_node_breaker.raw"))
+
+    # Make the substation's bus 2 the swing bus, leaving bus 1 PV with its generator, and
+    # put a MODSW=1 switched shunt on node 2 -- not the representative node, so it lands on
+    # an injected node-bus rather than on bus 2 itself.
+    patched = replace(
+        raw,
+        "     1,'BUSONE      ', 138.0000,3," => "     1,'BUSONE      ', 138.0000,2,",
+        "     2,'BUSTWO      ', 138.0000,1," => "     2,'BUSTWO      ', 138.0000,3,",
+        "0 / END OF FACTS DEVICE DATA, BEGIN SWITCHED SHUNT DATA\n" =>
+            "0 / END OF FACTS DEVICE DATA, BEGIN SWITCHED SHUNT DATA\n" *
+            "     2,'1 ',    1,   0,   1, 1.05000, 0.95000,     0,    0, 100.0," *
+            "'        ',   30.000,  1,  2,    10.000\n",
+        "     0 / END OF SUBSTATION TERMINAL DATA" => "     2,  2, 'S',       '1 '\n     0 / END OF SUBSTATION TERMINAL DATA",
+    )
+    @test patched != raw
+
+    pm_data = parse_file(IOBuffer(patched); filetype = "raw")
+    shunt = only(values(pm_data["switched_shunt"]))
+
+    @test shunt["shunt_bus"] != 2
+    @test pm_data["bus"][shunt["shunt_bus"]]["bus_type"] == PFP.PM_BUS_TYPE_PQ
+    @test pm_data["bus"][2]["bus_type"] == PFP.PM_BUS_TYPE_REF
+    @test shunt["control_mode"] == 1
+    @test shunt["solved_admittance"] == 0.3
+end
+
 @testset "PSSE pre-v35 switched shunts carry BINIT separately from the blocks" begin
     # Pre-v35 SWITCHED SHUNT records have no per-block status field, so how many steps of
     # each block are engaged is unknown and `number_engaged` is zero-filled to record that.

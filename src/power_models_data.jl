@@ -27,6 +27,8 @@ Currently Supports MATPOWER and PSSE data files parsed by PowerModels.
 - `pm_data_corrections::Bool=true`: Run PowerModels data corrections (validation)
 - `import_all::Bool=false`: Import all fields from PTI files
 - `correct_branch_rating::Bool=true`: Correct branch ratings during parsing
+- `solved_case::Bool=false`: Treat a PSS(R)E .raw file as written out from a converged
+  power flow, so switched shunts take BINIT as their solved admittance
 
 # Example
 ```julia
@@ -38,11 +40,13 @@ function PowerModelsData(file::Union{String, IO}; kwargs...)
     validate = get(kwargs, :pm_data_corrections, true)
     import_all = get(kwargs, :import_all, false)
     correct_branch_rating = get(kwargs, :correct_branch_rating, true)
+    solved_case = get(kwargs, :solved_case, false)
     pm_dict = parse_file(
         file;
         import_all = import_all,
         validate = validate,
         correct_branch_rating = correct_branch_rating,
+        solved_case = solved_case,
     )
     pm_data = PowerModelsData(pm_dict)
     correct_pm_transformer_status!(pm_data)
