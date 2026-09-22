@@ -31,7 +31,8 @@ PowerFlowFileParser.jl applies the following conventions when parsing MATPOWER a
   - **Transformer Susceptance**: MATPOWER transformer susceptance is split evenly between `from` and `to` ends to match PSS/E modeling.
   - **Tap Settings**: Automatically corrects tap values to be within defined ranges (mirrors PSS/E internal behavior not reflected in RAW files).
   - **Multi-Section Lines**: Parsed as individual line segments with intermediate "dummy buses" added to the network.
-  - **Geographic Data** (PSS/E v35): Substation coordinates automatically parsed when available.
+  - **PSS/E v34 field order**: v34 files share v35's section layout but keep the v33 field order in LOAD, GENERATOR, TWO-TERMINAL DC, VSC converter, FACTS, SWITCHED SHUNT and transformer winding records, with the v34 fields (`NREG`, `NDR`/`NDI`, `DGENP`/`DGENQ`/`DGENM`, winding `NOD`) appended at the end. The version is read from the `REV` header field; `@!` column comments are ignored.
+  - **Geographic Data** (PSS/E v34 and v35): Substation coordinates automatically parsed when available.
   - **Interruptible Loads** (PSS/E v35): Interruptible load flags preserved in parsed data.
   - **Conforming/Non-Conforming Loads**: Load conforming status preserved as enum values.
   - **Breakers and Switches**: Distinguished by enum but use same data structure.

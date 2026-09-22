@@ -40,6 +40,9 @@ const _pti_sections_v35 = let branch = findfirst(==("BRANCH"), _pti_sections)
     )
 end
 
+"""v34 introduced the section layout v35 kept; the two differ only in record fields."""
+const _pti_sections_v34 = _pti_sections_v35
+
 """
 Section order for PSS(R)E v29/v30 raw files. v30 has no FIXED SHUNT section, and
 places SWITCHED SHUNT immediately after VOLTAGE SOURCE CONVERTER rather than near
@@ -196,6 +199,9 @@ const _load_dtypes_v35 = vcat(
 
 const _load_dtypes_v30 = _load_dtypes[1:13]
 
+# v34 appends the distributed-generation fields to the v33 record; LOADTYPE arrives in v35.
+const _load_dtypes_v34 = _load_dtypes_v35[1:17]
+
 const _fixed_shunt_dtypes = [
     ("I", Int64),
     ("ID", String),
@@ -246,6 +252,9 @@ const _generator_dtypes_v35 = vcat(
 )
 
 const _generator_dtypes_v30 = _generator_dtypes[1:26]
+
+# v34 appends NREG to the v33 record; v35 moves it after IREG and adds BASLOD.
+const _generator_dtypes_v34 = vcat(_generator_dtypes, [("NREG", Int64)])
 
 const _branch_dtypes = [
     ("I", Int64),
@@ -551,6 +560,20 @@ const _transformer_2_3_dtypes_v35 = _transformer_2_3_dtypes
 
 const _transformer_2_3_dtypes_v30 = _transformer_2_3_dtypes
 
+"""
+Move the winding node field `NODn` to the end of a v35 winding-line table. PSS/E 34
+writes NODn after CNXAn; v35 moves it after CONTn.
+"""
+function _node_field_last(dtypes::Vector)
+    is_node_field(entry) = startswith(first(entry), "NOD")
+    return vcat(filter(!is_node_field, dtypes), filter(is_node_field, dtypes))
+end
+
+const _transformer_2_2_dtypes_v34 = _node_field_last(_transformer_2_2_dtypes_v35)
+const _transformer_3_2_dtypes_v34 = _node_field_last(_transformer_3_2_dtypes_v35)
+const _transformer_3_3_dtypes_v34 = _node_field_last(_transformer_3_3_dtypes_v35)
+const _transformer_3_4_dtypes_v34 = _node_field_last(_transformer_3_4_dtypes_v35)
+
 const _area_interchange_dtypes =
     [("I", Int64), ("ISW", Int64), ("PDES", Float64), ("PTOL", Float64), ("ARNAME", String)]
 
@@ -615,6 +638,15 @@ const _two_terminal_line_dtypes_v35 = vcat(
 
 const _two_terminal_line_dtypes_v30 = vcat([("I", Int64)], _two_terminal_line_dtypes[2:end])
 
+# v34 appends the commutating-bus node to each converter line (NDR after XCAPR, NDI after
+# XCAPI); v35 moves them after ICR and ICI.
+const _two_terminal_line_dtypes_v34 = vcat(
+    _two_terminal_line_dtypes[1:29],
+    [("NDR", Int64)],
+    _two_terminal_line_dtypes[30:end],
+    [("NDI", Int64)],
+)
+
 const _vsc_line_dtypes = [
     ("NAME", String),
     ("MDC", Int64),
@@ -649,7 +681,12 @@ const _vsc_subline_dtypes = [
     ("RMPCT", Float64),
 ]
 
-const _vsc_subline_dtypes_v35 = _vsc_subline_dtypes
+# REMOT is the regulated bus (VSREG in the PSS/E 34+ manuals). v34 appends NREG after
+# RMPCT; v35 places NREG before RMPCT. Both carry 16 fields.
+const _vsc_subline_dtypes_v34 = vcat(_vsc_subline_dtypes, [("NREG", Int64)])
+
+const _vsc_subline_dtypes_v35 =
+    vcat(_vsc_subline_dtypes[1:14], [("NREG", Int64)], _vsc_subline_dtypes[15:15])
 
 const _impedance_correction_dtypes = [
     ("I", Int64),
@@ -825,6 +862,12 @@ const _FACTS_dtypes_v35 = vcat(
 
 const _FACTS_dtypes_v30 = vcat([("N", Int64)], _FACTS_dtypes[2:19])
 
+# v34 order is FCREG, MNAME, NREG; v35 swaps the last two.
+const _FACTS_dtypes_v34 = vcat(
+    _FACTS_dtypes[1:19],
+    [("FCREG", Int64), ("MNAME", String), ("NREG", Int64)],
+)
+
 const _switched_shunt_dtypes = [
     ("I", Int64),
     ("MODSW", Int64),
@@ -876,6 +919,9 @@ const _switched_shunt_dtypes_v35 = vcat(
 
 const _switched_shunt_dtypes_v30 =
     vcat(_switched_shunt_dtypes[1:2], _switched_shunt_dtypes[5:end])
+
+# v34 keeps the v33 layout (column 7 named SWREM here, SWREG in PSS/E) and appends NREG.
+const _switched_shunt_dtypes_v34 = vcat(_switched_shunt_dtypes, [("NREG", Int64)])
 
 # TODO: Account for multiple lines in GNE Device entries
 const _gne_device_dtypes = [
@@ -1068,6 +1114,23 @@ const _pti_dtypes_v30 = merge(
     ),
 )
 
+"""v34 shares the v35 section layout; these records carry v34's own field order."""
+const _pti_dtypes_v34 = merge(
+    _pti_dtypes_v35,
+    Dict{String, Array}(
+        "LOAD" => _load_dtypes_v34,
+        "GENERATOR" => _generator_dtypes_v34,
+        "TRANSFORMER TWO-WINDING LINE 2" => _transformer_2_2_dtypes_v34,
+        "TRANSFORMER THREE-WINDING LINE 2" => _transformer_3_2_dtypes_v34,
+        "TRANSFORMER THREE-WINDING LINE 3" => _transformer_3_3_dtypes_v34,
+        "TRANSFORMER THREE-WINDING LINE 4" => _transformer_3_4_dtypes_v34,
+        "TWO-TERMINAL DC" => _two_terminal_line_dtypes_v34,
+        "VOLTAGE SOURCE CONVERTER SUBLINES" => _vsc_subline_dtypes_v34,
+        "FACTS CONTROL DEVICE" => _FACTS_dtypes_v34,
+        "SWITCHED SHUNT" => _switched_shunt_dtypes_v34,
+    ),
+)
+
 const _default_case_identification = Dict(
     "IC" => 0,
     "SBASE" => 100.0,
@@ -1128,8 +1191,13 @@ const _default_load_v35 = merge(
         "DGENP" => 0.0,
         "DGENQ" => 0.0,
         "DGENM" => 0.0,
-        "LOADTYPE" => nothing,
+        "LOADTYPE" => ""  # blanks by default per the PSS/E manual
     ),
+)
+
+const _default_load_v34 = merge(
+    _default_load,
+    Dict("DGENP" => 0.0, "DGENQ" => 0.0, "DGENM" => 0.0),
 )
 
 const _default_fixed_shunt = Dict("ID" => "1", "STATUS" => 1, "GL" => 0.0, "BL" => 0.0)
@@ -1170,6 +1238,8 @@ const _default_generator_v35 = merge(_default_generator, Dict(
     "NREG" => 0,
     "BASLOD" => 0,
 ))
+
+const _default_generator_v34 = merge(_default_generator, Dict("NREG" => 0))
 
 const _default_branch = Dict(
     "CKT" => "1",
@@ -1386,6 +1456,7 @@ const _default_vsc_dc = Dict(
         "MAXQ" => 9999.0,
         "MINQ" => -9999.0,
         "REMOT" => 0,
+        "NREG" => 0,
         "RMPCT" => 100.0,
     ),
 )
@@ -1532,7 +1603,10 @@ const _default_switched_shunt = Dict(
 # dict into SWITCHED SHUNT components regardless of the RAW's own fields, and
 # v30 switched shunts have no ID field to default. "1" is the PSS/E v35
 # documented default for an omitted switched-shunt ID.
-const _default_switched_shunt_v35 = merge(_default_switched_shunt, Dict("ID" => "1"))
+const _default_switched_shunt_v35 =
+    merge(_default_switched_shunt, Dict("ID" => "1", "NREG" => 0))
+
+const _default_switched_shunt_v34 = merge(_default_switched_shunt, Dict("NREG" => 0))
 
 const _default_gne_device = Dict(
     "NTERM" => 1,
@@ -1635,14 +1709,14 @@ const _pti_defaults = Dict(
 
 const _pti_defaults_v35 = Dict(
     "BUS" => _default_bus,
-    "LOAD" => _default_load,
+    "LOAD" => _default_load_v35,
     "FIXED SHUNT" => _default_fixed_shunt,
-    "GENERATOR" => _default_generator,
+    "GENERATOR" => _default_generator_v35,
     "BRANCH" => _default_branch,
     "SWITCHING DEVICE" => _default_switching_device_v35,
-    "TRANSFORMER" => _default_transformer,
+    "TRANSFORMER" => _default_transformer_v35,
     "AREA INTERCHANGE" => _default_area_interchange,
-    "TWO-TERMINAL DC" => _default_two_terminal_dc,
+    "TWO-TERMINAL DC" => _default_two_terminal_dc_v35,
     "VOLTAGE SOURCE CONVERTER" => _default_vsc_dc,
     "IMPEDANCE CORRECTION" => _default_impedance_correction,
     "MULTI-TERMINAL DC" => _default_multi_term_dc,
@@ -1650,7 +1724,7 @@ const _pti_defaults_v35 = Dict(
     "ZONE" => _default_zone,
     "INTER-AREA TRANSFER" => _default_interarea,
     "OWNER" => _default_owner,
-    "FACTS CONTROL DEVICE" => _default_facts,
+    "FACTS CONTROL DEVICE" => _default_facts_v35,
     "SWITCHED SHUNT" => _default_switched_shunt_v35,
     "CASE IDENTIFICATION" => _default_case_identification,
     "GNE DEVICE" => _default_gne_device,
@@ -1668,6 +1742,15 @@ const _pti_defaults_v30 = merge(
         "CASE IDENTIFICATION" => _default_case_identification_v30,
         "GENERATOR" => _default_generator_v30,
         "LOAD" => _default_load_v30,
+    ),
+)
+
+const _pti_defaults_v34 = merge(
+    _pti_defaults_v35,
+    Dict{String, Dict{String}}(
+        "LOAD" => _default_load_v34,
+        "GENERATOR" => _default_generator_v34,
+        "SWITCHED SHUNT" => _default_switched_shunt_v34,
     ),
 )
 
@@ -1848,6 +1931,21 @@ function _parse_elements(
 end
 
 """
+Drop one matching pair of single or double quotes around `element`, keeping the padding
+inside them. PSS/E quotes names with either style.
+"""
+function _strip_quote_pair(element::AbstractString)
+    if length(element) < 2
+        return element
+    end
+    opening = first(element)
+    if (opening == '\'' || opening == '"') && last(element) == opening
+        return chop(element[nextind(element, 1):end])
+    end
+    return element
+end
+
+"""
     _parse_line_element!(data, elements, section)
 
 Internal function. Parses a single "line" of data elements from a PTI file, as
@@ -1875,8 +1973,8 @@ function _parse_line_element!(
             if dtype != String && element != ""
                 data[field] = parse(dtype, element)
             else
-                if dtype == String && startswith(element, "'") && endswith(element, "'")
-                    data[field] = chop(element[nextind(element, 1):end])
+                if dtype == String
+                    data[field] = _strip_quote_pair(element)
                 else
                     data[field] = element
                 end
@@ -1997,10 +2095,14 @@ function _unquote(element::AbstractString)
     return String(strip(strip(element, _substation_quote_chars)))
 end
 
-function _parse_substation_terminal(elements::Vector{String}, line_index::Int)
-    length(elements) < 4 && throw(
+function _parse_substation_terminal(
+    elements::Vector{String},
+    line_index::Int,
+    version::Int,
+)
+    length(elements) < 3 && throw(
         DataFormatError(
-            "Substation terminal record at line $line_index has $(length(elements)) fields, expected at least 4",
+            "Substation terminal record at line $line_index has $(length(elements)) fields, expected at least 3",
         ),
     )
     terminal = Dict{String, Any}()
@@ -2026,16 +2128,27 @@ function _parse_substation_terminal(elements::Vector{String}, line_index::Int)
         terminal["J"] = parse(Int64, strip(elements[4]))
         terminal["K"] = 0
         terminal["ID"] = _unquote(elements[5])
-    else
+    elseif length(elements) >= 4
         terminal["J"] = 0
         terminal["K"] = 0
         terminal["ID"] = _unquote(elements[4])
+    elseif type_code == "S" && version == 34
+        # v34 switched-shunt terminals carry no ID; the bus has a single switched shunt.
+        terminal["J"] = 0
+        terminal["K"] = 0
+        terminal["ID"] = "1"
+    else
+        throw(
+            DataFormatError(
+                "Substation terminal record at line $line_index has $(length(elements)) fields, expected at least 4",
+            ),
+        )
     end
     return terminal
 end
 
 """
-Parse the entire v35 SUBSTATION DATA section starting at `start_index`.
+Parse the entire SUBSTATION DATA section (v34 and later) starting at `start_index`.
 
 Sub-blocks follow the RAW spec state order substation record -> nodes ->
 switching devices -> terminals, each terminated by a record whose first field
@@ -2048,6 +2161,7 @@ function _parse_substation_section!(
     data_lines::Vector{String},
     start_index::Int,
     dtypes::Dict{String, Array},
+    version::Int,
 )
     substations = get!(pti_data, "SUBSTATION DATA", Dict{String, Any}[])
     state = :substation_record
@@ -2103,34 +2217,71 @@ function _parse_substation_section!(
             device["NAME"] = String(strip(device["NAME"]))
             push!(current["SWITCHING DEVICES"], device)
         else
-            push!(current["TERMINALS"], _parse_substation_terminal(elements, line_index))
+            push!(
+                current["TERMINALS"],
+                _parse_substation_terminal(elements, line_index, version),
+            )
         end
         line_index += 1
     end
     return line_index
 end
 
-"""The v35 / v29-v30 / default variant of a per-version PTI table, selected by `version`."""
-function _pti_version_select(version::Int, v35, v2930, default)
-    if version == 35
-        return v35
-    elseif version in (29, 30)
-        return v2930
-    else
-        return default
+"""PSS(R)E RAW revisions the parser accepts. 29 shares the v30 tables, 32 the v33 tables."""
+const SUPPORTED_PTI_VERSIONS = (29, 30, 32, 33, 34, 35)
+
+"""Section order, field tables, and defaults of each RAW layout family, keyed by revision."""
+const _PTI_VERSION_TABLES = Dict{
+    Int,
+    @NamedTuple{sections::Vector{String}, dtypes::Dict{String, Array}, defaults::Dict},
+}(
+    30 => (
+        sections = _pti_sections_v30,
+        dtypes = _pti_dtypes_v30,
+        defaults = _pti_defaults_v30,
+    ),
+    33 => (sections = _pti_sections, dtypes = _pti_dtypes, defaults = _pti_defaults),
+    34 => (
+        sections = _pti_sections_v34,
+        dtypes = _pti_dtypes_v34,
+        defaults = _pti_defaults_v34,
+    ),
+    35 => (
+        sections = _pti_sections_v35,
+        dtypes = _pti_dtypes_v35,
+        defaults = _pti_defaults_v35,
+    ),
+)
+
+"""The `(sections, dtypes, defaults)` tables for RAW revision `version`."""
+function _pti_tables(version::Int)
+    if version in (29, 30)
+        return _PTI_VERSION_TABLES[30]
+    elseif version in (32, 33)
+        return _PTI_VERSION_TABLES[33]
+    elseif haskey(_PTI_VERSION_TABLES, version)
+        return _PTI_VERSION_TABLES[version]
     end
+    throw(IS.DataFormatError("Unsupported PSS(R)E raw version: $version"))
 end
 
 """
-Determine the PSS(R)E revision number of a raw file from its CASE IDENTIFICATION
-header line (the REV field), falling back to 30 when the field is absent or
-unparseable. v35 files are identified separately via the `@!` comment convention.
+Index of the CASE IDENTIFICATION header line: the first line that is neither blank nor a
+`@!` column-header comment.
 """
-function _resolve_pti_version(data_lines, is_v35)
-    is_v35 && return 35
+function _find_header_line(data_lines)
     header = findfirst(l -> !startswith(strip(l), "@!") && !isempty(strip(l)), data_lines)
-    header === nothing && return 30
-    fields, _ = _get_line_elements(data_lines[header])
+    header === nothing &&
+        throw(IS.DataFormatError("RAW file has no CASE IDENTIFICATION line"))
+    return header
+end
+
+"""
+PSS(R)E revision from the header line's REV field, falling back to 30 when the field is
+absent or unparseable. `@!` comment lines only mark columns; they never imply a version.
+"""
+function _resolve_pti_version(data_lines, header_line::Int)
+    fields, _ = _get_line_elements(data_lines[header_line])
     length(fields) < 3 && return 30
     rev = tryparse(Int, strip(fields[3]))
     return something(rev, 30)
@@ -2148,31 +2299,32 @@ function _parse_pti_data(data_io::IO)
     skip_lines = 0
     skip_sublines = 0
     subsection = ""
-    is_v35 = any(startswith.(data_lines, "@!"))
-    version = _resolve_pti_version(data_lines, is_v35)
+    header_line_start = _find_header_line(data_lines)
+    version = _resolve_pti_version(data_lines, header_line_start)
 
-    if version ∉ (29, 30, 32, 33, 35)
+    if version ∉ SUPPORTED_PTI_VERSIONS
         throw(IS.DataFormatError("Unsupported PSS(R)E raw version: $version"))
     end
+    # v34 introduced the layout v35 kept: a SYSTEM-WIDE DATA block after the title lines,
+    # `@!` column comments, multi-line impedance correction tables, and the SWITCHING
+    # DEVICE and SUBSTATION DATA sections. Every structural branch below keys on this.
+    v34_or_later = version >= 34
 
-    active_sections =
-        deepcopy(
-            _pti_version_select(version, _pti_sections_v35, _pti_sections_v30,
-                _pti_sections),
-        )
+    tables = _pti_tables(version)
+    active_sections = copy(tables.sections)
+    current_dtypes = tables.dtypes
 
     pti_data = Dict{String, Array{Dict}}()
 
     section = popfirst!(active_sections)
     section_data = Dict{String, Any}()
 
-    header_line_start = is_v35 ? 2 : 1 # Start in second line due to @!
-    # Dynamically handle the start of BUS DATA section
-    # In v35 files, BUS DATA starts in different lines due to the fields GENERAL,GAUSS,NEWTON,ADJUST,TYSL,SOLVER,RATING
-    # This fields are optional in the file and when not found, the start of the reading vary a lot
-    bus_data_start = if is_v35
+    # Two title lines follow the header. BUS data starts right after them (pre-v34) or
+    # after the SYSTEM-WIDE DATA block, whose optional records make that line vary.
+    title_lines = (header_line_start + 1, header_line_start + 2)
+    bus_data_start = if v34_or_later
         found_start = 25  # Default of most files
-        for i in 3:min(35, length(data_lines))
+        for i in (header_line_start + 1):min(35, length(data_lines))
             line = strip(data_lines[i])
 
             # Skip comments and system-wide data
@@ -2200,11 +2352,8 @@ function _parse_pti_data(data_io::IO)
         # New updated start section
         found_start
     else
-        4 # Start for all v33 files
+        header_line_start + 3
     end
-
-    current_dtypes =
-        _pti_version_select(version, _pti_dtypes_v35, _pti_dtypes_v30, _pti_dtypes)
 
     line_index = 1
     while line_index <= length(data_lines)
@@ -2220,10 +2369,9 @@ function _parse_pti_data(data_io::IO)
         # a section terminator may be written as a bare or quoted zero (or Q)
         first_element = _unquote(elements[1])
 
-        if is_v35 && (line_index == 3 || line_index == 4) &&
-           section == "CASE IDENTIFICATION"
+        if v34_or_later && line_index in title_lines && section == "CASE IDENTIFICATION"
             comment_line = strip(line)
-            comment_key = line_index == 3 ? "Comment_Line_1" : "Comment_Line_2"
+            comment_key = "Comment_Line_$(line_index - header_line_start)"
 
             if haskey(pti_data, "CASE IDENTIFICATION") &&
                !isempty(pti_data["CASE IDENTIFICATION"])
@@ -2234,15 +2382,14 @@ function _parse_pti_data(data_io::IO)
             continue
         end
 
-        if is_v35 && line_index >= 3 && line_index < bus_data_start
+        if v34_or_later && line_index > header_line_start && line_index < bus_data_start
             line_index += 1
             continue
         end
 
-        if line_index > (is_v35 ? bus_data_start - 1 : 3) && length(elements) != 0 &&
-           first_element == "Q"
+        if line_index >= bus_data_start && length(elements) != 0 && first_element == "Q"
             break
-        elseif line_index > (is_v35 ? bus_data_start - 1 : 3) && length(elements) != 0 &&
+        elseif line_index >= bus_data_start && length(elements) != 0 &&
                first_element == "0"
             if line_index == bus_data_start
                 section = popfirst!(active_sections)
@@ -2276,7 +2423,7 @@ function _parse_pti_data(data_io::IO)
                 continue
             end
 
-            if section == "IMPEDANCE CORRECTION" && is_v35
+            if section == "IMPEDANCE CORRECTION" && v34_or_later
                 temporal_ic_elements = Vector{Vector{String}}()
 
                 while line_index <= length(data_lines)
@@ -2429,7 +2576,7 @@ function _parse_pti_data(data_io::IO)
                         )
                     end
 
-                    if is_v35
+                    if v34_or_later
                         if haskey(pti_data, section)
                             push!(pti_data[section], section_data)
                         else
@@ -2437,21 +2584,10 @@ function _parse_pti_data(data_io::IO)
                         end
                     end
                 else
-                    if is_v35
-                        if line_index == 3
-                            comment_line = strip(line)
-                            if haskey(pti_data, section) && !isempty(pti_data[section])
-                                pti_data[section][1]["Comment_Line_1"] = comment_line
-                            end
-                        elseif line_index == 4
-                            comment_line = strip(line)
-                            if haskey(pti_data, section) && !isempty(pti_data[section])
-                                pti_data[section][1]["Comment_Line_2"] = comment_line
-                            end
-                        end
-                    elseif !is_v35 && line_index > header_line_start
-                        section_data["Comment_Line_$(line_index - 1)"] = strip(line)
-                    end
+                    # v34+ title lines are captured before the section dispatch; pre-v34
+                    # titles accumulate here until the header record is pushed.
+                    section_data["Comment_Line_$(line_index - header_line_start)"] =
+                        strip(line)
                 end
 
                 if line_index < (bus_data_start - 1)
@@ -2462,7 +2598,7 @@ function _parse_pti_data(data_io::IO)
                 line_index += 1
 
             elseif section == "SWITCHING DEVICE"
-                if is_v35
+                if v34_or_later
                     section_data = Dict{String, Any}()
                     try
                         _parse_line_element!(
@@ -2479,7 +2615,9 @@ function _parse_pti_data(data_io::IO)
                         )
                     end
                 else
-                    @info("SWITCHING DEVICE DATA section found in non-v35 file, skipping.")
+                    @info(
+                        "SWITCHING DEVICE DATA section found in a pre-v34 file, skipping."
+                    )
                 end
                 line_index += 1
 
@@ -2557,15 +2695,19 @@ function _parse_pti_data(data_io::IO)
                 elseif skip_sublines > 0
                     skip_sublines -= 1
                     subsection_data = Dict{String, Any}()
-
-                    for (field, dtype) in _pti_dtypes["$section SUBLINES"]
-                        element = popfirst!(elements)
-                        if element != ""
-                            subsection_data[field] = parse(dtype, element)
-                        else
-                            line_index += 1
-                            subsection_data[field] = ""
-                        end
+                    try
+                        _parse_line_element!(
+                            subsection_data,
+                            elements,
+                            "$section SUBLINES",
+                            current_dtypes,
+                        )
+                    catch message
+                        throw(
+                            DataFormatError(
+                                "Parsing failed at line $line_index: $(sprint(showerror, message))",
+                            ),
+                        )
                     end
 
                     if haskey(section_data, "CONVERTER BUSES")
@@ -2598,7 +2740,7 @@ function _parse_pti_data(data_io::IO)
                 end
                 line_index += 1
 
-            elseif section == "IMPEDANCE CORRECTION" && !is_v35
+            elseif section == "IMPEDANCE CORRECTION" && !v34_or_later
                 section_data = Dict{String, Any}()
                 try
                     _parse_line_element!(section_data, elements, section, current_dtypes)
@@ -2702,12 +2844,13 @@ function _parse_pti_data(data_io::IO)
                 end
                 line_index += 1
 
-            elseif section == "SUBSTATION DATA" && is_v35
+            elseif section == "SUBSTATION DATA" && v34_or_later
                 line_index = _parse_substation_section!(
                     pti_data,
                     data_lines,
                     line_index,
                     current_dtypes,
+                    version,
                 )
                 continue
 
@@ -2724,8 +2867,7 @@ function _parse_pti_data(data_io::IO)
         end
 
         if haskey(pti_data, section)
-            if section == "IMPEDANCE CORRECTION" &&
-               pti_data["CASE IDENTIFICATION"][1]["REV"] == 35
+            if section == "IMPEDANCE CORRECTION" && v34_or_later
                 continue
             else
                 push!(pti_data[section], section_data)
@@ -2810,7 +2952,7 @@ end
 """
     _populate_defaults!(pti_data)
 
-Internal function. Populates empty fields with PSS(R)E PTI v33 default values
+Internal function. Populates empty fields with the PSS(R)E defaults of the file's revision
 """
 function _populate_defaults!(data::Dict)
     rev = get(data["CASE IDENTIFICATION"][1], "REV", 30)
@@ -2819,10 +2961,9 @@ function _populate_defaults!(data::Dict)
     else
         version = rev
     end
-    sections =
-        _pti_version_select(version, _pti_sections_v35, _pti_sections_v30, _pti_sections)
-    defaults =
-        _pti_version_select(version, _pti_defaults_v35, _pti_defaults_v30, _pti_defaults)
+    tables = _pti_tables(version)
+    sections = tables.sections
+    defaults = tables.defaults
 
     for section in sections
         if haskey(data, section)

@@ -11,7 +11,7 @@ This architecture keeps the parser lightweight, testable, and reusable across mu
 ## Supported Formats
 
   - **MATPOWER (.m)**: Matlab-based case files common in academic research
-  - **PSS/E RAW (.raw)**: Industry-standard format (versions 30, 32, 33, 35)
+  - **PSS/E RAW (.raw)**: Industry-standard format (versions 30, 32, 33, 34, 35)
 
 ## Data Validation
 

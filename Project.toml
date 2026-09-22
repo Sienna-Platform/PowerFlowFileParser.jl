@@ -1,6 +1,6 @@
 name = "PowerFlowFileParser"
 uuid = "bed98974-b02e-5e2f-9ee0-a103f5c450dd"
-version = "0.2.0"
+version = "0.3.0"
 authors = ["Sienna Team"]
 
 [deps]

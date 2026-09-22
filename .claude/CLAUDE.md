@@ -21,7 +21,7 @@ PowerFlowFileParser can parse and convert the following text-based power flow fi
 
 1. **MATPOWER (.m files)**: Matlab-based power flow case files widely used in academic research
 2. **PSS/E RAW files (.raw)**: Industry-standard format from Siemens PTI PSS/E software
-   - Supports versions 30, 32, 33, and 35
+   - Supports versions 30, 32, 33, 34, and 35
 3. **Generic Matlab files**: General Matlab data structure files
 
 ### Conversion Pipeline
@@ -120,14 +120,14 @@ PowerFlowFileParser.jl/
   - Conversion to PowerModels dictionary format
 
 - `psse.jl`: PSS/E RAW file parser (~2348 lines)
-  - PSS/E v33/v35 format support
+  - PSS/E v33/v34/v35 format support
   - Section-based parsing (BUS, LOAD, GENERATOR, BRANCH, etc.)
   - Three-winding transformer handling with star-bus creation
 
 - `pti.jl`: PTI format definitions (~2678 lines)
   - Data type specifications for all PSS/E sections
   - Field mappings and default values
-  - Multi-version support (v30, v32, v33, v35)
+  - Multi-version support (v30, v32, v33, v34, v35); one `(sections, dtypes, defaults)` registry per layout family
 
 - `common.jl`: Shared parsing utilities
   - `parse_file()`: Main entry point dispatching by file extension

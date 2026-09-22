@@ -204,11 +204,11 @@ function _psse2pm_branch!(pm_data::Dict, pti_data::Dict, import_all::Bool, nb)
                     "LEN" => pop!(branch, "LEN"),
                 )
 
-                if pm_data["source_version"] ∈ ("30", "32", "33")
+                if pm_data["source_version"] ∈ PSSE_LEGACY_RATING_VERSIONS
                     sub_data["rate_a"] = pop!(branch, "RATEA")
                     sub_data["rate_b"] = pop!(branch, "RATEB")
                     sub_data["rate_c"] = pop!(branch, "RATEC")
-                elseif pm_data["source_version"] == "35"
+                elseif pm_data["source_version"] ∈ PSSE_TWELVE_RATING_VERSIONS
                     sub_data["rate_a"] = pop!(branch, "RATE1")
                     sub_data["rate_b"] = pop!(branch, "RATE2")
                     sub_data["rate_c"] = pop!(branch, "RATE3")
@@ -511,7 +511,10 @@ function _psse2pm_generator!(pm_data::Dict, pti_data::Dict, import_all::Bool, nb
                     "NREG" => pop!(gen, "NREG"),
                     "BASLOD" => pop!(gen, "BASLOD"),
                 )
-            elseif pm_data["source_version"] ∈ ("30", "32", "33")
+            elseif pm_data["source_version"] == "34"
+                # v34 has NREG but not yet BASLOD
+                sub_data["ext"] = Dict{String, Any}("NREG" => pop!(gen, "NREG"))
+            elseif pm_data["source_version"] ∈ PSSE_LEGACY_RATING_VERSIONS
                 sub_data["ext"] = Dict{String, Any}(
                     "IREG" => pop!(gen, "IREG"),
                     "WPF" => pop!(gen, "WPF"),
@@ -784,10 +787,12 @@ function _psse2pm_load!(pm_data::Dict, pti_data::Dict, import_all::Bool, nb)
             sub_data["interruptible"] = pop!(load, "INTRPT")
             sub_data["ext"] = Dict{String, Any}()
 
-            if pm_data["source_version"] ∈ ("30", "32", "33")
-                sub_data["ext"]["LOADTYPE"] = ""
-            elseif pm_data["source_version"] == "35"
+            if pm_data["source_version"] == "35"
                 sub_data["ext"]["LOADTYPE"] = pop!(load, "LOADTYPE", "")
+            elseif pm_data["source_version"] == "34" ||
+                   pm_data["source_version"] ∈ PSSE_LEGACY_RATING_VERSIONS
+                # LOADTYPE first appears in v35
+                sub_data["ext"]["LOADTYPE"] = ""
             else
                 error("Unsupported PSS(R)E source version: $(pm_data["source_version"])")
             end
@@ -984,14 +989,16 @@ function _psse2pm_shunt!(
                     get(switched_shunt, "S$i", 1) != 0 ? steps : 0 for
                     (i, steps) in enumerate(step_number)
                 ]
-
-                sub_data["ext"]["NREG"] = pop!(switched_shunt, "NREG")
-            elseif pm_data["source_version"] ∈ ("30", "32", "33")
-                # Pre-v35 SWITCHED SHUNT records carry no per-block status, so initialize to 
+            elseif pm_data["source_version"] == "34" ||
+                   pm_data["source_version"] ∈ PSSE_LEGACY_RATING_VERSIONS
+                # Pre-v35 SWITCHED SHUNT records carry no per-block status, so initialize to
                 # all-off and take admittance from BINIT.
                 sub_data["number_engaged"] = zeros(Int, length(step_number))
             else
                 error("Unsupported PSS(R)E source version: $(pm_data["source_version"])")
+            end
+            if pm_data["source_version"] ∈ PSSE_TWELVE_RATING_VERSIONS
+                sub_data["ext"]["NREG"] = pop!(switched_shunt, "NREG")
             end
 
             # only keep BINIT where it states the device's actual admittance. The swing-bus
@@ -1308,11 +1315,11 @@ function _psse2pm_transformer!(pm_data::Dict, pti_data::Dict, import_all::Bool, 
                     "MAG2" => transformer["MAG2"],
                 )
 
-                if pm_data["source_version"] ∈ ("30", "32", "33")
+                if pm_data["source_version"] ∈ PSSE_LEGACY_RATING_VERSIONS
                     sub_data["rate_a"] = pop!(transformer, "RATA1")
                     sub_data["rate_b"] = pop!(transformer, "RATB1")
                     sub_data["rate_c"] = pop!(transformer, "RATC1")
-                elseif pm_data["source_version"] == "35"
+                elseif pm_data["source_version"] ∈ PSSE_TWELVE_RATING_VERSIONS
                     sub_data["rate_a"] = pop!(transformer, "RATE11")
                     sub_data["rate_b"] = pop!(transformer, "RATE12")
                     sub_data["rate_c"] = pop!(transformer, "RATE13")
@@ -1703,7 +1710,7 @@ function _psse2pm_transformer!(pm_data::Dict, pti_data::Dict, import_all::Bool, 
                 sub_data["r_tertiary"] = Zr_t
                 sub_data["x_tertiary"] = Zx_t
 
-                if pm_data["source_version"] ∈ ("30", "32", "33")
+                if pm_data["source_version"] ∈ PSSE_LEGACY_RATING_VERSIONS
                     sub_data["rating_primary"] =
                         min(
                             transformer["RATA1"],
@@ -1727,7 +1734,7 @@ function _psse2pm_transformer!(pm_data::Dict, pti_data::Dict, import_all::Bool, 
                         sub_data["rating_secondary"],
                         sub_data["rating_tertiary"],
                     )
-                elseif pm_data["source_version"] == "35"
+                elseif pm_data["source_version"] ∈ PSSE_TWELVE_RATING_VERSIONS
                     sub_data["rating_primary"] =
                         min(
                             transformer["RATE11"],
@@ -1865,7 +1872,7 @@ function _psse2pm_transformer!(pm_data::Dict, pti_data::Dict, import_all::Bool, 
                 for prefix in TRANSFORMER3W_PARAMETER_NAMES
                     for i in 1:length(WINDING_NAMES)
                         key = "$prefix$i"
-                        if pm_data["source_version"] ∈ ("30", "32", "33")
+                        if pm_data["source_version"] ∈ PSSE_LEGACY_RATING_VERSIONS
                             sub_data["ext"][key] = transformer[key]
                         else
                             continue
@@ -2084,7 +2091,7 @@ function _psse2pm_dcline!(pm_data::Dict, pti_data::Dict, import_all::Bool)
                 sub_data["ext"] = Dict{String, Any}(
                     "psse_name" => dcline["NAME"],
                 )
-            elseif pm_data["source_version"] == "35"
+            elseif pm_data["source_version"] ∈ PSSE_TWELVE_RATING_VERSIONS
                 sub_data["ext"] = Dict{String, Any}(
                     "NDR" => dcline["NDR"],
                     "NDI" => dcline["NDI"],
@@ -2236,6 +2243,8 @@ function _psse2pm_dcline!(pm_data::Dict, pti_data::Dict, import_all::Bool)
             sub_data["ext"] = Dict{String, Any}(
                 "REMOT_FROM" => from_bus["REMOT"],
                 "REMOT_TO" => to_bus["REMOT"],
+                "NREG_FROM" => get(from_bus, "NREG", 0),
+                "NREG_TO" => get(to_bus, "NREG", 0),
                 "RMPCT_FROM" => from_bus["RMPCT"],
                 "RMPCT_TO" => to_bus["RMPCT"],
                 "ALOSS_FROM" => from_bus["ALOSS"],
@@ -2305,12 +2314,12 @@ function _psse2pm_facts!(pm_data::Dict, pti_data::Dict, import_all::Bool)
 
             sub_data["ext"] = Dict{String, Any}()
 
-            if pm_data["source_version"] == "35"
+            if pm_data["source_version"] ∈ PSSE_TWELVE_RATING_VERSIONS
                 sub_data["regulated_bus_number"] = facts["FCREG"]
                 sub_data["ext"]["NREG"] = facts["NREG"]
                 sub_data["ext"]["MNAME"] = facts["MNAME"]
                 sub_data["ext"]["RMPCT"] = facts["RMPCT"]
-            elseif pm_data["source_version"] ∈ ("30", "32", "33")
+            elseif pm_data["source_version"] ∈ PSSE_LEGACY_RATING_VERSIONS
                 # REMOT is absent from the v30 FACTS record layout (_FACTS_dtypes_v30)
                 sub_data["regulated_bus_number"] = get(facts, "REMOT", 0)
                 sub_data["ext"] = Dict{String, Any}(
@@ -2371,8 +2380,8 @@ function _build_switch_breaker_sub_data(
         sub_data["state"] = 0.0
     end
 
-    if pm_data["source_version"] == ("35")
-        # SWITCHING DEVICE records (v35 dedicated section) have no R field; legacy
+    if pm_data["source_version"] ∈ PSSE_TWELVE_RATING_VERSIONS
+        # SWITCHING DEVICE records (v34+ dedicated section) have no R field; legacy
         # BRANCH records parsed as switches/breakers (CKT starts with '@' or '*') do.
         sub_data["r"] = pop!(dict_object, "R", 0.0)
         sub_data["rating"] = pop!(dict_object, "RATE1")
@@ -2435,7 +2444,7 @@ function _psse2pm_switch_breaker!(pm_data::Dict, pti_data::Dict, import_all::Boo
     end
 
     if haskey(pti_data, "SWITCHING DEVICE")
-        if pm_data["source_version"] == "35"
+        if pm_data["source_version"] ∈ PSSE_TWELVE_RATING_VERSIONS
             for switching_device in pti_data["SWITCHING DEVICE"]
                 stype = switching_device["STYPE"]
                 if !haskey(mapping_v35, stype)
