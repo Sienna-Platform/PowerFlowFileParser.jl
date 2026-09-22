@@ -109,6 +109,27 @@ end
     @test vscline["rated_dc_voltage"] == 150.0
 end
 
+@testset "PSSE VSC line out of service with no DC-voltage-controlling converter" begin
+    # WECC planning cases carry VSC lines with MDC = 0 and both converters TYPE = 0.
+    # PSS/E keeps the record; the parser must keep it as unavailable rather than abort.
+    file = joinpath(@__DIR__, "fixtures", "synthetic_v35_vsc_line_out_of_service.raw")
+    pm_data = @test_logs(
+        (:warn, r"VSCLINE1\s+is out of service"),
+        match_mode = :any,
+        PowerModelsData(file).data,
+    )
+    vscline = only(values(pm_data["vscline"]))
+    @test vscline["br_status"] == 0
+    @test vscline["available"] == false
+    @test vscline["dc_voltage_control_from"] == false
+    @test vscline["dc_voltage_control_to"] == false
+    # Largest |DCSET| stands in for the DC voltage base; no scheduled flow.
+    @test vscline["rated_dc_voltage"] == 150.0
+    @test vscline["pf"] == 0.0
+    @test vscline["if"] == 0.0
+    @test isfinite(vscline["r"])
+end
+
 @testset "PSSE VSC converter loss: BLOSS is per-unitized on the DC base kV" begin
     # BLOSS is kW per DC ampere, so its LinearCurve slope is p.u. power per p.u. current:
     # BLOSS / base_kV, not BLOSS / (1000 * baseMVA), which is not even dimensionless.

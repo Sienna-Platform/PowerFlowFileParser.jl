@@ -351,3 +351,30 @@ end
     @test PFP.get_value(circuit, :reactive_power_flow) ≈ 0.1
     @test PFP.get_value(circuit, :base_power) == 50.0
 end
+
+@testset "TwoWindingTransformer: same buses and circuit id keep the first record, drop the rest" begin
+    # Two TRANSFORMER records join buses 201-202 with CKT '1 ', so both default to the name
+    # TAP_201-LOW_202-i_1. The record read first (XFMR_A, x = 0.05) is kept; the second
+    # (XFMR_B, x = 0.06) is dropped with a warning. A third transformer 203-204 reuses the
+    # bus names TAP/LOW but read_bus! already suffixes repeated bus names with the bus
+    # number, so it never collided and must stay untouched.
+    file = joinpath(@__DIR__, "fixtures", "synthetic_v35_duplicate_transformer_names.raw")
+    sys = @test_logs(
+        (
+            :warn,
+            r"TwoWindingTransformer TAP_201-LOW_202-i_1 already exists.*Keeping the record read first and dropping this one",
+        ),
+        match_mode = :any,
+        PFP.build_openapi_system(PFP.PowerModelsData(file)),
+    )
+    names = sort([
+        PFP.get_value(t, :name) for t in PFP.get_components(sys, "TwoWindingTransformer")
+    ])
+    @test names == ["TAP_201-LOW_202-i_1", "TAP_203-LOW_204-i_1"]
+    # one circuit per surviving transformer, and the 201-202 survivor is the first record
+    @test length(PFP.get_components(sys, "TransformerCircuit")) == 2
+    kept = _transformer_circuit_between(sys, 201, 202)
+    @test PFP.get_value(kept, :x) == 0.05
+    @test PFP.get_value(kept, :rating) == 40.0
+    @test length(PFP.get_components(sys, "Line")) == 2
+end

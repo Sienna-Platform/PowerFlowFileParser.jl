@@ -1913,6 +1913,39 @@ function _psse2pm_transformer!(pm_data::Dict, pti_data::Dict, import_all::Bool, 
 end
 
 """
+DC voltage base and scheduled flow of a VSC line, taken from the converter that controls
+DC voltage (TYPE = 1). PSS/E keeps out-of-service lines (MDC = 0, or a converter with
+TYPE = 0) in the file with no controlling converter, so such a line is kept as unavailable
+with placeholder setpoints instead of aborting the parse: the largest |DCSET| as the
+voltage base (the converter's AC base kV when both are zero) and zero scheduled flow.
+"""
+function _vsc_voltage_base_and_flow(
+    name::AbstractString,
+    from_bus::Dict,
+    to_bus::Dict,
+    in_service::Bool,
+    ac_base_kv::Real,
+)
+    from_controls = from_bus["TYPE"] == 1
+    to_controls = to_bus["TYPE"] == 1
+    if from_controls && !to_controls
+        return (from_bus["DCSET"], to_bus["DCSET"])
+    elseif !from_controls && to_controls
+        return (to_bus["DCSET"], -from_bus["DCSET"])
+    elseif from_controls && to_controls
+        error("Exactly one converter in converter $name must control DC voltage (TYPE = 1).")
+    elseif in_service
+        error("At least one converter in converter $name must set a voltage control.")
+    end
+    base_voltage = max(abs(from_bus["DCSET"]), abs(to_bus["DCSET"]))
+    if base_voltage == 0.0
+        base_voltage = Float64(ac_base_kv)
+    end
+    @warn "VSC line $name is out of service and no converter controls DC voltage; keeping it as unavailable with rated_dc_voltage = $base_voltage kV and zero scheduled flow."
+    return (base_voltage, 0.0)
+end
+
+"""
     _psse2pm_dcline!(pm_data, pti_data)
 
 Parses PSS(R)E-style Two-Terminal and VSC DC Lines data into a PowerModels
@@ -2157,22 +2190,13 @@ function _psse2pm_dcline!(pm_data::Dict, pti_data::Dict, import_all::Bool)
             sub_data["ac_voltage_control_from"] = from_bus["MODE"] == 1
             sub_data["ac_voltage_control_to"] = to_bus["MODE"] == 1
 
-            if sub_data["dc_voltage_control_from"] && !sub_data["dc_voltage_control_to"]
-                base_voltage = from_bus["DCSET"]
-                flow_setpoint = to_bus["DCSET"]
-            elseif !sub_data["dc_voltage_control_from"] && sub_data["dc_voltage_control_to"]
-                base_voltage = to_bus["DCSET"]
-                flow_setpoint = -from_bus["DCSET"]
-            elseif !sub_data["dc_voltage_control_from"] &&
-                   !sub_data["dc_voltage_control_to"]
-                error(
-                    "At least one converter in converter $(sub_data["name"]) must set a voltage control.",
-                )
-            else
-                error(
-                    "Exactly one converter in converter $(sub_data["name"]) must control DC voltage (TYPE = 1).",
-                )
-            end
+            (base_voltage, flow_setpoint) = _vsc_voltage_base_and_flow(
+                sub_data["name"],
+                from_bus,
+                to_bus,
+                sub_data["available"],
+                sub_data["base_voltage_from"],
+            )
 
             # PSY documents dc_setpoint_from/to as p.u. of rated_dc_voltage for the
             # DC-voltage-controlling side (TYPE = 1), and p.u. of baseMVA otherwise.
