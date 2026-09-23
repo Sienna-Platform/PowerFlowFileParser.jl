@@ -438,3 +438,26 @@ end
     @test transformer_3w["RMI3"] == -30.0
     @test transformer_3w["RMA3"] == 30.0
 end
+
+@testset "PSSE duplicate TRANSFORMER records: first read is kept, later ones dropped" begin
+    # XFMR_A and XFMR_B both join buses 201-202; their circuit ids '1 ' and ' 1' are the
+    # same identity to PSS/E once stripped. XFMR_C on 203-204 shares nothing but bus names.
+    file = joinpath(@__DIR__, "fixtures", "synthetic_v35_duplicate_transformer_names.raw")
+    pm_data = @test_logs(
+        (:warn, r"Duplicate TRANSFORMER record between buses 201-202 with circuit id '1'"),
+        match_mode = :any,
+        PowerModelsData(file).data,
+    )
+    transformers = [b for b in values(pm_data["branch"]) if b["transformer"]]
+    @test length(transformers) == 2
+
+    kept = only(b for b in transformers if b["f_bus"] == 201 && b["t_bus"] == 202)
+    @test kept["ext"]["psse_name"] == "XFMR_A      "
+    @test kept["br_x"] == 0.05
+    @test kept["rate_a"] ≈ 0.4  # 40 MVA on the 100 MVA base
+    @test kept["source_id"][5] == "1"  # circuit id stored stripped
+
+    other = only(b for b in transformers if b["f_bus"] == 203 && b["t_bus"] == 204)
+    @test other["ext"]["psse_name"] == "XFMR_C      "
+    @test other["br_x"] == 0.05
+end

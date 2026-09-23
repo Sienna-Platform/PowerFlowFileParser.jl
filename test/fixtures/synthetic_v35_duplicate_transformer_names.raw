@@ -1,6 +1,6 @@
 @!IC,SBASE,REV,XFRRAT,NXFRAT,BASFRQ
 0,  100.00, 35,     0,     1, 60.00
-Synthetic fictional v35 case: two 2W transformer records between the SAME buses 201-202 with the SAME circuit id
+Synthetic fictional v35 case: two 2W transformer records between the SAME buses 201-202 whose circuit ids differ only in whitespace
 A third transformer 203-204 shares the bus names TAP/LOW but read_bus! already suffixes repeated names, so it does not collide
 0 / END OF SYSTEM-WIDE DATA, BEGIN BUS DATA
 @!   I,'NAME        ', BASKV, IDE,AREA,ZONE,OWNER, VM,        VA,    NVHI,   NVLO,   EVHI,   EVLO
@@ -24,7 +24,7 @@ A third transformer 203-204 shares the bus names TAP/LOW but read_bus! already s
 0.01, 0.05, 100.0
 1.0, 0.0, 0.0, 40.0, 40.0, 40.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0, 0, 0, 1.1, 0.9, 1.1, 0.9, 33, 0, 0.0, 0.0, 0.0
 1.0, 0.0
-201, 202, 0, '1 ', 1, 1, 1, 0.0, 0.0, 2, 'XFMR_B      ', 1, 1, 1.0, 0, 1.0, 0, 1.0, 0, 1.0, '            '
+201, 202, 0, ' 1', 1, 1, 1, 0.0, 0.0, 2, 'XFMR_B      ', 1, 1, 1.0, 0, 1.0, 0, 1.0, 0, 1.0, '            '
 0.02, 0.06, 100.0
 1.0, 0.0, 0.0, 30.0, 30.0, 30.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0, 0, 0, 1.1, 0.9, 1.1, 0.9, 33, 0, 0.0, 0.0, 0.0
 1.0, 0.0

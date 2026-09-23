@@ -86,29 +86,6 @@ function _get_pm_branch_name(
     return "$bus_f_name-$bus_t_name-i_$index"
 end
 
-"""
-Whether a `type_name` component named `name` is already in the registry. The default name is
-the two endpoint bus names plus the PSS/E circuit id, so two pm dict rows on the same bus
-pair with the same circuit id map to one name: duplicate TRANSFORMER records, a BRANCH record
-reclassified as a transformer beside a declared one, or parallel branches flipped by
-orientation correction. The row read first is kept; a later duplicate is reported with its
-PSS/E record and dropped by the caller, so the build neither aborts nor invents a second
-component the source file does not distinguish.
-"""
-function _is_duplicate_branch(
-    reg::IdRegistry,
-    type_name::AbstractString,
-    name::AbstractString,
-    d::Dict,
-)
-    if !has_id(reg, type_name, name)
-        return false
-    end
-    record = get(d, "source_id", d["index"])
-    @warn "$type_name $name already exists; PSS/E record $record shares its endpoint buses and circuit id. Keeping the record read first and dropping this one."
-    return true
-end
-
 function _get_pm_3w_name(
     d::Dict,
     bus_primary_name::AbstractString,
@@ -580,9 +557,6 @@ function read_branches!(sys::OpenAPISystem, data::Dict; kwargs...)
             make_switch_from_zero_impedance_branch!(sys, reg, name, d, from_id, to_id,
                 from_isolated, to_isolated, sys_mbase)
         elseif branch_type == :transformer
-            if _is_duplicate_branch(reg, "TwoWindingTransformer", name, d)
-                continue
-            end
             make_transformer_2w!(sys, reg, name, d, from_id, to_id, from_isolated,
                 to_isolated)
         elseif branch_type == :line

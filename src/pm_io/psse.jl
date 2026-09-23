@@ -1076,6 +1076,15 @@ end
 
 # Two-winding records name their buses "f_bus"/"t_bus", three-winding ones
 # "bus_primary"/"bus_secondary"/"bus_tertiary"; both reach the warning below.
+"""`I-J` for a two-winding identity (K = 0), `I-J-K` for a three-winding one."""
+function _transformer_identity_label(identity::Tuple)
+    i, j, k = identity[1], identity[2], identity[3]
+    if k == 0
+        return "$i-$j"
+    end
+    return "$i-$j-$k"
+end
+
 function _transformer_bus_label(sub_data::Dict)
     haskey(sub_data, "f_bus") && return "$(sub_data["f_bus"]) -> $(sub_data["t_bus"])"
     return string(
@@ -1122,7 +1131,23 @@ function _psse2pm_transformer!(pm_data::Dict, pti_data::Dict, import_all::Bool, 
 
     if haskey(pti_data, "TRANSFORMER")
         starbus_id = 10^ceil(Int, log10(abs(_find_max_bus_id(pm_data)))) + 1
+        # PSS/E identifies a transformer by its RAW bus numbers and circuit id; the id is
+        # compared stripped and case-folded, as PSS/E does. Only the record read first
+        # under an identity is kept.
+        seen_transformers = Set{Tuple{Int, Int, Int, String}}()
         for transformer in pti_data["TRANSFORMER"]
+            identity = (
+                transformer["I"],
+                transformer["J"],
+                transformer["K"],
+                uppercase(strip(transformer["CKT"])),
+            )
+            if identity in seen_transformers
+                @warn "Duplicate TRANSFORMER record between buses $(_transformer_identity_label(identity)) with circuit id '$(identity[4])'; keeping the record read first and dropping this one."
+                continue
+            end
+            push!(seen_transformers, identity)
+
             if !(transformer["CZ"] in (1, 2, 3))
                 @warn(
                     "transformer CZ value outside of valid bounds assuming the default value of 1.  Given $(transformer["CZ"]), should be 1, 2 or 3",
@@ -1411,7 +1436,7 @@ function _psse2pm_transformer!(pm_data::Dict, pti_data::Dict, import_all::Bool, 
                     pop!(transformer, "I"),
                     pop!(transformer, "J"),
                     pop!(transformer, "K"),
-                    pop!(transformer, "CKT"),
+                    String(strip(pop!(transformer, "CKT"))),
                     0,
                 ]
 
@@ -1933,7 +1958,9 @@ function _vsc_voltage_base_and_flow(
     elseif !from_controls && to_controls
         return (to_bus["DCSET"], -from_bus["DCSET"])
     elseif from_controls && to_controls
-        error("Exactly one converter in converter $name must control DC voltage (TYPE = 1).")
+        error(
+            "Exactly one converter in converter $name must control DC voltage (TYPE = 1).",
+        )
     elseif in_service
         error("At least one converter in converter $name must set a voltage control.")
     end
