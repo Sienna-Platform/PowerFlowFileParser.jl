@@ -1280,3 +1280,63 @@ end
         PowerModelsData(file)
     )
 end
+
+@testset "a substation declaring no nodes has no PowerModels representation" begin
+    # A SUBSTATION record whose node block is empty attaches to no bus. pti.jl keeps it,
+    # but it has nothing to contribute to the pm dict, so the conversion drops it.
+    raw = read_fixture(V35_SUBSTATION_FIXTURE)
+    nodeless =
+        "@! BEGIN SUBSTATION DATA BLOCK\n" *
+        "     3,'CHARLIE                                 ',   0.0000000,   0.0000000, 0.0000\n" *
+        "     0 / END OF SUBSTATION NODE DATA, BEGIN SUBSTATION SWITCHING DEVICE DATA\n" *
+        "     0 / END OF SUBSTATION SWITCHING DEVICE DATA, BEGIN SUBSTATION TERMINAL DATA\n" *
+        "     0 / END OF SUBSTATION TERMINAL DATA\n"
+    patched = replace(
+        raw,
+        "0 / END OF SUBSTATION DATA\n" => nodeless * "0 / END OF SUBSTATION DATA\n",
+    )
+    @test patched != raw
+    path = joinpath(mktempdir(), "nodeless_substation.raw")
+    write(path, patched)
+
+    @test length(PFP.parse_pti(path)["SUBSTATION DATA"]) == 3
+
+    pm = @test_logs(
+        (:info, r"Dropped 1 PSS\(R\)E substation\(s\) that declare no nodes"),
+        match_mode = :any,
+        PowerModelsData(path)
+    )
+    substations = pm.data["substation"]
+    @test sort([s["number"] for s in values(substations)]) == [1, 2]
+    @test sort([s["index"] for s in values(substations)]) == [1, 2]
+
+    sys = PFP.build_openapi_system(pm)
+    @test sort([
+        PFP.get_value(s, :number) for
+        s in PFP.get_supplemental_attributes(sys, "Substation")
+    ]) == [1, 2]
+
+    # Switching devices between nodes that do not exist are malformed rather than a
+    # placeholder, so dropping that record is announced on its own.
+    with_devices =
+        "@! BEGIN SUBSTATION DATA BLOCK\n" *
+        "     4,'DELTA                                   ',   0.0000000,   0.0000000, 0.0000\n" *
+        "     0 / END OF SUBSTATION NODE DATA, BEGIN SUBSTATION SWITCHING DEVICE DATA\n" *
+        "     1,  2, '1 ','DELTA\$138\$CB\$0001                       ',     2,     1,     1, 0.00010,   0.00,   0.00,   0.00\n" *
+        "     0 / END OF SUBSTATION SWITCHING DEVICE DATA, BEGIN SUBSTATION TERMINAL DATA\n" *
+        "     0 / END OF SUBSTATION TERMINAL DATA\n"
+    write(
+        path,
+        replace(
+            patched,
+            "0 / END OF SUBSTATION DATA\n" => with_devices * "0 / END OF SUBSTATION DATA\n",
+        ),
+    )
+    pm = @test_logs(
+        (:warn, r"Substation 4 declares no nodes but has 1 switching device\(s\)"),
+        (:info, r"Dropped 2 PSS\(R\)E substation\(s\) that declare no nodes"),
+        match_mode = :any,
+        PowerModelsData(path)
+    )
+    @test sort([s["number"] for s in values(pm.data["substation"])]) == [1, 2]
+end

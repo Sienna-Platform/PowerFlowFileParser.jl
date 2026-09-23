@@ -2632,7 +2632,20 @@ function _psse2pm_substation_data!(pm_data::Dict, pti_data::Dict, import_all::Bo
         return
     end
 
+    # A substation declaring no nodes attaches to no bus, so it has nothing to contribute to
+    # the bus-branch model; the record stays in `pti_data`.
+    nodeless_count = 0
     for substation in pti_data["SUBSTATION DATA"]
+        if isempty(substation["NODES"])
+            nodeless_count += 1
+            n_devices = length(substation["SWITCHING DEVICES"])
+            n_terminals = length(substation["TERMINALS"])
+            if n_devices + n_terminals > 0
+                @warn "Substation $(substation["IS"]) declares no nodes but has $n_devices switching device(s) and $n_terminals terminal(s); dropping it."
+            end
+            continue
+        end
+
         sub_data = Dict{String, Any}()
         sub_data["number"] = pop!(substation, "IS")
         sub_data["name"] = pop!(substation, "NAME")
@@ -2678,6 +2691,9 @@ function _psse2pm_substation_data!(pm_data::Dict, pti_data::Dict, import_all::Bo
         push!(pm_data["substation"], sub_data)
     end
 
+    if nodeless_count > 0
+        @info "Dropped $nodeless_count PSS(R)E substation(s) that declare no nodes and so attach to no bus."
+    end
     return
 end
 
