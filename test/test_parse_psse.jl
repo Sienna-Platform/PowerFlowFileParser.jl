@@ -346,3 +346,74 @@ end
     @test transformer_3w["g"] == 0.0
     @test transformer_3w["b"] == 0.0
 end
+
+@testset "PSSE CW=2 tap-ratio limits are converted with the tap" begin
+    # Under CW=2 WINDV and the RMA/RMI that bracket it are winding voltages in kV. Both must
+    # reach the pm dict in the tap's own units, so a tap inside its band stays inside it.
+    raw = read_fixture(FOURTEEN_BUS_FIXTURE)
+
+    # "TRAFO 2W 1" runs 230 kV bus 106 to 138 kV bus 105 and regulates voltage (COD1=1).
+    # WINDV1 = 232.875 kV sits on step 18 of the 33-step 207..253 kV ladder, and
+    # WINDV2 = 141.45 kV is 1.025 pu, so the tap and its band all divide by 1.025.
+    # "TRAFO 2W 3" is a CW=2 phase shifter (COD1=3), whose limits are degrees.
+    # "TRAFO 3W 1" winds 230/230/500 kV and exercises one objective per winding.
+    cw2 = replace(
+        raw,
+        "   106,   105,     0,'1 ',1,1,1, 0.00000E+0, 0.00000E+0,2,'TRAFO 2W 1  ',1,   1,1.0000,   0,1.0000,   0,1.0000,   0,1.0000,'            '\n" *
+        " 0.00000E+0, 1.00000E-4,   100.00\n" *
+        "1.00000,   0.000,   0.000,     0.00,     0.00,     0.00, 0,      0, 1.10000, 0.90000, 1.10000, 0.90000,  33, 7, 0.00000, 0.00000,  0.000\n" *
+        "1.00000,   0.000\n" =>
+            "   106,   105,     0,'1 ',2,1,1, 0.00000E+0, 0.00000E+0,2,'TRAFO 2W 1  ',1,   1,1.0000,   0,1.0000,   0,1.0000,   0,1.0000,'            '\n" *
+            " 0.00000E+0, 1.00000E-4,   100.00\n" *
+            "232.875,   0.000,   0.000,     0.00,     0.00,     0.00, 1,    105, 253.000, 207.000, 1.10000, 0.90000,  33, 7, 0.00000, 0.00000,  0.000\n" *
+            "141.450,   0.000\n",
+        "   109,   104,     0,'1 ',1,1,1, 0.00000E+0, 0.00000E+0,2,'TRAFO 2W 3  ',1,   1,1.0000,   0,1.0000,   0,1.0000,   0,1.0000,'            '\n" *
+        " 0.00000E+0, 1.00000E-4,   100.00\n" *
+        "1.00000,   0.000,   0.000,     0.00,     0.00,     0.00, 0,      0, 1.10000, 0.90000, 1.10000, 0.90000,  33, 4, 0.00000, 0.00000,  0.000\n" *
+        "1.00000,   0.000\n" =>
+            "   109,   104,     0,'1 ',2,1,1, 0.00000E+0, 0.00000E+0,2,'TRAFO 2W 3  ',1,   1,1.0000,   0,1.0000,   0,1.0000,   0,1.0000,'            '\n" *
+            " 0.00000E+0, 1.00000E-4,   100.00\n" *
+            "500.000,   0.000,   0.000,     0.00,     0.00,     0.00, 3,      0, 30.0000, -30.000, 1.10000, 0.90000,  33, 4, 0.00000, 0.00000,  0.000\n" *
+            "138.000,   0.000\n",
+        "   113,   110,   114,'1 ',1,1,1, 0.00000E+0, 0.00000E+0,2,'TRAFO 3W 1  ',1,   1,1.0000,   0,1.0000,   0,1.0000,   0,1.0000,'            '\n" *
+        " 0.00000E+0, 2.00000E-4,   100.00, 0.00000E+0, 2.00000E-4,   100.00, 0.00000E+0, 2.00000E-4,   100.00,0.99967,  -3.0658\n" *
+        "1.00000,   0.000,   0.000,     0.00,     0.00,     0.00, 0,      0, 1.10000, 0.90000, 1.10000, 0.90000,  33, 9, 0.00000, 0.00000,  0.000\n" *
+        "1.00000,   0.000,   0.000,     0.00,     0.00,     0.00, 0,      0, 1.10000, 0.90000, 1.10000, 0.90000,  33, 8, 0.00000, 0.00000,  0.000\n" *
+        "1.00000,   0.000,   0.000,     0.00,     0.00,     0.00, 0,      0, 1.10000, 0.90000, 1.10000, 0.90000,  33, 9, 0.00000, 0.00000,  0.000\n" =>
+            "   113,   110,   114,'1 ',2,1,1, 0.00000E+0, 0.00000E+0,2,'TRAFO 3W 1  ',1,   1,1.0000,   0,1.0000,   0,1.0000,   0,1.0000,'            '\n" *
+            " 0.00000E+0, 2.00000E-4,   100.00, 0.00000E+0, 2.00000E-4,   100.00, 0.00000E+0, 2.00000E-4,   100.00,0.99967,  -3.0658\n" *
+            "232.875,   0.000,   0.000,     0.00,     0.00,     0.00, 1,    113, 253.000, 207.000, 1.10000, 0.90000,  33, 9, 0.00000, 0.00000,  0.000\n" *
+            "230.000,   0.000,   0.000,     0.00,     0.00,     0.00, 0,      0, 253.000, 207.000, 1.10000, 0.90000,  33, 8, 0.00000, 0.00000,  0.000\n" *
+            "500.000,   0.000,   0.000,     0.00,     0.00,     0.00, 3,      0, 30.0000, -30.000, 1.10000, 0.90000,  33, 9, 0.00000, 0.00000,  0.000\n",
+    )
+    @test cw2 != raw
+    pm_data = parse_file(IOBuffer(cw2); filetype = "raw")
+    by_name(section, name) = only(
+        v for v in values(pm_data[section]) if
+        get(get(v, "ext", Dict()), "psse_name", "") == name
+    )
+
+    regulating = by_name("branch", "TRAFO 2W 1  ")
+    @test regulating["tap"] ≈ 1.0125 / 1.025
+    @test regulating["RMI1"] ≈ 0.9 / 1.025
+    @test regulating["RMA1"] ≈ 1.1 / 1.025
+    @test regulating["RMI1"] < regulating["tap"] < regulating["RMA1"]
+    # ext keeps the record's own values.
+    @test regulating["ext"]["RMA1"] == 253.0
+
+    phase_shifter = by_name("branch", "TRAFO 2W 3  ")
+    @test phase_shifter["tap"] ≈ 1.0
+    @test phase_shifter["RMI1"] == -30.0
+    @test phase_shifter["RMA1"] == 30.0
+
+    transformer_3w = by_name("3w_transformer", "TRAFO 3W 1  ")
+    @test transformer_3w["primary_turns_ratio"] ≈ 1.0125
+    @test transformer_3w["RMI1"] ≈ 0.9
+    @test transformer_3w["RMA1"] ≈ 1.1
+    @test transformer_3w["secondary_turns_ratio"] ≈ 1.0
+    @test transformer_3w["RMI2"] ≈ 0.9
+    @test transformer_3w["RMA2"] ≈ 1.1
+    @test transformer_3w["tertiary_turns_ratio"] ≈ 1.0
+    @test transformer_3w["RMI3"] == -30.0
+    @test transformer_3w["RMA3"] == 30.0
+end

@@ -1050,6 +1050,23 @@ function apply_tap_correction!(
     return windv_value
 end
 
+"""
+Return winding `winding`'s `(RMI, RMA)` in the units of its modeled turns ratio, where
+`turns_ratio_scale` maps the record's CW-unit WINDV onto that ratio. Phase-shift objectives
+(|COD| 3 or 5) bracket an angle in degrees instead, which CW does not touch.
+"""
+function _tap_ratio_limits(
+    transformer::Dict{String, Any},
+    winding::Int,
+    turns_ratio_scale::Float64,
+)
+    rmi, rma = transformer["RMI$winding"], transformer["RMA$winding"]
+    if abs(transformer["COD$winding"]) ∈ (3, 5)
+        return rmi, rma
+    end
+    return rmi * turns_ratio_scale, rma * turns_ratio_scale
+end
+
 # Two-winding records name their buses "f_bus"/"t_bus", three-winding ones
 # "bus_primary"/"bus_secondary"/"bus_tertiary"; both reach the warning below.
 function _transformer_bus_label(sub_data::Dict)
@@ -1340,11 +1357,13 @@ function _psse2pm_transformer!(pm_data::Dict, pti_data::Dict, import_all::Bool, 
                     transformer["CW"],
                     "primary",
                 )
-                sub_data["tap"] = windv1 / pop!(transformer, "WINDV2")
+                # Maps a winding 1 turns ratio in CW units onto the modeled tap, so the
+                # RMA1/RMI1 that bracket WINDV1 bracket `tap` in the same units.
+                tap_scale = 1.0 / pop!(transformer, "WINDV2")
                 sub_data["shift"] = pop!(transformer, "ANG1")
 
                 if transformer["CW"] != 1  # NOT "for off-nominal turns ratio in pu of winding bus base voltage"
-                    sub_data["tap"] *=
+                    tap_scale *=
                         _get_bus_value(transformer["J"], "base_kv", pm_data) /
                         _get_bus_value(transformer["I"], "base_kv", pm_data)
                     if transformer["CW"] == 3  # "for off-nominal turns ratio in pu of nominal winding voltage, NOMV1, NOMV2 and NOMV3."
@@ -1362,10 +1381,10 @@ function _psse2pm_transformer!(pm_data::Dict, pti_data::Dict, import_all::Bool, 
                             winding2_nominal_voltage = transformer["NOMV2"]
                         end
 
-                        sub_data["tap"] *=
-                            winding1_nominal_voltage / winding2_nominal_voltage
+                        tap_scale *= winding1_nominal_voltage / winding2_nominal_voltage
                     end
                 end
+                sub_data["tap"] = windv1 * tap_scale
 
                 if import_all
                     sub_data["cw"] = transformer["CW"]
@@ -1395,8 +1414,8 @@ function _psse2pm_transformer!(pm_data::Dict, pti_data::Dict, import_all::Bool, 
                 sub_data["index"] = length(pm_data["branch"]) + 1
                 sub_data["COD1"] = transformer["COD1"]
                 sub_data["CONT1"] = transformer["CONT1"]
-                sub_data["RMA1"] = transformer["RMA1"]
-                sub_data["RMI1"] = transformer["RMI1"]
+                sub_data["RMI1"], sub_data["RMA1"] =
+                    _tap_ratio_limits(transformer, 1, tap_scale)
                 sub_data["VMA1"] = transformer["VMA1"]
                 sub_data["VMI1"] = transformer["VMI1"]
                 sub_data["NTP1"] = transformer["NTP1"]
@@ -1805,34 +1824,19 @@ function _psse2pm_transformer!(pm_data::Dict, pti_data::Dict, import_all::Bool, 
                     "tertiary",
                 )
 
-                if transformer["CW"] == 1
-                    sub_data["primary_turns_ratio"] = windv1
-                    sub_data["secondary_turns_ratio"] = windv2
-                    sub_data["tertiary_turns_ratio"] = windv3
-                elseif transformer["CW"] == 2
-                    sub_data["primary_turns_ratio"] =
-                        windv1 / _get_bus_value(transformer["I"], "base_kv", pm_data)
-                    sub_data["secondary_turns_ratio"] =
-                        windv2 / _get_bus_value(transformer["J"], "base_kv", pm_data)
-                    sub_data["tertiary_turns_ratio"] =
-                        windv3 / _get_bus_value(transformer["K"], "base_kv", pm_data)
-                else
+                # Maps each winding's turns ratio in CW units onto its per-unit ratio, so
+                # that winding's RMA/RMI bracket its turns ratio in the same units.
+                winding_buses = (transformer["I"], transformer["J"], transformer["K"])
+                turns_ratio_scales = ntuple(3) do i
+                    transformer["CW"] == 1 && return 1.0
+                    bus_base_kv = _get_bus_value(winding_buses[i], "base_kv", pm_data)
+                    transformer["CW"] == 2 && return 1.0 / bus_base_kv
                     @assert transformer["CW"] == 3
-                    sub_data["primary_turns_ratio"] =
-                        windv1 * (
-                            sub_data["base_voltage_primary"] /
-                            _get_bus_value(transformer["I"], "base_kv", pm_data)
-                        )
-                    sub_data["secondary_turns_ratio"] =
-                        windv2 * (
-                            sub_data["base_voltage_secondary"] /
-                            _get_bus_value(transformer["J"], "base_kv", pm_data)
-                        )
-                    sub_data["tertiary_turns_ratio"] =
-                        windv3 * (
-                            sub_data["base_voltage_tertiary"] /
-                            _get_bus_value(transformer["K"], "base_kv", pm_data)
-                        )
+                    return sub_data["base_voltage_$(WINDING_NAMES[i])"] / bus_base_kv
+                end
+                for (i, windv) in enumerate((windv1, windv2, windv3))
+                    sub_data["$(WINDING_NAMES[i])_turns_ratio"] =
+                        windv * turns_ratio_scales[i]
                 end
                 sub_data["circuit"] = strip(transformer["CKT"])
                 sub_data["COD1"] = transformer["COD1"]
@@ -1840,8 +1844,8 @@ function _psse2pm_transformer!(pm_data::Dict, pti_data::Dict, import_all::Bool, 
                 sub_data["COD3"] = transformer["COD3"]
                 for i in 1:3
                     sub_data["CONT$i"] = transformer["CONT$i"]
-                    sub_data["RMA$i"] = transformer["RMA$i"]
-                    sub_data["RMI$i"] = transformer["RMI$i"]
+                    sub_data["RMI$i"], sub_data["RMA$i"] =
+                        _tap_ratio_limits(transformer, i, turns_ratio_scales[i])
                     sub_data["VMA$i"] = transformer["VMA$i"]
                     sub_data["VMI$i"] = transformer["VMI$i"]
                     sub_data["NTP$i"] = transformer["NTP$i"]
@@ -2628,7 +2632,20 @@ function _psse2pm_substation_data!(pm_data::Dict, pti_data::Dict, import_all::Bo
         return
     end
 
+    # A substation declaring no nodes attaches to no bus, so it has nothing to contribute to
+    # the bus-branch model; the record stays in `pti_data`.
+    nodeless_count = 0
     for substation in pti_data["SUBSTATION DATA"]
+        if isempty(substation["NODES"])
+            nodeless_count += 1
+            n_devices = length(substation["SWITCHING DEVICES"])
+            n_terminals = length(substation["TERMINALS"])
+            if n_devices + n_terminals > 0
+                @warn "Substation $(substation["IS"]) declares no nodes but has $n_devices switching device(s) and $n_terminals terminal(s); dropping it."
+            end
+            continue
+        end
+
         sub_data = Dict{String, Any}()
         sub_data["number"] = pop!(substation, "IS")
         sub_data["name"] = pop!(substation, "NAME")
@@ -2674,6 +2691,9 @@ function _psse2pm_substation_data!(pm_data::Dict, pti_data::Dict, import_all::Bo
         push!(pm_data["substation"], sub_data)
     end
 
+    if nodeless_count > 0
+        @info "Dropped $nodeless_count PSS(R)E substation(s) that declare no nodes and so attach to no bus."
+    end
     return
 end
 

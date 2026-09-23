@@ -53,6 +53,11 @@ _transformer_discriminator_pm_data() =
     # exercised via T2 below, whose ratio does NOT cancel.
     @test d["tap"] ≈ 1.0
 
+    # RMA1/RMI1 = 110/90 kV bracket WINDV1 and take the same CW=2 conversion as the tap:
+    # (110/21) * (20/100) and (90/21) * (20/100).
+    @test d["RMA1"] ≈ 110.0 / 105.0
+    @test d["RMI1"] ≈ 90.0 / 105.0
+
     # rate_a: RATE11 = 40.0 MVA raw, divided by sys_mbase (PowerModels' generic branch
     # per-unit correction, applied uniformly to every "branch" entry) = 0.4 system-pu.
     @test d["rate_a"] ≈ 40.0 / sys_mbase
@@ -80,6 +85,10 @@ _transformer_discriminator_pm_data() =
     # 0.4*100=40.0 (wrong) vs 0.4*50=20.0 (right).
     @test PFP.get_value(circuit, :rating) ≈ d["rate_a"] * d["base_power"]
     @test PFP.get_value(circuit, :rating) ≈ 20.0
+    @test _matches_nt(
+        PFP.get_value(circuit, :control_limits),
+        (min = d["RMI1"], max = d["RMA1"]),
+    )
 end
 
 @testset "T2 (CZ=3, CW=3, CM=2, SBASE1-2=80 != sys_mbase=100): hand-derived br_r/br_x/g_fr/b_fr/tap/rating" begin
