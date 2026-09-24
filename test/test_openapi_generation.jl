@@ -451,6 +451,35 @@ end
     @test PFP.get_value(hydro, :active_power) ≈ 500.0
 end
 
+@testset "a hydro generator joins voltage control under the type it was created as" begin
+    # `make_hydro_reservoir!` creates a HydroDispatch although the mapping names HydroTurbine,
+    # so the member must be looked up under the created type, not the mapped one.
+    sys = PFP.OpenAPISystem(100.0)
+    bus = _register_test_bus!(sys)
+    data = Dict{String, Any}(
+        "bus" => Dict{String, Any}(
+            "1" => Dict{String, Any}("bus_i" => 1, "bus_type" => 2),
+        ),
+        "gen" => Dict{String, Any}(
+            "1" => Dict{String, Any}(
+                "index" => 1, "name" => "hy1", "gen_bus" => 1,
+                "fuel" => "HYDRO",
+                "type" => "HYDRO", "mbase" => 100.0, "gen_status" => true,
+                "pg" => 5.0,
+                "qg" => 1.0, "pmax" => 20.0, "pmin" => 0.0, "qmax" => 10.0,
+                "qmin" => -10.0, "vg" => 1.02, "regulated_bus_number" => 0,
+                "rmpct" => 100.0,
+            ),
+        ),
+    )
+    PFP.read_generation!(sys, data)
+    hydro = only(PFP.get_components(sys, "HydroDispatch"))
+    member = only(sys.voltage_control_members)
+    @test member.component_type == "HydroDispatch"
+    @test member.component_id == PFP.get_value(hydro, :id)
+    @test member.bus_number == 1
+end
+
 @testset "get_generator_type resolving to EnergyReservoirStorage from \"gen\" is an error, not a skip" begin
     sys = PFP.OpenAPISystem(100.0)
     reg = PFP.get_registry(sys)

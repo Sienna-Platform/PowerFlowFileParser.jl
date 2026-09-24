@@ -271,7 +271,7 @@ function make_thermal_generator!(
     set_value!(component, :fuel, thermal_fuel(get(pm_gen, "fuel", "OTHER")))
     add_component!(sys, component)
     set_component_ext!(sys, component, extras)
-    return
+    return component
 end
 
 """
@@ -315,7 +315,7 @@ function _make_hydro_dispatch_body!(
         "MW/min")
     set_value!(component, :base_power, mbase, "MVA")
     add_component!(sys, component)
-    return
+    return component
 end
 
 """Hydro generator without a reservoir (`fuel: HYDRO, type: ROR`). Ported from PSCB's
@@ -392,7 +392,7 @@ function make_renewable_dispatch!(
     set_value!(component, :power_factor, 1.0, "1")
     set_value!(component, :base_power, mbase, "MVA")
     add_component!(sys, component)
-    return
+    return component
 end
 
 """Non-curtailable renewable generator. Unlike every other rating in this file, this one
@@ -426,7 +426,7 @@ function make_renewable_nondispatch!(
     set_value!(component, :power_factor, 1.0, "1")
     set_value!(component, :base_power, mbase, "MVA")
     add_component!(sys, component)
-    return
+    return component
 end
 
 """Synchronous condenser."""
@@ -460,7 +460,7 @@ function make_synchronous_condenser!(
     set_value!(component, :base_power, mbase, "MVA")
     add_component!(sys, component)
     set_component_ext!(sys, component, extras)
-    return
+    return component
 end
 
 """
@@ -544,7 +544,7 @@ function make_storage!(
     )
     set_value!(component, :base_power, thermal_rating, "MVA")
     add_component!(sys, component)
-    return
+    return component
 end
 
 """
@@ -705,6 +705,9 @@ function _generator_regulates_voltage(pm_gen::Dict, bus_types::Dict{Int, Int})
     return get(bus_types, Int(pm_gen["gen_bus"]), 0) in (PM_BUS_TYPE_PV, PM_BUS_TYPE_REF)
 end
 
+"""OpenAPI type name of a staged component."""
+_component_type_name(::Staged{T}) where {T} = string(nameof(T))
+
 """PSS/E bus number → PowerModels bus type code of every bus in `data`."""
 function _pm_bus_types(data::Dict)
     return Dict{Int, Int}(
@@ -746,9 +749,12 @@ function read_generation!(sys::OpenAPISystem, data::Dict; kwargs...)
         fuel = get(pm_gen, "fuel", "OTHER")
         unit_type = get(pm_gen, "type", "OT")
         type_name = get_generator_type(fuel, unit_type, GENERATOR_MAPPING_PM)
-        _make_generator!(Val(Symbol(type_name)), sys, reg, bus_id, pm_gen, gen_name,
-            sys_mbase)
-        if type_name in VOLTAGE_CONTROL_GENERATOR_TYPES &&
+        component = _make_generator!(Val(Symbol(type_name)), sys, reg, bus_id, pm_gen,
+            gen_name, sys_mbase)
+        # The member is recorded under the type the maker created, which can differ from
+        # the mapped one (a reservoir hydro unit is created as a HydroDispatch).
+        created_type = _component_type_name(component)
+        if created_type in VOLTAGE_CONTROL_GENERATOR_TYPES &&
            _generator_regulates_voltage(pm_gen, bus_types)
             push!(
                 sys.voltage_control_members,
@@ -757,8 +763,8 @@ function read_generation!(sys::OpenAPISystem, data::Dict; kwargs...)
                         get(pm_gen, "regulated_bus_number", 0),
                         bus_number,
                     ),
-                    get_id(reg, type_name, gen_name),
-                    type_name,
+                    get_value(component, :id),
+                    created_type,
                     _rmpct_weight(get(pm_gen, "rmpct", 100.0), "generator $gen_name"),
                     nothing,
                 ),
