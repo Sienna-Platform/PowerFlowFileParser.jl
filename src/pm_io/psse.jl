@@ -500,6 +500,11 @@ function _psse2pm_generator!(pm_data::Dict, pti_data::Dict, import_all::Bool, nb
             sub_data["r_source"] = pop!(gen, "ZR")
             sub_data["x_source"] = pop!(gen, "ZX")
             sub_data["m_control_mode"] = pop!(gen, "WMOD")
+            # IREG names the remote regulated bus (0: the generator's own bus) and RMPCT its
+            # share of the reactive power required there; both land on the document rather
+            # than in ext.
+            sub_data["regulated_bus_number"] = pop!(gen, "IREG")
+            sub_data["rmpct"] = pop!(gen, "RMPCT")
 
             if _is_synch_condenser(sub_data, pm_data, bus_number)
                 sub_data["fuel"] = "SYNC_COND"
@@ -513,11 +518,9 @@ function _psse2pm_generator!(pm_data::Dict, pti_data::Dict, import_all::Bool, nb
                 )
             elseif pm_data["source_version"] ∈ ("30", "32", "33")
                 sub_data["ext"] = Dict{String, Any}(
-                    "IREG" => pop!(gen, "IREG"),
                     "WPF" => pop!(gen, "WPF"),
                     "WMOD" => sub_data["m_control_mode"],
                     "GTAP" => pop!(gen, "GTAP"),
-                    "RMPCT" => pop!(gen, "RMPCT"),
                 )
             else
                 error("Unsupported PSS(R)E source version: $(pm_data["source_version"])")
@@ -970,10 +973,10 @@ function _psse2pm_shunt!(
             # pti.jl names the regulated-bus column "SWREM" for every source version,
             # including v35 where the PSS/E spec itself calls it SWREG.
             sub_data["regulated_bus_number"] = switched_shunt["SWREM"]
+            sub_data["rmpct"] = switched_shunt["RMPCT"]
 
             sub_data["ext"] = Dict{String, Any}(
                 "ADJM" => switched_shunt["ADJM"],
-                "RMPCT" => switched_shunt["RMPCT"],
                 "RMIDNT" => switched_shunt["RMIDNT"],
             )
 
@@ -1293,7 +1296,6 @@ function _psse2pm_transformer!(pm_data::Dict, pti_data::Dict, import_all::Bool, 
                     "CZ" => transformer["CZ"],
                     "CM" => transformer["CM"],
                     "COD1" => transformer["COD1"],
-                    "CONT1" => transformer["CONT1"],
                     "NOMV1" => transformer["NOMV1"],
                     "NOMV2" => transformer["NOMV2"],
                     "WINDV1" => transformer["WINDV1"],
@@ -1414,6 +1416,8 @@ function _psse2pm_transformer!(pm_data::Dict, pti_data::Dict, import_all::Bool, 
                 sub_data["index"] = length(pm_data["branch"]) + 1
                 sub_data["COD1"] = transformer["COD1"]
                 sub_data["CONT1"] = transformer["CONT1"]
+                sub_data["CR1"] = transformer["CR1"]
+                sub_data["CX1"] = transformer["CX1"]
                 sub_data["RMI1"], sub_data["RMA1"] =
                     _tap_ratio_limits(transformer, 1, tap_scale)
                 sub_data["VMA1"] = transformer["VMA1"]
@@ -1844,6 +1848,8 @@ function _psse2pm_transformer!(pm_data::Dict, pti_data::Dict, import_all::Bool, 
                 sub_data["COD3"] = transformer["COD3"]
                 for i in 1:3
                     sub_data["CONT$i"] = transformer["CONT$i"]
+                    sub_data["CR$i"] = transformer["CR$i"]
+                    sub_data["CX$i"] = transformer["CX$i"]
                     sub_data["RMI$i"], sub_data["RMA$i"] =
                         _tap_ratio_limits(transformer, i, turns_ratio_scales[i])
                     sub_data["VMA$i"] = transformer["VMA$i"]
@@ -2022,6 +2028,16 @@ function _psse2pm_dcline!(pm_data::Dict, pti_data::Dict, import_all::Bool)
             sub_data["inverter_tap_setting"] = dcline["TAPI"]
             sub_data["inverter_tap_limits"] = (min = dcline["TMNI"], max = dcline["TMXI"])
             sub_data["inverter_tap_step"] = dcline["STPI"]
+
+            # ICR/ICI name the commutating buses (0: the converter bus); IFR/ITR/IDR and
+            # IFI/ITI/IDI name the two-winding transformer whose tap the line adjusts (IFR 0:
+            # the line's own tap fields describe it).
+            sub_data["rectifier_commutating_bus_number"] = dcline["ICR"]
+            sub_data["inverter_commutating_bus_number"] = dcline["ICI"]
+            sub_data["rectifier_tap_transformer"] =
+                (dcline["IFR"], dcline["ITR"], strip(dcline["IDR"]))
+            sub_data["inverter_tap_transformer"] =
+                (dcline["IFI"], dcline["ITI"], strip(dcline["IDI"]))
 
             sub_data["loss0"] = 0.0
             sub_data["loss1"] = 0.0
@@ -2233,11 +2249,12 @@ function _psse2pm_dcline!(pm_data::Dict, pti_data::Dict, import_all::Bool)
             sub_data["pf"] = flow_setpoint / baseMVA
             sub_data["if"] = 1000.0 * (flow_setpoint / base_voltage)
 
+            sub_data["remote_bus_number_from"] = from_bus["REMOT"]
+            sub_data["remote_bus_number_to"] = to_bus["REMOT"]
+            sub_data["rmpct_from"] = from_bus["RMPCT"]
+            sub_data["rmpct_to"] = to_bus["RMPCT"]
+
             sub_data["ext"] = Dict{String, Any}(
-                "REMOT_FROM" => from_bus["REMOT"],
-                "REMOT_TO" => to_bus["REMOT"],
-                "RMPCT_FROM" => from_bus["RMPCT"],
-                "RMPCT_TO" => to_bus["RMPCT"],
                 "ALOSS_FROM" => from_bus["ALOSS"],
                 "ALOSS_TO" => to_bus["ALOSS"],
                 "MINLOSS_FROM" => from_bus["MINLOSS"],
@@ -2304,18 +2321,17 @@ function _psse2pm_facts!(pm_data::Dict, pti_data::Dict, import_all::Bool)
             end
 
             sub_data["ext"] = Dict{String, Any}()
+            sub_data["rmpct"] = facts["RMPCT"]
 
             if pm_data["source_version"] == "35"
                 sub_data["regulated_bus_number"] = facts["FCREG"]
                 sub_data["ext"]["NREG"] = facts["NREG"]
                 sub_data["ext"]["MNAME"] = facts["MNAME"]
-                sub_data["ext"]["RMPCT"] = facts["RMPCT"]
             elseif pm_data["source_version"] ∈ ("30", "32", "33")
                 # REMOT is absent from the v30 FACTS record layout (_FACTS_dtypes_v30)
                 sub_data["regulated_bus_number"] = get(facts, "REMOT", 0)
                 sub_data["ext"] = Dict{String, Any}(
                     "J" => facts["J"],
-                    "RMPCT" => facts["RMPCT"],
                 )
             else
                 error("Unsupported PSS(R)E source version: $(pm_data["source_version"])")

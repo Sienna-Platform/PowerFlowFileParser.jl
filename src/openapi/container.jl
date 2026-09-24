@@ -1,4 +1,20 @@
 """
+One setpoint voltage regulating device, or one converter of a two-terminal line, recorded
+while its component is built so [`read_voltage_control!`](@ref) can group the devices that
+hold one bus into a `ReactivePowerSharing` attribute afterwards.
+"""
+struct VoltageControlMember
+    "PSS/E number of the bus the device resolves to"
+    bus_number::Int
+    component_id::Int
+    component_type::String
+    "positive relative reactive power share (PSS/E RMPCT / 100)"
+    weight::Float64
+    "converter of a two-terminal member (\"FROM\"/\"TO\"), `nothing` for a single-bus device"
+    terminal::Union{Nothing, String}
+end
+
+"""
 The document PowerFlowFileParser emits, a thin wrapper over `PD.SystemDocument`.
 
 `document` carries the components, the association tables, and `ext`. `base_power`
@@ -19,6 +35,10 @@ struct OpenAPISystem
     time_series::Vector{IS.TimeSeriesData}
     base_power::Float64
     power_units::String
+    "setpoint devices by build order, grouped into sharing attributes at the end of the build"
+    voltage_control_members::Vector{VoltageControlMember}
+    "PSS/E (I, J, CKT) of every two-winding transformer built, for the DC-line tap references"
+    psse_transformer_ids::Dict{Tuple{Int, Int, String}, Int}
 end
 
 """
@@ -48,6 +68,72 @@ function OpenAPISystem(
         Vector{IS.TimeSeriesData}(),
         base_power,
         String(power_units),
+        VoltageControlMember[],
+        Dict{Tuple{Int, Int, String}, Int}(),
+    )
+end
+
+"""
+Remember that `component` (a staged device) regulates the voltage at PSS/E bus `bus_number`
+to a setpoint with relative share `weight`; `terminal` names the converter of a two-terminal
+member. Read back by [`read_voltage_control!`](@ref).
+"""
+function record_voltage_control_member!(
+    sys::OpenAPISystem,
+    bus_number::Int,
+    component::Staged{T},
+    weight::Float64;
+    terminal::Union{Nothing, String} = nothing,
+) where {T}
+    push!(
+        sys.voltage_control_members,
+        VoltageControlMember(
+            bus_number,
+            get_value(component, :id),
+            string(nameof(T)),
+            weight,
+            terminal,
+        ),
+    )
+    return
+end
+
+"""
+Remember the document id of the two-winding transformer built from pm dict entry `d`, under
+its PSS/E `(I, J, CKT)` identity, so a DC line's `IFR`/`ITR`/`IDR` can name it. A Matpower
+branch carries no PSS/E identity and is not recorded.
+"""
+function record_psse_transformer!(sys::OpenAPISystem, d::Dict, id::Int)
+    source_id = get(d, "source_id", nothing)
+    if isnothing(source_id) || first(source_id) != "transformer" || length(source_id) < 5
+        return
+    end
+    sys.psse_transformer_ids[(
+        Int(source_id[2]),
+        Int(source_id[3]),
+        strip(String(source_id[5])),
+    )] =
+        id
+    return
+end
+
+"""
+The document id of the two-winding transformer PSS/E names by `(I, J, CKT)`, in either bus
+order, or `nothing` when `I` is 0 (no transformer named). Throws when the transformer was
+never built.
+"""
+function _psse_transformer_id(sys::OpenAPISystem, spec, owner::AbstractString)
+    from_number, to_number, ckt = Int(spec[1]), Int(spec[2]), String(spec[3])
+    iszero(from_number) && return nothing
+    ids = sys.psse_transformer_ids
+    for key in ((from_number, to_number, ckt), (to_number, from_number, ckt))
+        haskey(ids, key) && return ids[key]
+    end
+    throw(
+        IS.DataFormatError(
+            "$owner names transformer $from_number-$to_number circuit '$ckt', which the " *
+            "TRANSFORMER data does not define as a two-winding transformer",
+        ),
     )
 end
 
@@ -184,6 +270,34 @@ function add_service_association!(
     push!(
         associations,
         PO.ServiceAssociation(; service_id = service_id, entity_id = entity_id),
+    )
+    return
+end
+
+"""
+Record that `entity_id`, or its `terminal` converter, is a member of the voltage control group
+`control_id` with relative reactive power `weight` — one `voltage_control_associations` row.
+"""
+function add_voltage_control_association!(
+    sys::OpenAPISystem,
+    control_id::Int,
+    entity_id::Int,
+    weight::Float64,
+    terminal::Union{Nothing, String},
+)
+    terminal_value = if isnothing(terminal)
+        nothing
+    else
+        PO.VoltageControlTerminal(terminal)
+    end
+    PD.add_voltage_control_association!(
+        get_document(sys),
+        PO.VoltageControlAssociation(;
+            control_id = control_id,
+            entity_id = entity_id,
+            weight = weight,
+            terminal = terminal_value,
+        ),
     )
     return
 end

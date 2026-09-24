@@ -180,9 +180,14 @@ inverted-limits warnings.
 """
 function _set_transformer_control_fields!(
     circuit,
+    reg::IdRegistry,
     d::Dict,
     suffix::Int,
     record::AbstractString,
+    from_id::Int,
+    to_id::Int,
+    base_power::Real,
+    sys_mbase::Real,
 )
     cod = get(d, "COD$suffix", -99)
     objective = _transformer_control_objective(cod)
@@ -208,7 +213,21 @@ function _set_transformer_control_fields!(
         vmi, vma = vma, vmi
     end
     set_value!(circuit, :control_objective, objective)
-    set_value!(circuit, :regulated_bus_number, Int(get(d, "CONT$suffix", 0)))
+    _set_regulated_bus!(
+        circuit, reg, Int(get(d, "CONT$suffix", 0)), objective, record, suffix, from_id,
+        to_id,
+    )
+    # CR + jCX is per unit on the system base in PSS/E; the circuit's impedance fields are
+    # per unit on its own base_power.
+    set_value!(
+        circuit,
+        :load_drop_compensation,
+        (
+            real = get(d, "CR$suffix", 0.0) * base_power / sys_mbase,
+            imag = get(d, "CX$suffix", 0.0) * base_power / sys_mbase,
+        ),
+        "pu",
+    )
     set_value!(
         circuit,
         :control_limits,
@@ -218,6 +237,53 @@ function _set_transformer_control_fields!(
     set_value!(circuit, :controlled_quantity_limits, (min = vmi, max = vma),
         _CONTROLLED_QUANTITY_LIMITS_UNIT[objective])
     set_value!(circuit, :number_of_tap_positions, Int(get(d, "NTP$suffix", 33)))
+    return
+end
+
+const _VOLTAGE_CONTROL_OBJECTIVES = ("VOLTAGE", "VOLTAGE_DISABLED")
+
+"""
+Resolve PSS/E `CONT` into the circuit's `regulated_bus_id` and `regulated_bus_side`.
+
+Only a voltage objective regulates a bus: `CONT` is the controlled bus, with 0 meaning the bus
+beyond the other winding (the circuit's `to` bus), the reading the power flow has always
+applied. The sign of `CONT` says which side of the tapped winding the bus lies on; it is stored
+only when the bus is neither end of the circuit's arc, since the arc settles it otherwise. A
+non-zero `CONT` under any other objective controls nothing and is dropped with a warning.
+"""
+function _set_regulated_bus!(
+    circuit,
+    reg::IdRegistry,
+    cont::Int,
+    objective::AbstractString,
+    record::AbstractString,
+    suffix::Int,
+    from_id::Int,
+    to_id::Int,
+)
+    _set_nullable!(circuit, :regulated_bus_id, nothing)
+    _set_nullable!(circuit, :regulated_bus_side, nothing)
+    if !(objective in _VOLTAGE_CONTROL_OBJECTIVES)
+        if !iszero(cont)
+            @warn "Transformer $record winding $suffix has CONT$suffix = $cont but control objective $objective, which regulates no bus voltage; ignoring CONT$suffix."
+        end
+        return
+    end
+    regulated_id = if iszero(cont)
+        to_id
+    else
+        get_bus_id(reg, abs(cont))
+    end
+    set_value!(circuit, :regulated_bus_id, regulated_id)
+    if regulated_id == from_id || regulated_id == to_id
+        return
+    end
+    side = if cont < 0
+        "CONTROLLING_WINDING"
+    else
+        "OPPOSITE_WINDING"
+    end
+    set_value!(circuit, :regulated_bus_side, side)
     return
 end
 
@@ -261,7 +327,10 @@ function _make_transformer_circuit!(
     set_value!(circuit, :parameter_units, "COMPONENT_BASE")
     set_value!(circuit, :r, r, "pu")
     set_value!(circuit, :x, x, "pu")
-    _set_transformer_control_fields!(circuit, d, control_suffix, record)
+    _set_transformer_control_fields!(
+        circuit, reg, d, control_suffix, record, from_id, to_id, base_power,
+        get_base_power(sys),
+    )
     set_value!(circuit, :base_power, base_power, "MVA")
     set_optional_value!(circuit, :rating, rating, "MVA")
     set_optional_value!(circuit, :rating_b, rating_b, "MVA")
@@ -424,13 +493,15 @@ function make_transformer_2w!(
     )
 
     component = stage(PO.TwoWindingTransformer)
-    set_value!(component, :id, register!(reg, "TwoWindingTransformer", name))
+    transformer_id = register!(reg, "TwoWindingTransformer", name)
+    set_value!(component, :id, transformer_id)
     set_value!(component, :name, name)
     set_value!(component, :circuit, circuit_id)
     set_value!(component, :admittance_units, "COMPONENT_BASE")
     set_value!(component, :magnetizing_shunt, (real = d["g_fr"], imag = d["b_fr"]), "pu")
     add_component!(sys, component)
     set_component_ext!(sys, component, get(d, "ext", Dict{String, Any}()))
+    record_psse_transformer!(sys, d, transformer_id)
     return
 end
 

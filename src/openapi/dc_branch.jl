@@ -93,6 +93,31 @@ function make_lcc_line!(
     set_value!(component, :rectifier_tap_limits, d["rectifier_tap_limits"], "1")
     set_value!(component, :rectifier_tap_step, d["rectifier_tap_step"], "1")
     set_value!(component, :rectifier_delay_angle, d["rectifier_delay_angle"], "rad")
+    # ICR/ICI: the converter bus (or 0) is spelled `nothing`, like every remote bus.
+    _set_nullable!(
+        component,
+        :rectifier_commutating_bus_id,
+        _psse_remote_bus_id(reg, get(d, "rectifier_commutating_bus_number", 0), from_id),
+    )
+    _set_nullable!(
+        component,
+        :inverter_commutating_bus_id,
+        _psse_remote_bus_id(reg, get(d, "inverter_commutating_bus_number", 0), to_id),
+    )
+    _set_nullable!(
+        component,
+        :rectifier_tap_transformer_id,
+        _psse_transformer_id(
+            sys, get(d, "rectifier_tap_transformer", (0, 0, "")), "DC line $name rectifier",
+        ),
+    )
+    _set_nullable!(
+        component,
+        :inverter_tap_transformer_id,
+        _psse_transformer_id(
+            sys, get(d, "inverter_tap_transformer", (0, 0, "")), "DC line $name inverter",
+        ),
+    )
     set_value!(component, :rectifier_capacitor_reactance,
         d["rectifier_capacitor_reactance"],
         "ohm")
@@ -252,8 +277,12 @@ function make_vscline!(
         (min = d["qminf"] * sys_mbase, max = d["qmaxf"] * sys_mbase), "MVAr")
     set_value!(component, :power_factor_weighting_fraction_from,
         d["power_factor_weighting_fraction_from"], "1")
-    _set_nullable!(component, :remote_bus_control_from, _psse_remote_bus(d, "REMOT_FROM"))
-    set_value!(component, :rmpct_from, get(get(d, "ext", Dict()), "RMPCT_FROM", 100.0), "1")
+    remote_from = Int(get(d, "remote_bus_number_from", 0))
+    _set_nullable!(
+        component,
+        :remote_regulated_bus_id_from,
+        _psse_remote_bus_id(reg, remote_from, from_id),
+    )
     set_value!(component, :reactive_power_to, get(d, "qt", 0.0) * sys_mbase, "MVAr")
     if d["dc_voltage_control_to"]
         set_value!(component, :dc_control_to, "DC_VOLTAGE")
@@ -284,43 +313,37 @@ function make_vscline!(
         (min = d["qmint"] * sys_mbase, max = d["qmaxt"] * sys_mbase), "MVAr")
     set_value!(component, :power_factor_weighting_fraction_to,
         d["power_factor_weighting_fraction_to"], "1")
-    _set_nullable!(component, :remote_bus_control_to, _psse_remote_bus(d, "REMOT_TO"))
-    set_value!(component, :rmpct_to, get(get(d, "ext", Dict()), "RMPCT_TO", 100.0), "1")
+    remote_to = Int(get(d, "remote_bus_number_to", 0))
+    _set_nullable!(
+        component,
+        :remote_regulated_bus_id_to,
+        _psse_remote_bus_id(reg, remote_to, to_id),
+    )
     set_value!(component, :rated_dc_voltage, d["rated_dc_voltage"], "kV")
     set_value!(component, :base_power, sys_mbase, "MVA")
     add_component!(sys, component)
     set_component_ext!(sys, component, get(d, "ext", Dict{String, Any}()))
-    return
-end
-
-"""
-Assign a field whose declared type keeps `Nothing` as a real schema value (not merely
-the optional-field placeholder every generated field also carries): units.jl's
-`_concrete_field_type` always strips both `Absent` and `Nothing` before computing the
-single concrete type `_coerce` builds, on the assumption that `Nothing` is only ever that
-placeholder, so `_coerce` cannot construct a bare `nothing` for a field like
-`remote_bus_control_from`/`_to`, whose schema spells "regulates its own terminal bus" as an
-explicit `null` rather than an absent field. Only these two fields need this today; a
-non-`nothing` value still goes through the normal `set_value!` enforcement.
-"""
-function _set_nullable!(s::Staged, prop::Symbol, value)
-    if isnothing(value)
-        s.fields[prop] = nothing
-    else
-        set_value!(s, prop, value)
+    if Bool(d["available"])
+        if d["ac_voltage_control_from"]
+            record_voltage_control_member!(
+                sys,
+                _regulated_bus_number(remote_from, Int(d["f_bus"])),
+                component,
+                _rmpct_weight(get(d, "rmpct_from", 100.0), "VSC line $name from converter");
+                terminal = "FROM",
+            )
+        end
+        if d["ac_voltage_control_to"]
+            record_voltage_control_member!(
+                sys,
+                _regulated_bus_number(remote_to, Int(d["t_bus"])),
+                component,
+                _rmpct_weight(get(d, "rmpct_to", 100.0), "VSC line $name to converter");
+                terminal = "TO",
+            )
+        end
     end
     return
-end
-
-"""PSS/E encodes "no remote regulated bus" as `REMOT = 0`; the schema's
-`remote_bus_control_*` is nullable with a valid range `>= 1` and spells local-terminal-bus
-regulation as `nothing`."""
-function _psse_remote_bus(d::Dict, key::AbstractString)
-    remote_bus = get(get(d, "ext", Dict()), key, 0)
-    if iszero(remote_bus)
-        return nothing
-    end
-    return remote_bus
 end
 
 """

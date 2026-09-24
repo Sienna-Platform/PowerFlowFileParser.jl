@@ -38,6 +38,6 @@ const WINDING_NAMES = Dict(
 )
 
 const TRANSFORMER3W_PARAMETER_NAMES = [
-    "COD", "CONT", "NOMV", "WINDV", "RMA", "RMI",
+    "COD", "NOMV", "WINDV", "RMA", "RMI",
     "NTP", "VMA", "VMI", "RATA", "RATB", "RATC",
 ]

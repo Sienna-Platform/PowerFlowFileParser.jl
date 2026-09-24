@@ -117,11 +117,12 @@ function make_switched_admittance!(
     set_value!(component, :admittance_limits,
         (min = admittance_limits[1], max = admittance_limits[2]), "MVAr")
     set_value!(component, :control_mode, control_mode)
-    set_value!(
+    # PSS/E SWREM in every control mode; the own bus (or 0) is spelled `nothing`.
+    remote_number = Int(get(d, "regulated_bus_number", 0))
+    _set_nullable!(
         component,
-        :regulated_bus_number,
-        Int(get(d, "regulated_bus_number", 0)),
-        "1",
+        :remote_regulated_bus_id,
+        _psse_remote_bus_id(reg, remote_number, bus_id),
     )
     if haskey(d, "number_engaged")
         set_value!(component, :number_engaged, d["number_engaged"])
@@ -139,6 +140,14 @@ function make_switched_admittance!(
     end
     add_component!(sys, component)
     set_component_ext!(sys, component, get(d, "ext", Dict{String, Any}()))
+    if Bool(d["status"]) && control_mode in ("DISCRETE_VOLTAGE", "CONTINUOUS_VOLTAGE")
+        record_voltage_control_member!(
+            sys,
+            _regulated_bus_number(remote_number, Int(d["shunt_bus"])),
+            component,
+            _rmpct_weight(get(d, "rmpct", 100.0), "switched shunt $name"),
+        )
+    end
     return
 end
 
@@ -182,15 +191,24 @@ function make_facts!(
     set_value!(component, :voltage_setpoint, d["voltage_setpoint"], "pu")
     set_value!(component, :max_shunt_current, d["max_shunt_current"], "MVA")
     set_value!(component, :reactive_power_required, get(d, "reactive_power_required", 0.0),
-        "1")
-    set_value!(
+        "MVAr")
+    # PSS/E FCREG (REMOT before v35); the sending end bus (or 0) is spelled `nothing`.
+    remote_number = Int(get(d, "regulated_bus_number", 0))
+    _set_nullable!(
         component,
-        :regulated_bus_number,
-        Int(get(d, "regulated_bus_number", 0)),
-        "1",
+        :remote_regulated_bus_id,
+        _psse_remote_bus_id(reg, remote_number, bus_id),
     )
     add_component!(sys, component)
     set_component_ext!(sys, component, get(d, "ext", Dict{String, Any}()))
+    if Bool(d["available"]) && control_mode != "OOS"
+        record_voltage_control_member!(
+            sys,
+            _regulated_bus_number(remote_number, Int(d["bus"])),
+            component,
+            _rmpct_weight(get(d, "rmpct", 100.0), "FACTS device $name"),
+        )
+    end
     return
 end
 

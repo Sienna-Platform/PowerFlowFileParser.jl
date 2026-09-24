@@ -127,7 +127,7 @@ end
     @test PFP.get_value(facts, :voltage_setpoint) == d["voltage_setpoint"]
     @test PFP.get_value(facts, :max_shunt_current) == d["max_shunt_current"]
     @test PFP.get_value(facts, :reactive_power_required) == 0.0
-    @test PFP.get_value(facts, :regulated_bus_number) == d["regulated_bus_number"]
+    @test isnothing(PFP.get_value(facts, :remote_regulated_bus_id))
 end
 
 @testset "_facts_control_mode rejects a code outside the current 0-2 enum domain" begin

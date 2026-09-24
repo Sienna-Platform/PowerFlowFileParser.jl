@@ -209,6 +209,27 @@ function _thermal_status(gen_name::AbstractString, gen_status)
     )
 end
 
+"""
+The remote regulated bus (PSS/E `IREG`, spelled `nothing` for the own bus) and the voltage
+setpoint (PSS/E `VS`, Matpower `Vg`, per-unit of the regulated bus base) shared by every
+generator type that regulates voltage to a setpoint.
+"""
+function _set_generator_voltage_control!(
+    component::Staged,
+    reg::IdRegistry,
+    pm_gen::Dict,
+    bus_id::Int,
+)
+    _set_nullable!(
+        component,
+        :remote_regulated_bus_id,
+        _psse_remote_bus_id(reg, get(pm_gen, "regulated_bus_number", 0), bus_id),
+    )
+    set_value!(component, :voltage_setpoint_units, "COMPONENT_BASE")
+    set_value!(component, :voltage_setpoint, get(pm_gen, "vg", 1.0), "pu")
+    return
+end
+
 """Thermal generator; the cost branch lives in `make_thermal_cost` (cost.jl)."""
 function make_thermal_generator!(
     sys::OpenAPISystem,
@@ -229,6 +250,7 @@ function make_thermal_generator!(
     set_value!(component, :available, Bool(pm_gen["gen_status"]))
     set_value!(component, :status, _thermal_status(gen_name, pm_gen["gen_status"]))
     set_value!(component, :bus, bus_id)
+    _set_generator_voltage_control!(component, reg, pm_gen, bus_id)
     # operation_cost is a required oneOf field `_shadow` can't placeholder (see `stage`'s
     # docstring); stage it before any power-family field below.
     set_value!(component, :operation_cost, make_thermal_cost(gen_name, pm_gen, sys_mbase))
@@ -278,6 +300,7 @@ function _make_hydro_dispatch_body!(
     # field below.
     set_value!(component, :operation_cost, make_hydro_cost())
     set_value!(component, :prime_mover_type, prime_mover_type(get(pm_gen, "type", "OT")))
+    _set_generator_voltage_control!(component, reg, pm_gen, bus_id)
     set_value!(component, :active_power,
         _natural_value(pm_gen["pg"] * base_conversion, mbase),
         "MW")
@@ -357,6 +380,7 @@ function make_renewable_dispatch!(
     # field below.
     set_value!(component, :operation_cost, make_renewable_cost())
     set_value!(component, :prime_mover_type, prime_mover_type(get(pm_gen, "type", "OT")))
+    _set_generator_voltage_control!(component, reg, pm_gen, bus_id)
     set_value!(component, :active_power,
         _natural_value(pm_gen["pg"] * base_conversion, mbase),
         "MW")
@@ -427,6 +451,7 @@ function make_synchronous_condenser!(
     set_value!(component, :name, gen_name)
     set_value!(component, :available, Bool(pm_gen["gen_status"]))
     set_value!(component, :bus, bus_id)
+    _set_generator_voltage_control!(component, reg, pm_gen, bus_id)
     set_value!(component, :reactive_power,
         _natural_value(pm_gen["qg"] * base_conversion, mbase), "MVAr")
     set_value!(component, :rating, _natural_value(rating, mbase), "MVA")
@@ -657,6 +682,46 @@ function _make_generator!(
 end
 
 """
+Generator types that regulate voltage to a setpoint, and so carry `remote_regulated_bus_id`
+and `voltage_setpoint` and can share a bus's reactive power. `RenewableNonDispatch` is a fixed
+injection; `EnergyReservoirStorage` never comes from the `"gen"` section here.
+"""
+const VOLTAGE_CONTROL_GENERATOR_TYPES = (
+    "ThermalStandard",
+    "ThermalMultiStart",
+    "HydroDispatch",
+    "HydroTurbine",
+    "HydroPumpTurbine",
+    "RenewableDispatch",
+    "SynchronousCondenser",
+)
+
+"""
+Whether the generator `pm_gen` holds its regulated bus to a setpoint: it is in service and the
+bus type of its own bus marks it as voltage regulating (PV or REF).
+"""
+function _generator_regulates_voltage(pm_gen::Dict, bus_types::Dict{Int, Int})
+    Bool(pm_gen["gen_status"]) || return false
+    return get(bus_types, Int(pm_gen["gen_bus"]), 0) in (PM_BUS_TYPE_PV, PM_BUS_TYPE_REF)
+end
+
+"""PSS/E bus number → PowerModels bus type code of every bus in `data`."""
+function _pm_bus_types(data::Dict)
+    return Dict{Int, Int}(
+        Int(d["bus_i"]) => Int(d["bus_type"]) for
+        (_, d) in get(data, "bus", Dict{String, Any}())
+    )
+end
+
+"""The PSS/E number of the bus a device regulates: its remote regulated bus when one is
+named, otherwise its own bus."""
+function _regulated_bus_number(remote_number, own_number::Int)
+    remote = Int(remote_number)
+    iszero(remote) && return own_number
+    return remote
+end
+
+"""
 Create one generator per `data["gen"]` entry and one storage device per
 `data["storage"]` entry.
 
@@ -673,14 +738,32 @@ function read_generation!(sys::OpenAPISystem, data::Dict; kwargs...)
     sys_mbase = get_base_power(sys)
     _get_name = get(kwargs, :gen_name_formatter, _get_pm_dict_name)
 
+    bus_types = _pm_bus_types(data)
     for (_, pm_gen) in _sorted_pm_entries(data["gen"])
         gen_name = String(_get_name(pm_gen))
-        bus_id = get_bus_id(reg, Int(pm_gen["gen_bus"]))
+        bus_number = Int(pm_gen["gen_bus"])
+        bus_id = get_bus_id(reg, bus_number)
         fuel = get(pm_gen, "fuel", "OTHER")
         unit_type = get(pm_gen, "type", "OT")
         type_name = get_generator_type(fuel, unit_type, GENERATOR_MAPPING_PM)
         _make_generator!(Val(Symbol(type_name)), sys, reg, bus_id, pm_gen, gen_name,
             sys_mbase)
+        if type_name in VOLTAGE_CONTROL_GENERATOR_TYPES &&
+           _generator_regulates_voltage(pm_gen, bus_types)
+            push!(
+                sys.voltage_control_members,
+                VoltageControlMember(
+                    _regulated_bus_number(
+                        get(pm_gen, "regulated_bus_number", 0),
+                        bus_number,
+                    ),
+                    get_id(reg, type_name, gen_name),
+                    type_name,
+                    _rmpct_weight(get(pm_gen, "rmpct", 100.0), "generator $gen_name"),
+                    nothing,
+                ),
+            )
+        end
     end
 
     for (_, pm_storage) in _sorted_pm_entries(get(data, "storage", Dict{String, Any}()))
