@@ -194,15 +194,8 @@ depending on a runtime discriminator field only the instance-level method reads.
 Type-level method (every power-family field: its unit now depends on the component's own
 `power_units`) raises `MethodError` rather than the schema's own `ErrorException`; both mean
 "not fixed" here."""
-function _has_fixed_declared_unit(::Type{T}, prop::Symbol) where {T}
-    try
-        IC.declared_unit(T, Val(prop))
-        return true
-    catch e
-        (e isa ErrorException || e isa MethodError) || rethrow()
-        return false
-    end
-end
+_has_fixed_declared_unit(::Type{T}, prop::Symbol) where {T} =
+    !isnothing(_type_level_units(T, prop))
 
 """
 Classification for a `key.prop` whose Type-level declared unit is NOT fixed (an
