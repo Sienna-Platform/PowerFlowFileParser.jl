@@ -250,3 +250,15 @@ end
     @test PFP.get_value(reserve, :time_frame) == 60.0
     @test_throws IS.DataFormatError PFP.set_value!(reserve, :sustained_time, 1.0, "h")
 end
+
+@testset "type-level declared units are resolved once per property" begin
+    # A discriminated property has no type-level unit and raises when asked for one; the
+    # answer is remembered per (type, property) instead of re-raised for every component.
+    @test isnothing(PFP._type_level_units(PFP.PO.ThermalStandard, :active_power))
+    fixed = PFP._type_level_units(PFP.PO.ThermalStandard, :base_power)
+    @test !isnothing(fixed)
+    @test fixed[1] == "MVA"
+    @test PFP._type_level_units(PFP.PO.ThermalStandard, :active_power) ===
+          PFP._type_level_units(PFP.PO.ThermalStandard, :active_power)
+    @test haskey(PFP._TYPE_LEVEL_UNITS, (PFP.PO.ThermalStandard, :active_power))
+end
