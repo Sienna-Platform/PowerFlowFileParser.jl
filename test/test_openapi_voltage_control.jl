@@ -217,3 +217,16 @@ end
     @test PFP.get_value(circuit, :regulated_bus_id) == to_id
     @test isnothing(PFP.get_value(circuit, :regulated_bus_side))
 end
+
+@testset "an LCC tap transformer the TRANSFORMER data does not define is reported and left unset" begin
+    # Real cases name transformers that are three-winding or missing; the line still imports.
+    pm = PFP.PowerModelsData(
+        joinpath(@__DIR__, "fixtures", "synthetic_v33_remote_control.raw"),
+    )
+    lcc_dict = only(values(pm.data["dcline"]))
+    lcc_dict["inverter_tap_transformer"] = (6, 7, "9")
+    sys = @test_logs (:warn, r"circuit '9'") match_mode = :any PFP.build_openapi_system(pm)
+    lcc = only(PFP.get_components(sys, "TwoTerminalLCCLine"))
+    @test isnothing(PFP.get_value(lcc, :inverter_tap_transformer_id))
+    @test !isnothing(PFP.get_value(lcc, :rectifier_tap_transformer_id))
+end
