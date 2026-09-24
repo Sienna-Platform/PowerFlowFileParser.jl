@@ -134,9 +134,19 @@ The document id of a PSS/E remote regulated bus, or `nothing` when the device re
 own bus: PSS/E spells local regulation both as bus number 0 and as the device's own bus
 number, and the schemas spell it once, as `null`. Throws when `number` names no bus.
 """
-function _psse_remote_bus_id(reg::IdRegistry, number, own_bus_id::Int)
+function _psse_remote_bus_id(
+    reg::IdRegistry,
+    number,
+    own_bus_id::Int;
+    owner::AbstractString = "a device",
+)
     remote = Int(number)
     iszero(remote) && return nothing
+    if !has_bus_id(reg, remote)
+        @warn "$owner names remote regulated bus $remote, which the case does not hold; " *
+              "it regulates its own bus instead"
+        return nothing
+    end
     id = get_bus_id(reg, remote)
     id == own_bus_id && return nothing
     return id

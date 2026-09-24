@@ -97,12 +97,22 @@ function make_lcc_line!(
     _set_nullable!(
         component,
         :rectifier_commutating_bus_id,
-        _psse_remote_bus_id(reg, get(d, "rectifier_commutating_bus_number", 0), from_id),
+        _psse_remote_bus_id(
+            reg,
+            get(d, "rectifier_commutating_bus_number", 0),
+            from_id;
+            owner = "DC line $name rectifier",
+        ),
     )
     _set_nullable!(
         component,
         :inverter_commutating_bus_id,
-        _psse_remote_bus_id(reg, get(d, "inverter_commutating_bus_number", 0), to_id),
+        _psse_remote_bus_id(
+            reg,
+            get(d, "inverter_commutating_bus_number", 0),
+            to_id;
+            owner = "DC line $name inverter",
+        ),
     )
     _set_nullable!(
         component,
@@ -281,7 +291,12 @@ function make_vscline!(
     _set_nullable!(
         component,
         :remote_regulated_bus_id_from,
-        _psse_remote_bus_id(reg, remote_from, from_id),
+        _psse_remote_bus_id(
+            reg,
+            remote_from,
+            from_id;
+            owner = "VSC line $name from converter",
+        ),
     )
     set_value!(component, :reactive_power_to, get(d, "qt", 0.0) * sys_mbase, "MVAr")
     if d["dc_voltage_control_to"]
@@ -317,7 +332,7 @@ function make_vscline!(
     _set_nullable!(
         component,
         :remote_regulated_bus_id_to,
-        _psse_remote_bus_id(reg, remote_to, to_id),
+        _psse_remote_bus_id(reg, remote_to, to_id; owner = "VSC line $name to converter"),
     )
     set_value!(component, :rated_dc_voltage, d["rated_dc_voltage"], "kV")
     set_value!(component, :base_power, sys_mbase, "MVA")
@@ -327,7 +342,7 @@ function make_vscline!(
         if d["ac_voltage_control_from"]
             record_voltage_control_member!(
                 sys,
-                _regulated_bus_number(remote_from, Int(d["f_bus"])),
+                _regulated_bus_number(reg, remote_from, Int(d["f_bus"])),
                 component,
                 _rmpct_weight(get(d, "rmpct_from", 100.0), "VSC line $name from converter");
                 terminal = "FROM",
@@ -336,7 +351,7 @@ function make_vscline!(
         if d["ac_voltage_control_to"]
             record_voltage_control_member!(
                 sys,
-                _regulated_bus_number(remote_to, Int(d["t_bus"])),
+                _regulated_bus_number(reg, remote_to, Int(d["t_bus"])),
                 component,
                 _rmpct_weight(get(d, "rmpct_to", 100.0), "VSC line $name to converter");
                 terminal = "TO",

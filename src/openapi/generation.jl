@@ -223,7 +223,12 @@ function _set_generator_voltage_control!(
     _set_nullable!(
         component,
         :remote_regulated_bus_id,
-        _psse_remote_bus_id(reg, get(pm_gen, "regulated_bus_number", 0), bus_id),
+        _psse_remote_bus_id(
+            reg,
+            get(pm_gen, "regulated_bus_number", 0),
+            bus_id;
+            owner = "generator $(get_value(component, :name))",
+        ),
     )
     set_value!(component, :voltage_setpoint_units, "COMPONENT_BASE")
     set_value!(component, :voltage_setpoint, get(pm_gen, "vg", 1.0), "pu")
@@ -717,10 +722,10 @@ function _pm_bus_types(data::Dict)
 end
 
 """The PSS/E number of the bus a device regulates: its remote regulated bus when one is
-named, otherwise its own bus."""
-function _regulated_bus_number(remote_number, own_number::Int)
+named and the case holds it, otherwise its own bus."""
+function _regulated_bus_number(reg::IdRegistry, remote_number, own_number::Int)
     remote = Int(remote_number)
-    iszero(remote) && return own_number
+    (iszero(remote) || !has_bus_id(reg, remote)) && return own_number
     return remote
 end
 
@@ -760,6 +765,7 @@ function read_generation!(sys::OpenAPISystem, data::Dict; kwargs...)
                 sys.voltage_control_members,
                 VoltageControlMember(
                     _regulated_bus_number(
+                        reg,
                         get(pm_gen, "regulated_bus_number", 0),
                         bus_number,
                     ),
