@@ -94,7 +94,7 @@ for version in ("v33", "v35")
         local_circuit = only(values(_circuits_between_by_objective(sys, 3, 6)))
         @test PFP.get_value(local_circuit, :control_objective) == "VOLTAGE"
         @test PFP.get_value(local_circuit, :regulated_bus_id) == bus_id(3)
-        @test isnothing(PFP.get_value(local_circuit, :regulated_bus_side))
+        @test PFP.get_value(local_circuit, :regulated_bus_side) == "UNDEFINED"
         @test PFP.get_value(local_circuit, :load_drop_compensation_r) ≈ 0.01
         @test PFP.get_value(local_circuit, :load_drop_compensation_x) ≈ 0.02
         @test !haskey(PFP.get_ext(sys, PFP.get_value(local_circuit, :id)), "CONT1")
@@ -114,7 +114,7 @@ for version in ("v33", "v35")
         @test PFP.get_value(disabled, :regulated_bus_side) == "CONTROLLING_WINDING"
         dc_tap = parallel["CONTROL_OF_DC_LINE"]
         @test isnothing(PFP.get_value(dc_tap, :regulated_bus_id))
-        @test isnothing(PFP.get_value(dc_tap, :regulated_bus_side))
+        @test PFP.get_value(dc_tap, :regulated_bus_side) == "UNDEFINED"
         dc_tap_transformer = only(
             t for t in PFP.get_components(sys, "TwoWindingTransformer") if
             PFP.get_value(t, :circuit) == PFP.get_value(dc_tap, :id)
@@ -165,7 +165,7 @@ for version in ("v33", "v35")
         vsc_row = _weight_of(rows3, PFP.get_value(vsc, :id))
         @test vsc_row.weight == 0.5
         @test vsc_row.terminal.value == "FROM"
-        @test isnothing(_weight_of(rows3, PFP.get_value(g21, :id)).terminal)
+        @test _weight_of(rows3, PFP.get_value(g21, :id)).terminal.value == "UNDEFINED"
         group7 = _sharing_group_for(sys, PFP.get_value(facts, :id))
         rows7 = _sharing_rows(sys, PFP.get_value(group7, :id))
         @test length(rows7) == 2
@@ -216,7 +216,7 @@ end
         PFP.get_value(c, :id) == circuit_id
     )
     @test PFP.get_value(circuit, :regulated_bus_id) == to_id
-    @test isnothing(PFP.get_value(circuit, :regulated_bus_side))
+    @test PFP.get_value(circuit, :regulated_bus_side) == "UNDEFINED"
 end
 
 @testset "an LCC tap transformer the TRANSFORMER data does not define is reported and left unset" begin

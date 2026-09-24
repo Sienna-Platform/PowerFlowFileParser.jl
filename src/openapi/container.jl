@@ -284,11 +284,7 @@ function add_voltage_control_association!(
     weight::Float64,
     terminal::Union{Nothing, String},
 )
-    terminal_value = if isnothing(terminal)
-        nothing
-    else
-        PO.VoltageControlTerminal(terminal)
-    end
+    terminal_value = PO.VoltageControlTerminal(something(terminal, "UNDEFINED"))
     PD.add_voltage_control_association!(
         get_document(sys),
         PO.VoltageControlAssociation(;
