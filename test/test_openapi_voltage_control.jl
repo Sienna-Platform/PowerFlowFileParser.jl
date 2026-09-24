@@ -191,7 +191,9 @@ end
     @test isnothing(PFP._psse_remote_bus_id(reg, 0, own))
     @test isnothing(PFP._psse_remote_bus_id(reg, 1, own))
     @test PFP._psse_remote_bus_id(reg, 2, own) == other
-    @test_throws IS.DataFormatError PFP._psse_remote_bus_id(reg, 99, own)
+    unknown =
+        @test_logs (:warn, r"bus 99") PFP._psse_remote_bus_id(reg, 99, own; owner = "gen")
+    @test isnothing(unknown)
 end
 
 @testset "a voltage-controlling CONT of 0 regulates the other winding's bus" begin
@@ -229,4 +231,29 @@ end
     lcc = only(PFP.get_components(sys, "TwoTerminalLCCLine"))
     @test isnothing(PFP.get_value(lcc, :inverter_tap_transformer_id))
     @test !isnothing(PFP.get_value(lcc, :rectifier_tap_transformer_id))
+end
+
+@testset "a remote regulated bus the case does not hold falls back to the own bus" begin
+    # Real cases name remote buses the parser dropped (isolated) or never had; the device then
+    # regulates its own bus, which is also what PSS/E does when IREG is not in the case.
+    pm = PFP.PowerModelsData(
+        joinpath(@__DIR__, "fixtures", "synthetic_v33_remote_control.raw"),
+    )
+    pm.data["gen"]["2"]["regulated_bus_number"] = 99
+    sys = @test_logs (:warn, r"bus 99") match_mode = :any PFP.build_openapi_system(pm)
+    reg = PFP.get_registry(sys)
+    g21 = _component_named(sys, "ThermalStandard", "generator-2-1")
+    @test isnothing(PFP.get_value(g21, :remote_regulated_bus_id))
+    rows = PFP.get_document(sys).voltage_control_associations
+    bus3_group = PFP.get_id(reg, "ReactivePowerSharing", "bus3_reactive_power_sharing")
+    @test !any(
+        r -> r.control_id == bus3_group && r.entity_id == PFP.get_value(g21, :id),
+        rows,
+    )
+    # Two generators now hold bus 2, so they share it.
+    bus2_group = PFP.get_id(reg, "ReactivePowerSharing", "bus2_reactive_power_sharing")
+    @test any(
+        r -> r.control_id == bus2_group && r.entity_id == PFP.get_value(g21, :id),
+        rows,
+    )
 end

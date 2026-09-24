@@ -122,7 +122,7 @@ function make_switched_admittance!(
     _set_nullable!(
         component,
         :remote_regulated_bus_id,
-        _psse_remote_bus_id(reg, remote_number, bus_id),
+        _psse_remote_bus_id(reg, remote_number, bus_id; owner = "switched shunt $name"),
     )
     if haskey(d, "number_engaged")
         set_value!(component, :number_engaged, d["number_engaged"])
@@ -143,7 +143,7 @@ function make_switched_admittance!(
     if Bool(d["status"]) && control_mode in ("DISCRETE_VOLTAGE", "CONTINUOUS_VOLTAGE")
         record_voltage_control_member!(
             sys,
-            _regulated_bus_number(remote_number, Int(d["shunt_bus"])),
+            _regulated_bus_number(reg, remote_number, Int(d["shunt_bus"])),
             component,
             _rmpct_weight(get(d, "rmpct", 100.0), "switched shunt $name"),
         )
@@ -197,14 +197,14 @@ function make_facts!(
     _set_nullable!(
         component,
         :remote_regulated_bus_id,
-        _psse_remote_bus_id(reg, remote_number, bus_id),
+        _psse_remote_bus_id(reg, remote_number, bus_id; owner = "FACTS device $name"),
     )
     add_component!(sys, component)
     set_component_ext!(sys, component, get(d, "ext", Dict{String, Any}()))
     if Bool(d["available"]) && control_mode != "OOS"
         record_voltage_control_member!(
             sys,
-            _regulated_bus_number(remote_number, Int(d["bus"])),
+            _regulated_bus_number(reg, remote_number, Int(d["bus"])),
             component,
             _rmpct_weight(get(d, "rmpct", 100.0), "FACTS device $name"),
         )
