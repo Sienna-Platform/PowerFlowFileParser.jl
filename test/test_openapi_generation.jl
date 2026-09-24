@@ -338,6 +338,9 @@ end
     @test PFP.get_value(storage, :reactive_power_limits).min ≈ -0.0075
     @test PFP.get_value(storage, :reactive_power_limits).max ≈ 0.0075
     @test PFP.get_value(storage, :initial_storage_capacity_level) == 0.5
+    # A fraction of storage_capacity: no derate means the full [0, 1] band.
+    @test PFP.get_value(storage, :storage_level_limits).min == 0.0
+    @test PFP.get_value(storage, :storage_level_limits).max == 1.0
     @test PFP.get_value(storage, :prime_mover_type) == "BA"
     @test PFP.get_value(storage, :storage_technology_type) == "OTHER_CHEM"
 end
@@ -386,6 +389,8 @@ end
     @test PFP.get_value(storage, :reactive_power_limits).max ≈ d["qmax"]
     # Dimensionless / ratio fields: untouched by COMPONENT_BASE either way.
     @test PFP.get_value(storage, :initial_storage_capacity_level) == 0.5
+    @test PFP.get_value(storage, :storage_level_limits).min == 0.0
+    @test PFP.get_value(storage, :storage_level_limits).max == 1.0
 end
 
 @testset "COMPONENT_BASE conversion errors loudly on an unregistered instance-dispatched field" begin
@@ -449,6 +454,41 @@ end
     hydro = only(PFP.get_components(sys, "HydroDispatch"))
     @test PFP.get_value(hydro, :name) == "hy1"
     @test PFP.get_value(hydro, :active_power) ≈ 500.0
+end
+
+@testset "hydro, renewable and storage makers carry their pm dict entry's ext" begin
+    sys = PFP.OpenAPISystem(100.0)
+    reg = PFP.get_registry(sys)
+    bus = _register_test_bus!(sys)
+    gen(type, name) = Dict{String, Any}(
+        "mbase" => 100.0, "gen_status" => true, "pg" => 5.0, "qg" => 1.0,
+        "pmax" => 20.0, "pmin" => 0.0, "qmax" => 10.0, "qmin" => -10.0,
+        "type" => type, "ext" => Dict{String, Any}("mRID" => name),
+    )
+    PFP.make_hydro_dispatch!(sys, reg, bus, gen("ROR", "hy1"), "hy1", 100.0)
+    PFP.make_hydro_reservoir!(sys, reg, bus, gen("HYDRO", "hy2"), "hy2", 100.0)
+    PFP.make_renewable_dispatch!(sys, reg, bus, gen("WIND", "wind1"), "wind1", 100.0)
+    PFP.make_renewable_nondispatch!(sys, reg, bus, gen("RTPV", "pv1"), "pv1", 100.0)
+    storage = Dict{String, Any}(
+        "energy_rating" => 50.0, "energy" => 25.0, "status" => true,
+        "thermal_rating" => 1.0, "ps" => 0.02, "charge_rating" => 0.05,
+        "discharge_rating" => 0.05, "charge_efficiency" => 0.9,
+        "discharge_efficiency" => 0.9, "qs" => 0.0, "qmin" => -0.05, "qmax" => 0.05,
+        "ext" => Dict{String, Any}("mRID" => "bat1"),
+    )
+    PFP.make_storage!(sys, reg, bus, storage, "bat1", 100.0)
+
+    components = vcat(
+        PFP.get_components(sys, "HydroDispatch"),
+        PFP.get_components(sys, "RenewableDispatch"),
+        PFP.get_components(sys, "RenewableNonDispatch"),
+        PFP.get_components(sys, "EnergyReservoirStorage"),
+    )
+    @test length(components) == 5
+    for component in components
+        @test PFP.get_ext(sys, PFP.get_value(component, :id)) ==
+              Dict{String, Any}("mRID" => PFP.get_value(component, :name))
+    end
 end
 
 @testset "get_generator_type resolving to EnergyReservoirStorage from \"gen\" is an error, not a skip" begin

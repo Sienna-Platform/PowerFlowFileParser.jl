@@ -85,6 +85,7 @@ function _make_standard_load!(
     set_value!(load, :conformity, _conformity_string(Int(d["conformity"])))
     _set_zip_fields!(load, d, base_power)
     add_component!(sys, load)
+    set_component_ext!(sys, load, get(d, "ext", Dict{String, Any}()))
     return
 end
 
@@ -103,6 +104,7 @@ function _make_interruptible_standardload!(
     set_value!(load, :conformity, _conformity_string(Int(d["conformity"])))
     _set_zip_fields!(load, d, base_power)
     add_component!(sys, load)
+    set_component_ext!(sys, load, get(d, "ext", Dict{String, Any}()))
     return
 end
 
@@ -122,6 +124,7 @@ function _make_power_load!(
     set_value!(load, :max_reactive_power, d["qd"] * base_power, "MVAr")
     set_value!(load, :conformity, _conformity_string(Int(d["conformity"])))
     add_component!(sys, load)
+    set_component_ext!(sys, load, get(d, "ext", Dict{String, Any}()))
     return
 end
 

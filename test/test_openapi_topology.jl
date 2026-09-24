@@ -158,6 +158,18 @@ end
     @test all(b -> PFP.get_value(b, :bustype) != "SLACK", other)
 end
 
+@testset "ACBus carries its pm dict entry's ext" begin
+    pm = fourteen_bus_pm_data()
+    for (number, d) in pm.data["bus"]
+        d["ext"] = Dict{String, Any}("mRID" => "bus-$number")
+    end
+    sys = PFP.build_openapi_system(pm)
+    for bus in PFP.get_components(sys, "ACBus")
+        ext = PFP.get_ext(sys, PFP.get_value(bus, :id))
+        @test ext == Dict{String, Any}("mRID" => "bus-$(PFP.get_value(bus, :number))")
+    end
+end
+
 @testset "Area.ext carries PSS/E AREA DATA metadata matched by area_number" begin
     pm_data =
         PFP.PowerModelsData(joinpath(@__DIR__, "fixtures", "v35_area_slack_variants.raw"))

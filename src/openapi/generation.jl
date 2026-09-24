@@ -292,6 +292,7 @@ function _make_hydro_dispatch_body!(
         "MW/min")
     set_value!(component, :base_power, mbase, "MVA")
     add_component!(sys, component)
+    set_component_ext!(sys, component, get(pm_gen, "ext", Dict{String, Any}()))
     return
 end
 
@@ -368,6 +369,7 @@ function make_renewable_dispatch!(
     set_value!(component, :power_factor, 1.0, "1")
     set_value!(component, :base_power, mbase, "MVA")
     add_component!(sys, component)
+    set_component_ext!(sys, component, get(pm_gen, "ext", Dict{String, Any}()))
     return
 end
 
@@ -402,6 +404,7 @@ function make_renewable_nondispatch!(
     set_value!(component, :power_factor, 1.0, "1")
     set_value!(component, :base_power, mbase, "MVA")
     add_component!(sys, component)
+    set_component_ext!(sys, component, get(pm_gen, "ext", Dict{String, Any}()))
     return
 end
 
@@ -485,11 +488,8 @@ function make_storage!(
     set_value!(component, :storage_technology_type, "OTHER_CHEM")
     set_value!(component, :storage_capacity, _natural_value(energy_rating, thermal_rating),
         "MWh")
-    set_value!(
-        component,
-        :storage_level_limits,
-        IC.MinMax(; min = 0.0, max = _natural_value(energy_rating, thermal_rating)),
-    )
+    # A fraction of storage_capacity; pm data carries no derate, so the full band.
+    set_value!(component, :storage_level_limits, IC.MinMax(; min = 0.0, max = 1.0))
     set_value!(component, :initial_storage_capacity_level, d["energy"] / energy_rating, "1")
     set_value!(component, :rating, _natural_value(thermal_rating, thermal_rating), "MVA")
     set_value!(component, :active_power, _natural_value(d["ps"], thermal_rating), "MW")
@@ -519,6 +519,7 @@ function make_storage!(
     )
     set_value!(component, :base_power, thermal_rating, "MVA")
     add_component!(sys, component)
+    set_component_ext!(sys, component, get(d, "ext", Dict{String, Any}()))
     return
 end
 
