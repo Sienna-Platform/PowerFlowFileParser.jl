@@ -119,8 +119,9 @@ end
 
 """
 The document id of the two-winding transformer PSS/E names by `(I, J, CKT)`, in either bus
-order, or `nothing` when `I` is 0 (no transformer named). Throws when the transformer was
-never built.
+order, or `nothing` when `I` is 0 (no transformer named). A transformer the TRANSFORMER data
+never defined as two-winding is reported and the reference left unset, since real cases name
+three-winding or absent transformers here and the line itself is still valid.
 """
 function _psse_transformer_id(sys::OpenAPISystem, spec, owner::AbstractString)
     from_number, to_number, ckt = Int(spec[1]), Int(spec[2]), String(spec[3])
@@ -129,12 +130,10 @@ function _psse_transformer_id(sys::OpenAPISystem, spec, owner::AbstractString)
     for key in ((from_number, to_number, ckt), (to_number, from_number, ckt))
         haskey(ids, key) && return ids[key]
     end
-    throw(
-        IS.DataFormatError(
-            "$owner names transformer $from_number-$to_number circuit '$ckt', which the " *
-            "TRANSFORMER data does not define as a two-winding transformer",
-        ),
-    )
+    @warn "$owner names transformer $from_number-$to_number circuit '$ckt', which the " *
+          "TRANSFORMER data does not define as a two-winding transformer; the reference is " *
+          "left unset"
+    return nothing
 end
 
 get_document(sys::OpenAPISystem) = sys.document
