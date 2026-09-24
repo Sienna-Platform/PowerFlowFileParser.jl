@@ -265,7 +265,7 @@ function _set_regulated_bus!(
     to_id::Int,
 )
     _set_nullable!(circuit, :regulated_bus_id, nothing)
-    _set_nullable!(circuit, :regulated_bus_side, nothing)
+    set_value!(circuit, :regulated_bus_side, "UNDEFINED")
     if !(objective in _VOLTAGE_CONTROL_OBJECTIVES)
         if !iszero(cont)
             @warn "Transformer $record winding $suffix has CONT$suffix = $cont but control objective $objective, which regulates no bus voltage; ignoring CONT$suffix."
