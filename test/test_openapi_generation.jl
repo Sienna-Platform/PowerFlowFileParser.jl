@@ -338,6 +338,9 @@ end
     @test PFP.get_value(storage, :reactive_power_limits).min ≈ -0.0075
     @test PFP.get_value(storage, :reactive_power_limits).max ≈ 0.0075
     @test PFP.get_value(storage, :initial_storage_capacity_level) == 0.5
+    # A fraction of storage_capacity: no derate means the full [0, 1] band.
+    @test PFP.get_value(storage, :storage_level_limits).min == 0.0
+    @test PFP.get_value(storage, :storage_level_limits).max == 1.0
     @test PFP.get_value(storage, :prime_mover_type) == "BA"
     @test PFP.get_value(storage, :storage_technology_type) == "OTHER_CHEM"
 end
@@ -386,6 +389,8 @@ end
     @test PFP.get_value(storage, :reactive_power_limits).max ≈ d["qmax"]
     # Dimensionless / ratio fields: untouched by COMPONENT_BASE either way.
     @test PFP.get_value(storage, :initial_storage_capacity_level) == 0.5
+    @test PFP.get_value(storage, :storage_level_limits).min == 0.0
+    @test PFP.get_value(storage, :storage_level_limits).max == 1.0
 end
 
 @testset "COMPONENT_BASE conversion errors loudly on an unregistered instance-dispatched field" begin
