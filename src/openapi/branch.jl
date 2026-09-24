@@ -221,11 +221,14 @@ function _set_transformer_control_fields!(
     # per unit on its own base_power.
     set_value!(
         circuit,
-        :load_drop_compensation,
-        (
-            real = get(d, "CR$suffix", 0.0) * base_power / sys_mbase,
-            imag = get(d, "CX$suffix", 0.0) * base_power / sys_mbase,
-        ),
+        :load_drop_compensation_r,
+        get(d, "CR$suffix", 0.0) * base_power / sys_mbase,
+        "pu",
+    )
+    set_value!(
+        circuit,
+        :load_drop_compensation_x,
+        get(d, "CX$suffix", 0.0) * base_power / sys_mbase,
         "pu",
     )
     set_value!(

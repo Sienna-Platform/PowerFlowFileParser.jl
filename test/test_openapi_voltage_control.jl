@@ -95,17 +95,16 @@ for version in ("v33", "v35")
         @test PFP.get_value(local_circuit, :control_objective) == "VOLTAGE"
         @test PFP.get_value(local_circuit, :regulated_bus_id) == bus_id(3)
         @test isnothing(PFP.get_value(local_circuit, :regulated_bus_side))
-        ldc = PFP.get_value(local_circuit, :load_drop_compensation)
-        @test ldc.real ≈ 0.01
-        @test ldc.imag ≈ 0.02
+        @test PFP.get_value(local_circuit, :load_drop_compensation_r) ≈ 0.01
+        @test PFP.get_value(local_circuit, :load_drop_compensation_x) ≈ 0.02
         @test !haskey(PFP.get_ext(sys, PFP.get_value(local_circuit, :id)), "CONT1")
 
         # A positive remote CONT lies beyond the other winding.
         remote_circuit = only(values(_circuits_between_by_objective(sys, 5, 6)))
         @test PFP.get_value(remote_circuit, :regulated_bus_id) == bus_id(7)
         @test PFP.get_value(remote_circuit, :regulated_bus_side) == "OPPOSITE_WINDING"
-        ldc = PFP.get_value(remote_circuit, :load_drop_compensation)
-        @test ldc.real == 0.0 && ldc.imag == 0.0
+        @test PFP.get_value(remote_circuit, :load_drop_compensation_r) == 0.0
+        @test PFP.get_value(remote_circuit, :load_drop_compensation_x) == 0.0
 
         # A negative remote CONT lies beyond the controlling winding; a non-voltage objective
         # carries no regulated bus.
