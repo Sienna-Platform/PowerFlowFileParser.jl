@@ -6,8 +6,11 @@
 
     @test PFP.get_value(line, :available) == d["available"]
     @test PFP.get_value(line, :active_power_flow) ≈ d["pf"] * 100.0
-    @test PFP.get_value(line, :parameter_units) == "NATURAL_UNITS"
+    # The pm dict's impedances are already per unit on the DC and converter bases.
+    @test PFP.get_value(line, :parameter_units) == "COMPONENT_BASE"
     @test PFP.get_value(line, :r) == d["r"]
+    @test PFP.get_value(line, :compounding_resistance) ==
+          d["compounding_resistance"] / (d["scheduled_dc_voltage"]^2 / 100.0)
     @test PFP.get_value(line, :power_mode) == d["power_mode"]
     @test PFP.get_value(line, :transfer_setpoint) == d["transfer_setpoint"]
     @test PFP.get_value(line, :scheduled_dc_voltage) == d["scheduled_dc_voltage"]
@@ -216,7 +219,7 @@ function _synthetic_vscline_dict()
         "rating" => 1.0,
         "pminf" => -1.0, "pmaxf" => 1.0, "pmint" => -1.0, "pmaxt" => 1.0,
         "qminf" => -0.5, "qmaxf" => 0.5, "qmint" => -0.5, "qmaxt" => 0.5,
-        "r" => 0.5, "if" => 10.0,
+        "r" => 0.5, "rdc" => 0.5, "if" => 10.0,
         "dc_voltage_control_from" => false, "ac_voltage_control_from" => false,
         "dc_voltage_control_to" => false, "ac_voltage_control_to" => false,
         "dc_setpoint_from" => 0.02, "ac_setpoint_from" => 1.0,

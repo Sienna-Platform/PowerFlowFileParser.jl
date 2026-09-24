@@ -2246,6 +2246,7 @@ function _psse2pm_dcline!(pm_data::Dict, pti_data::Dict, import_all::Bool)
 
             Zbase = base_voltage^2 / baseMVA
             sub_data["r"] = dcline["RDC"] / Zbase
+            sub_data["rdc"] = dcline["RDC"]
             sub_data["pf"] = flow_setpoint / baseMVA
             sub_data["if"] = 1000.0 * (flow_setpoint / base_voltage)
 

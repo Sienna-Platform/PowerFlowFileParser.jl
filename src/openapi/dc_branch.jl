@@ -39,6 +39,17 @@ function _two_terminal_loss(d::Dict)
     return _loss_curve(d["loss1"], d["loss0"])
 end
 
+"""
+Impedance base of an LCC line's DC circuit, `scheduled_dc_voltage^2 / base_power`, falling
+back to the rectifier's AC base when the scheduled DC voltage is zero (an out-of-service line),
+the same fallback the PSS/E reader uses when it per-unitizes RDC.
+"""
+function _lcc_dc_impedance_base(d::Dict, sys_mbase::Float64)
+    base_voltage = d["scheduled_dc_voltage"]
+    iszero(base_voltage) && (base_voltage = d["rectifier_base_voltage"])
+    return base_voltage^2 / sys_mbase
+end
+
 """Two-terminal LCC HVDC line (PSS/E)."""
 function make_lcc_line!(
     sys::OpenAPISystem,
@@ -56,8 +67,11 @@ function make_lcc_line!(
     set_value!(component, :available, Bool(d["available"]))
     set_value!(component, :arc, arc_id)
     set_value!(component, :active_power_flow, get(d, "pf", 0.0) * sys_mbase, "MW")
-    set_value!(component, :parameter_units, "NATURAL_UNITS")
-    set_value!(component, :r, d["r"], "ohm")
+    # The pm dict already holds the DC-side impedances per unit: RDC and RCOMP on the
+    # scheduled DC voltage, the converter RC/XC/XCAP on each converter's AC base voltage,
+    # which is the per-unit convention PowerSystems keeps for these fields.
+    set_value!(component, :parameter_units, "COMPONENT_BASE")
+    set_value!(component, :r, d["r"], "pu")
     set_value!(component, :power_mode, Bool(d["power_mode"]))
     if d["power_mode"]
         transfer_setpoint_unit = "MW"
@@ -75,17 +89,22 @@ function make_lcc_line!(
     set_value!(component, :rectifier_bridges, Int(d["rectifier_bridges"]))
     set_value!(component, :rectifier_delay_angle_limits, d["rectifier_delay_angle_limits"],
         "rad")
-    set_value!(component, :rectifier_rc, d["rectifier_rc"], "ohm")
-    set_value!(component, :rectifier_xc, d["rectifier_xc"], "ohm")
+    set_value!(component, :rectifier_rc, d["rectifier_rc"], "pu")
+    set_value!(component, :rectifier_xc, d["rectifier_xc"], "pu")
     set_value!(component, :rectifier_base_voltage, d["rectifier_base_voltage"], "kV")
     set_value!(component, :inverter_bridges, Int(d["inverter_bridges"]))
     set_value!(component, :inverter_extinction_angle_limits,
         d["inverter_extinction_angle_limits"], "rad")
-    set_value!(component, :inverter_rc, d["inverter_rc"], "ohm")
-    set_value!(component, :inverter_xc, d["inverter_xc"], "ohm")
+    set_value!(component, :inverter_rc, d["inverter_rc"], "pu")
+    set_value!(component, :inverter_xc, d["inverter_xc"], "pu")
     set_value!(component, :inverter_base_voltage, d["inverter_base_voltage"], "kV")
     set_value!(component, :switch_mode_voltage, d["switch_mode_voltage"], "kV")
-    set_value!(component, :compounding_resistance, d["compounding_resistance"], "ohm")
+    set_value!(
+        component,
+        :compounding_resistance,
+        d["compounding_resistance"] / _lcc_dc_impedance_base(d, sys_mbase),
+        "pu",
+    )
     set_value!(component, :min_compounding_voltage, d["min_compounding_voltage"], "kV")
     set_value!(component, :rectifier_transformer_ratio, d["rectifier_transformer_ratio"],
         "1")
@@ -130,14 +149,14 @@ function make_lcc_line!(
     )
     set_value!(component, :rectifier_capacitor_reactance,
         d["rectifier_capacitor_reactance"],
-        "ohm")
+        "pu")
     set_value!(component, :inverter_transformer_ratio, d["inverter_transformer_ratio"], "1")
     set_value!(component, :inverter_tap_setting, d["inverter_tap_setting"], "1")
     set_value!(component, :inverter_tap_limits, d["inverter_tap_limits"], "1")
     set_value!(component, :inverter_tap_step, d["inverter_tap_step"], "1")
     set_value!(component, :inverter_extinction_angle, d["inverter_extinction_angle"], "rad")
     set_value!(component, :inverter_capacitor_reactance, d["inverter_capacitor_reactance"],
-        "ohm")
+        "pu")
     set_value!(component, :loss, _two_terminal_loss(d))
     set_value!(component, :base_power, sys_mbase, "MVA")
     add_component!(sys, component)
@@ -251,9 +270,9 @@ function make_vscline!(
     set_value!(component, :active_power_limits_to,
         (min = d["pmint"] * sys_mbase, max = d["pmaxt"] * sys_mbase), "MW")
     set_value!(component, :admittance_units, "NATURAL_UNITS")
-    # Ternary exception: verbatim port of the oracle's own
-    # `d["r"] == 0.0 ? 0.0 : 1.0 / d["r"]` (`make_vscline`).
-    set_value!(component, :g, iszero(d["r"]) ? 0.0 : 1.0 / d["r"], "S")
+    # The DC conductance in siemens, from PSS/E's RDC in ohm; PowerSystems per-unitizes it
+    # on the rated DC voltage itself.
+    set_value!(component, :g, iszero(d["rdc"]) ? 0.0 : 1.0 / d["rdc"], "S")
     set_value!(component, :dc_current, get(d, "if", 0.0), "A")
     set_value!(component, :reactive_power_from, get(d, "qf", 0.0) * sys_mbase, "MVAr")
     # See the docstring: PSS/E's voltage-controlling setpoints are always already p.u.
