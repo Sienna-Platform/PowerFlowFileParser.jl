@@ -292,6 +292,7 @@ function _make_hydro_dispatch_body!(
         "MW/min")
     set_value!(component, :base_power, mbase, "MVA")
     add_component!(sys, component)
+    set_component_ext!(sys, component, get(pm_gen, "ext", Dict{String, Any}()))
     return
 end
 
@@ -368,6 +369,7 @@ function make_renewable_dispatch!(
     set_value!(component, :power_factor, 1.0, "1")
     set_value!(component, :base_power, mbase, "MVA")
     add_component!(sys, component)
+    set_component_ext!(sys, component, get(pm_gen, "ext", Dict{String, Any}()))
     return
 end
 
@@ -402,6 +404,7 @@ function make_renewable_nondispatch!(
     set_value!(component, :power_factor, 1.0, "1")
     set_value!(component, :base_power, mbase, "MVA")
     add_component!(sys, component)
+    set_component_ext!(sys, component, get(pm_gen, "ext", Dict{String, Any}()))
     return
 end
 
@@ -519,6 +522,7 @@ function make_storage!(
     )
     set_value!(component, :base_power, thermal_rating, "MVA")
     add_component!(sys, component)
+    set_component_ext!(sys, component, get(d, "ext", Dict{String, Any}()))
     return
 end
 

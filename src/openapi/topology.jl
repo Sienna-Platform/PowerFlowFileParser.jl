@@ -211,6 +211,7 @@ function read_bus!(sys::OpenAPISystem, data::Dict; kwargs...)
             set_value!(bus, :bustype, "SLACK")
         end
         add_component!(sys, bus)
+        set_component_ext!(sys, bus, get(d, "ext", Dict{String, Any}()))
     end
     return
 end

@@ -143,3 +143,43 @@ end
         @test PFP.get_value(load, :conformity) == "CONFORMING"
     end
 end
+
+@testset "every load type carries its pm dict entry's ext" begin
+    pm = fourteen_bus_pm_data()
+    data = deepcopy(pm.data)
+    data["load"][first(keys(data["load"]))]["interruptible"] = 1
+    for (key, d) in data["load"]
+        d["ext"]["mRID"] = "load-$key"
+    end
+    sys = PFP.OpenAPISystem(Float64(data["baseMVA"]))
+    PFP.read_loadzones!(sys, data)
+    PFP.read_bus!(sys, data)
+    PFP.read_loads!(sys, data)
+    loads = vcat(
+        PFP.get_components(sys, "StandardLoad"),
+        PFP.get_components(sys, "InterruptibleStandardLoad"),
+    )
+    @test length(loads) == 13
+    for load in loads
+        d = only(
+            v for v in values(data["load"]) if
+            strip(join(v["source_id"])) == PFP.get_value(load, :name)
+        )
+        @test PFP.get_ext(sys, PFP.get_value(load, :id)) == d["ext"]
+    end
+
+    pm = PFP.PowerModelsData(joinpath(MATPOWER_DIR, "case5.m"))
+    for (key, d) in pm.data["load"]
+        d["ext"] = Dict{String, Any}("mRID" => "load-$key")
+    end
+    sys = PFP.build_openapi_system(pm)
+    loads = PFP.get_components(sys, "PowerLoad")
+    @test length(loads) == 3
+    for load in loads
+        d = only(
+            v for v in values(pm.data["load"]) if
+            strip(join(v["source_id"])) == PFP.get_value(load, :name)
+        )
+        @test PFP.get_ext(sys, PFP.get_value(load, :id)) == d["ext"]
+    end
+end
