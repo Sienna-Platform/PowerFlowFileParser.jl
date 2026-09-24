@@ -2169,9 +2169,11 @@ function _psse2pm_dcline!(pm_data::Dict, pti_data::Dict, import_all::Bool)
             if sub_data["dc_voltage_control_from"] && !sub_data["dc_voltage_control_to"]
                 base_voltage = from_bus["DCSET"]
                 flow_setpoint = to_bus["DCSET"]
+                ac_base_voltage = sub_data["base_voltage_from"]
             elseif !sub_data["dc_voltage_control_from"] && sub_data["dc_voltage_control_to"]
                 base_voltage = to_bus["DCSET"]
                 flow_setpoint = -from_bus["DCSET"]
+                ac_base_voltage = sub_data["base_voltage_to"]
             elseif !sub_data["dc_voltage_control_from"] &&
                    !sub_data["dc_voltage_control_to"]
                 error(
@@ -2181,6 +2183,22 @@ function _psse2pm_dcline!(pm_data::Dict, pti_data::Dict, import_all::Bool)
                 error(
                     "Exactly one converter in converter $(sub_data["name"]) must control DC voltage (TYPE = 1).",
                 )
+            end
+
+            # The DC voltage schedule is the base of RDC, the DC current and the converter
+            # losses, so an in-service line cannot carry a zero schedule. A blocked line
+            # (MDC=0) has nothing to per-unitize, so its inert values fall back to the
+            # voltage-controlling converter's AC base.
+            if iszero(base_voltage)
+                if sub_data["available"]
+                    throw(
+                        ArgumentError(
+                            "VSC DC line $(sub_data["name"]): the DC voltage schedule DCSET of the TYPE 1 converter cannot be 0",
+                        ),
+                    )
+                end
+                @warn "VSC DC line $(sub_data["name"]) is out of service (MDC=0) with a zero DC voltage schedule DCSET; per-unitizing on the converter's AC base instead."
+                base_voltage = ac_base_voltage
             end
 
             # PSY documents dc_setpoint_from/to as p.u. of rated_dc_voltage for the

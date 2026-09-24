@@ -128,6 +128,30 @@ end
     end
 end
 
+@testset "PSSE VSC line with a zero DC voltage schedule" begin
+    # The TYPE 1 converter's DCSET is the DC voltage base of RDC, the DC current and the
+    # converter losses, so zero cannot serve as a base on a line that is in service.
+    file = joinpath(@__DIR__, "fixtures", "synthetic_v35_vsc_line.raw")
+    raw = read_fixture(file)
+    bad = replace(raw, "1, 1, 1, 150.000," => "1, 1, 1,   0.000,"; count = 1)
+    @test_throws ArgumentError parse_file(IOBuffer(bad); filetype = "raw")
+
+    # A blocked line (MDC=0) warns and falls back to the converter's AC bus base so the
+    # inert values stay finite.
+    blocked = replace(bad, "'VSCLINE1    ', 1," => "'VSCLINE1    ', 0,"; count = 1)
+    pm_blocked = @test_logs(
+        (:warn, r"out of service"),
+        match_mode = :any,
+        parse_file(IOBuffer(blocked); filetype = "raw"),
+    )
+    vscline = only(values(pm_blocked["vscline"]))
+    @test vscline["available"] == false
+    @test vscline["rated_dc_voltage"] == 200.0
+    @test isfinite(vscline["r"])
+    @test isfinite(vscline["if"])
+    @test isfinite(vscline["dc_setpoint_from"])
+end
+
 @testset "PSSE ISW area-slack flag" begin
     file = joinpath(@__DIR__, "fixtures", "v35_area_slack_variants.raw")
     pm_data = @test_logs(
