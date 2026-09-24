@@ -128,3 +128,30 @@ function find_by_name(reg::IdRegistry, type_names, name::AbstractString)
     end
     return matches[1]
 end
+
+"""
+The document id of a PSS/E remote regulated bus, or `nothing` when the device regulates its
+own bus: PSS/E spells local regulation both as bus number 0 and as the device's own bus
+number, and the schemas spell it once, as `null`. Throws when `number` names no bus.
+"""
+function _psse_remote_bus_id(reg::IdRegistry, number, own_bus_id::Int)
+    remote = Int(number)
+    iszero(remote) && return nothing
+    id = get_bus_id(reg, remote)
+    id == own_bus_id && return nothing
+    return id
+end
+
+"""
+A PSS/E RMPCT share as a positive relative weight, RMPCT / 100. PSS/E requires RMPCT to be
+positive, so a non-positive value is a data error: it is reported and the default share of 100
+(weight 1.0) is used instead.
+"""
+function _rmpct_weight(rmpct, name::AbstractString)
+    weight = Float64(rmpct) / 100.0
+    if weight > 0.0
+        return weight
+    end
+    @warn "$name has RMPCT = $rmpct; the share of reactive power must be positive, using the default of 100"
+    return 1.0
+end
