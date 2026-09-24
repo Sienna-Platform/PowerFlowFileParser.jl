@@ -39,6 +39,9 @@ function _two_terminal_loss(d::Dict)
     return _loss_curve(d["loss1"], d["loss0"])
 end
 
+"""Impedance base `base_voltage^2 / base_power` of a converter's AC side (kV, MVA)."""
+_converter_impedance_base(base_voltage, sys_mbase::Float64) = base_voltage^2 / sys_mbase
+
 """
 Impedance base of an LCC line's DC circuit, `scheduled_dc_voltage^2 / base_power`, falling
 back to the rectifier's AC base when the scheduled DC voltage is zero (an out-of-service line),
@@ -47,7 +50,7 @@ the same fallback the PSS/E reader uses when it per-unitizes RDC.
 function _lcc_dc_impedance_base(d::Dict, sys_mbase::Float64)
     base_voltage = d["scheduled_dc_voltage"]
     iszero(base_voltage) && (base_voltage = d["rectifier_base_voltage"])
-    return base_voltage^2 / sys_mbase
+    return _converter_impedance_base(base_voltage, sys_mbase)
 end
 
 """Two-terminal LCC HVDC line (PSS/E)."""
@@ -67,11 +70,11 @@ function make_lcc_line!(
     set_value!(component, :available, Bool(d["available"]))
     set_value!(component, :arc, arc_id)
     set_value!(component, :active_power_flow, get(d, "pf", 0.0) * sys_mbase, "MW")
-    # The pm dict already holds the DC-side impedances per unit: RDC and RCOMP on the
-    # scheduled DC voltage, the converter RC/XC/XCAP on each converter's AC base voltage,
-    # which is the per-unit convention PowerSystems keeps for these fields.
-    set_value!(component, :parameter_units, "COMPONENT_BASE")
-    set_value!(component, :r, d["r"], "pu")
+    # The pm dict holds the DC-side impedances per unit (RDC on the scheduled DC voltage, the
+    # converter RC/XC/XCAP on each converter's AC base voltage); the document carries them in
+    # ohm, the natural units PowerSystems expects for this type, so they are scaled back.
+    set_value!(component, :parameter_units, "NATURAL_UNITS")
+    set_value!(component, :r, d["r"] * _lcc_dc_impedance_base(d, sys_mbase), "ohm")
     set_value!(component, :power_mode, Bool(d["power_mode"]))
     if d["power_mode"]
         transfer_setpoint_unit = "MW"
@@ -89,22 +92,19 @@ function make_lcc_line!(
     set_value!(component, :rectifier_bridges, Int(d["rectifier_bridges"]))
     set_value!(component, :rectifier_delay_angle_limits, d["rectifier_delay_angle_limits"],
         "rad")
-    set_value!(component, :rectifier_rc, d["rectifier_rc"], "pu")
-    set_value!(component, :rectifier_xc, d["rectifier_xc"], "pu")
+    rectifier_zbase = _converter_impedance_base(d["rectifier_base_voltage"], sys_mbase)
+    set_value!(component, :rectifier_rc, d["rectifier_rc"] * rectifier_zbase, "ohm")
+    set_value!(component, :rectifier_xc, d["rectifier_xc"] * rectifier_zbase, "ohm")
     set_value!(component, :rectifier_base_voltage, d["rectifier_base_voltage"], "kV")
     set_value!(component, :inverter_bridges, Int(d["inverter_bridges"]))
     set_value!(component, :inverter_extinction_angle_limits,
         d["inverter_extinction_angle_limits"], "rad")
-    set_value!(component, :inverter_rc, d["inverter_rc"], "pu")
-    set_value!(component, :inverter_xc, d["inverter_xc"], "pu")
+    inverter_zbase = _converter_impedance_base(d["inverter_base_voltage"], sys_mbase)
+    set_value!(component, :inverter_rc, d["inverter_rc"] * inverter_zbase, "ohm")
+    set_value!(component, :inverter_xc, d["inverter_xc"] * inverter_zbase, "ohm")
     set_value!(component, :inverter_base_voltage, d["inverter_base_voltage"], "kV")
     set_value!(component, :switch_mode_voltage, d["switch_mode_voltage"], "kV")
-    set_value!(
-        component,
-        :compounding_resistance,
-        d["compounding_resistance"] / _lcc_dc_impedance_base(d, sys_mbase),
-        "pu",
-    )
+    set_value!(component, :compounding_resistance, d["compounding_resistance"], "ohm")
     set_value!(component, :min_compounding_voltage, d["min_compounding_voltage"], "kV")
     set_value!(component, :rectifier_transformer_ratio, d["rectifier_transformer_ratio"],
         "1")
@@ -148,15 +148,16 @@ function make_lcc_line!(
         ),
     )
     set_value!(component, :rectifier_capacitor_reactance,
-        d["rectifier_capacitor_reactance"],
-        "pu")
+        d["rectifier_capacitor_reactance"] * rectifier_zbase,
+        "ohm")
     set_value!(component, :inverter_transformer_ratio, d["inverter_transformer_ratio"], "1")
     set_value!(component, :inverter_tap_setting, d["inverter_tap_setting"], "1")
     set_value!(component, :inverter_tap_limits, d["inverter_tap_limits"], "1")
     set_value!(component, :inverter_tap_step, d["inverter_tap_step"], "1")
     set_value!(component, :inverter_extinction_angle, d["inverter_extinction_angle"], "rad")
-    set_value!(component, :inverter_capacitor_reactance, d["inverter_capacitor_reactance"],
-        "pu")
+    set_value!(component, :inverter_capacitor_reactance,
+        d["inverter_capacitor_reactance"] * inverter_zbase,
+        "ohm")
     set_value!(component, :loss, _two_terminal_loss(d))
     set_value!(component, :base_power, sys_mbase, "MVA")
     add_component!(sys, component)

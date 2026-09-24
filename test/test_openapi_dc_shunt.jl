@@ -6,11 +6,11 @@
 
     @test PFP.get_value(line, :available) == d["available"]
     @test PFP.get_value(line, :active_power_flow) ≈ d["pf"] * 100.0
-    # The pm dict's impedances are already per unit on the DC and converter bases.
-    @test PFP.get_value(line, :parameter_units) == "COMPONENT_BASE"
-    @test PFP.get_value(line, :r) == d["r"]
-    @test PFP.get_value(line, :compounding_resistance) ==
-          d["compounding_resistance"] / (d["scheduled_dc_voltage"]^2 / 100.0)
+    # The pm dict's impedances are per unit on the DC and converter bases; the document
+    # carries them in ohm.
+    @test PFP.get_value(line, :parameter_units) == "NATURAL_UNITS"
+    @test PFP.get_value(line, :r) ≈ d["r"] * d["scheduled_dc_voltage"]^2 / 100.0
+    @test PFP.get_value(line, :compounding_resistance) == d["compounding_resistance"]
     @test PFP.get_value(line, :power_mode) == d["power_mode"]
     @test PFP.get_value(line, :transfer_setpoint) == d["transfer_setpoint"]
     @test PFP.get_value(line, :scheduled_dc_voltage) == d["scheduled_dc_voltage"]
@@ -19,7 +19,8 @@
         PFP.get_value(line, :rectifier_delay_angle_limits),
         d["rectifier_delay_angle_limits"],
     )
-    @test PFP.get_value(line, :rectifier_rc) == d["rectifier_rc"]
+    @test PFP.get_value(line, :rectifier_rc) ≈
+          d["rectifier_rc"] * d["rectifier_base_voltage"]^2 / 100.0
     @test PFP.get_value(line, :rectifier_base_voltage) == d["rectifier_base_voltage"]
     @test _matches_nt(
         PFP.get_value(line, :inverter_extinction_angle_limits),
