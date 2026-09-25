@@ -27,6 +27,34 @@
     @test PFP.get_value(line, :base_power) == 100.0
 end
 
+@testset "TwoTerminalLCCLine: impedances carry the RAW's ohms" begin
+    raw_line = only(PFP.parse_pti(FOURTEEN_BUS_FIXTURE)["TWO-TERMINAL DC"])
+    sys = PFP.build_openapi_system(fourteen_bus_pm_data())
+    line = only(PFP.get_components(sys, "TwoTerminalLCCLine"))
+    @test PFP.get_value(line, :r) == raw_line["RDC"] == 20.0
+    @test PFP.get_value(line, :rectifier_rc) == raw_line["RCR"]
+    @test PFP.get_value(line, :rectifier_xc) == raw_line["XCR"] == 0.178
+    @test PFP.get_value(line, :inverter_rc) == raw_line["RCI"]
+    @test PFP.get_value(line, :inverter_xc) == raw_line["XCI"] == 0.172
+    @test PFP.get_value(line, :rectifier_capacitor_reactance) == raw_line["XCAPR"]
+    @test PFP.get_value(line, :inverter_capacitor_reactance) == raw_line["XCAPI"]
+end
+
+@testset "TwoTerminalVSCLine: g is the reciprocal of the RAW's RDC in siemens" begin
+    file = joinpath(@__DIR__, "fixtures", "synthetic_v35_vsc_line.raw")
+    raw = replace(
+        read_fixture(file),
+        "'VSCLINE1    ', 1, 0.0000," => "'VSCLINE1    ', 1, 2.5000,",
+    )
+    sys = mktempdir() do dir
+        path = joinpath(dir, "vsc_line.raw")
+        write(path, raw)
+        PFP.build_openapi_system(PFP.PowerModelsData(path))
+    end
+    vsc = only(PFP.get_components(sys, "TwoTerminalVSCLine"))
+    @test PFP.get_value(vsc, :g) ≈ 1.0 / 2.5
+end
+
 @testset "TwoTerminalGenericHVDCLine (matpower): native pminf/pmaxf/... ×baseMVA" begin
     pm = PFP.PowerModelsData(joinpath(MATPOWER_DIR, "case5_dc.m"))
     sys = PFP.build_openapi_system(pm)
