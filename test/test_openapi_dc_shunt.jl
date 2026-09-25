@@ -1,4 +1,4 @@
-@testset "TwoTerminalLCCLine: custom PSS/E-native fields passthrough, native pf ×baseMVA" begin
+@testset "TwoTerminalLCCLine: PSS/E-native fields, impedances back to ohms, native pf ×baseMVA" begin
     pm = fourteen_bus_pm_data()
     sys = PFP.build_openapi_system(pm)
     d = only(values(pm.data["dcline"]))
@@ -7,7 +7,8 @@
     @test PFP.get_value(line, :available) == d["available"]
     @test PFP.get_value(line, :active_power_flow) ≈ d["pf"] * 100.0
     @test PFP.get_value(line, :parameter_units) == "NATURAL_UNITS"
-    @test PFP.get_value(line, :r) == d["r"]
+    # The pm dict holds the impedances per-unit; the document carries ohms.
+    @test PFP.get_value(line, :r) ≈ d["r"] * d["scheduled_dc_voltage"]^2 / 100.0
     @test PFP.get_value(line, :power_mode) == d["power_mode"]
     @test PFP.get_value(line, :transfer_setpoint) == d["transfer_setpoint"]
     @test PFP.get_value(line, :scheduled_dc_voltage) == d["scheduled_dc_voltage"]
@@ -16,7 +17,10 @@
         PFP.get_value(line, :rectifier_delay_angle_limits),
         d["rectifier_delay_angle_limits"],
     )
-    @test PFP.get_value(line, :rectifier_rc) == d["rectifier_rc"]
+    @test PFP.get_value(line, :rectifier_rc) ≈
+          d["rectifier_rc"] * d["rectifier_base_voltage"]^2 / 100.0
+    @test PFP.get_value(line, :inverter_xc) ≈
+          d["inverter_xc"] * d["inverter_base_voltage"]^2 / 100.0
     @test PFP.get_value(line, :rectifier_base_voltage) == d["rectifier_base_voltage"]
     @test _matches_nt(
         PFP.get_value(line, :inverter_extinction_angle_limits),
@@ -268,7 +272,8 @@ end
     @test PFP.get_value(vsc, :dc_setpoint_from) ≈ 0.02 * 100.0
     @test PFP.get_value(vsc, :ac_setpoint_from) == 1.0
     @test PFP.get_value(vsc, :dc_current) == 10.0
-    @test PFP.get_value(vsc, :g) ≈ 1.0 / 0.5
+    # r = 0.5 pu on rated_dc_voltage^2 / baseMVA = 100 ohm, so RDC = 50 ohm.
+    @test PFP.get_value(vsc, :g) ≈ 1.0 / 50.0
     @test PFP.get_value(vsc, :max_dc_current_from) == 100.0
     @test PFP.get_value(vsc, :rated_dc_voltage) == 100.0
     @test PFP.get_value(vsc, :rated_ac_voltage_from) == 138.0

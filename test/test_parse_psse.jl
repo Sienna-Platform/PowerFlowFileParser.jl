@@ -78,6 +78,12 @@ end
     @test dcline["r"] ≈ 0.003125
     @test dcline["scheduled_dc_voltage"] == 400.0
     @test !(dcline["r"] ≈ 5.0 / (200.0^2 / 100.0))
+    # The document carries RDC back in ohms, whichever base the pm dict used.
+    lcc = only(
+        PFP.get_components(PFP.build_openapi_system(PowerModelsData(file)),
+            "TwoTerminalLCCLine"),
+    )
+    @test PFP.get_value(lcc, :r) ≈ 5.0
 
     # A zero scheduled DC voltage cannot serve as a per-unit base on a line that is
     # in service. The check applies to every PSS(R)E version's two-terminal DC records.
@@ -96,6 +102,12 @@ end
     blocked_dcline = only(values(pm_blocked["dcline"]))
     @test blocked_dcline["available"] == false
     @test blocked_dcline["r"] ≈ 5.0 / (200.0^2 / 100.0)
+    blocked_lcc = only(
+        PFP.get_components(
+            PFP.build_openapi_system(PowerModelsData(pm_blocked)), "TwoTerminalLCCLine",
+        ),
+    )
+    @test PFP.get_value(blocked_lcc, :r) ≈ 5.0
 end
 
 @testset "PSSE VSC line captures each converter's own AC bus base_kv" begin
@@ -107,6 +119,24 @@ end
     @test vscline["base_voltage_from"] == 200.0
     @test vscline["base_voltage_to"] == 138.0
     @test vscline["rated_dc_voltage"] == 150.0
+end
+
+@testset "PSSE VSC line rejects a zero DC voltage schedule on its controlling converter" begin
+    raw = read_fixture(joinpath(@__DIR__, "fixtures", "synthetic_v35_vsc_line.raw"))
+    bad = replace(raw, "     1, 1, 1, 150.000," => "     1, 1, 1, 0.000,"; count = 1)
+    @test_throws ArgumentError parse_file(IOBuffer(bad); filetype = "raw")
+
+    # Out of service, the line is kept on the converter's AC base kV instead.
+    blocked = replace(bad, "'VSCLINE1    ', 1," => "'VSCLINE1    ', 0,"; count = 1)
+    pm_blocked = @test_logs(
+        (:warn, r"zero DC voltage schedule"),
+        match_mode = :any,
+        parse_file(IOBuffer(blocked); filetype = "raw"),
+    )
+    vscline = only(values(pm_blocked["vscline"]))
+    @test vscline["available"] == false
+    @test vscline["rated_dc_voltage"] == 200.0
+    @test isfinite(vscline["r"])
 end
 
 @testset "PSSE VSC line out of service with no DC-voltage-controlling converter" begin

@@ -1938,6 +1938,32 @@ function _psse2pm_transformer!(pm_data::Dict, pti_data::Dict, import_all::Bool, 
 end
 
 """
+DC voltage base (kV) of a VSC line: the DCSET of its DC-voltage-controlling converter. An
+in-service line with a zero DCSET has no base to per-unitize on and is rejected; an
+out-of-service one falls back to the converter's AC bus base kV.
+"""
+function _vsc_dc_voltage_base(
+    name::AbstractString,
+    controlling_bus::Dict,
+    in_service::Bool,
+    ac_base_kv::Real,
+)
+    dcset = controlling_bus["DCSET"]
+    if !iszero(dcset)
+        return dcset
+    end
+    if in_service
+        throw(
+            ArgumentError(
+                "VSC line $name: the DC-voltage-controlling converter at bus $(controlling_bus["IBUS"]) has DCSET = 0; its scheduled DC voltage (kV) cannot be 0.",
+            ),
+        )
+    end
+    @warn "VSC line $name is out of service with a zero DC voltage schedule; using rated_dc_voltage = $ac_base_kv kV."
+    return Float64(ac_base_kv)
+end
+
+"""
 DC voltage base and scheduled flow of a VSC line, taken from the converter that controls
 DC voltage (TYPE = 1). PSS/E keeps out-of-service lines (MDC = 0, or a converter with
 TYPE = 0) in the file with no controlling converter, so such a line is kept as unavailable
@@ -1954,9 +1980,15 @@ function _vsc_voltage_base_and_flow(
     from_controls = from_bus["TYPE"] == 1
     to_controls = to_bus["TYPE"] == 1
     if from_controls && !to_controls
-        return (from_bus["DCSET"], to_bus["DCSET"])
+        return (
+            _vsc_dc_voltage_base(name, from_bus, in_service, ac_base_kv),
+            to_bus["DCSET"],
+        )
     elseif !from_controls && to_controls
-        return (to_bus["DCSET"], -from_bus["DCSET"])
+        return (
+            _vsc_dc_voltage_base(name, to_bus, in_service, ac_base_kv),
+            -from_bus["DCSET"],
+        )
     elseif from_controls && to_controls
         error(
             "Exactly one converter in converter $name must control DC voltage (TYPE = 1).",
@@ -1970,6 +2002,23 @@ function _vsc_voltage_base_and_flow(
     end
     @warn "VSC line $name is out of service and no converter controls DC voltage; keeping it as unavailable with rated_dc_voltage = $base_voltage kV and zero scheduled flow."
     return (base_voltage, 0.0)
+end
+
+"""
+Impedance base (ohms) that a two-terminal LCC line's DC-circuit resistance is per-unitized on:
+`VSCHD^2 / baseMVA`, the DC voltage schedule's base. RDC belongs to the DC circuit, not the AC
+commutating base (EBASR) used for the converter branches. A blocked line (MDC=0) carries no DC
+voltage schedule, so its inert resistance falls back to the rectifier AC base.
+"""
+function _lcc_dc_impedance_base(
+    scheduled_dc_voltage::Real,
+    rectifier_base_voltage::Real,
+    base_mva::Real,
+)
+    if iszero(scheduled_dc_voltage)
+        return rectifier_base_voltage^2 / base_mva
+    end
+    return scheduled_dc_voltage^2 / base_mva
 end
 
 """
@@ -2040,23 +2089,19 @@ function _psse2pm_dcline!(pm_data::Dict, pti_data::Dict, import_all::Bool)
                 )
             end
             ZbaseR = rectifier_base_voltage^2 / baseMVA
-            # RDC is a DC-circuit resistance in ohms; its per-unit base is the DC voltage
-            # (VSCHD), not the AC commutating base (EBASR) used for the converter branches.
-            # A blocked line (MDC=0) carries no DC voltage schedule to per-unitize on, so
-            # its inert resistance falls back to the rectifier AC base.
             dc_base_voltage = dcline["VSCHD"]
-            Zbase_dc = if !iszero(dc_base_voltage)
-                dc_base_voltage^2 / baseMVA
-            elseif sub_data["available"]
-                throw(
-                    ArgumentError(
-                        "DC line $(sub_data["name"]): Scheduled DC voltage VSCHD cannot be 0",
-                    ),
-                )
-            else
+            if iszero(dc_base_voltage)
+                if sub_data["available"]
+                    throw(
+                        ArgumentError(
+                            "DC line $(sub_data["name"]): Scheduled DC voltage VSCHD cannot be 0",
+                        ),
+                    )
+                end
                 @warn "DC line $(sub_data["name"]) is out of service (MDC=0) with a zero scheduled DC voltage VSCHD; per-unitizing RDC on the rectifier AC base instead."
-                ZbaseR
             end
+            Zbase_dc =
+                _lcc_dc_impedance_base(dc_base_voltage, rectifier_base_voltage, baseMVA)
             sub_data["rectifier_bridges"] = dcline["NBR"]
             sub_data["rectifier_rc"] = dcline["RCR"] / ZbaseR
             sub_data["rectifier_xc"] = dcline["XCR"] / ZbaseR
