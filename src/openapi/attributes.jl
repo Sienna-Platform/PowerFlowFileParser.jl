@@ -54,11 +54,21 @@ function _impedance_correction_curves(data::Dict)
     return curves
 end
 
+"""The curve field a correction table's control mode selects, with the unit PSS/E states
+the table's x axis in: a tap ratio is dimensionless, a phase-shift angle is in degrees
+(converted to the schema's radians on write). Exhaustive over the enum."""
+function _correction_curve_field(control_mode::AbstractString)
+    control_mode == "TAP_RATIO" && return (:tap_ratio_correction_curve, "1")
+    control_mode == "PHASE_SHIFT_ANGLE" && return (:phase_angle_correction_curve, "deg")
+    throw(IS.DataFormatError("unhandled impedance correction control mode $control_mode"))
+end
+
 """
 Build and register a new `ImpedanceCorrectionData` for `(table_number, winding)` and
 attach it to `transformer_id` — the first-sighting path for a (table, winding) pair.
 Returns the attribute, so later sightings of the same pair associate against it directly
-(see [`_attach_impedance_correction!`](@ref)).
+(see [`_attach_impedance_correction!`](@ref)). The table's curve lands on the one field its
+control mode selects; the other curve stays absent.
 """
 function _new_impedance_correction_attribute!(
     sys::OpenAPISystem,
@@ -71,7 +81,8 @@ function _new_impedance_correction_attribute!(
     attribute = stage(PO.ImpedanceCorrectionData)
     set_value!(attribute, :id, next_id!(get_registry(sys)))
     set_value!(attribute, :table_number, table_number)
-    set_value!(attribute, :impedance_correction_curve, curve)
+    field, x_unit = _correction_curve_field(control_mode)
+    set_value!(attribute, field, curve, x_unit)
     set_value!(attribute, :transformer_winding, winding)
     set_value!(attribute, :transformer_control_mode, control_mode)
     add_supplemental_attribute!(sys, attribute, transformer_id)

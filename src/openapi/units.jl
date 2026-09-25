@@ -391,6 +391,31 @@ function set_value!(
 end
 
 """
+Assign a curve-valued property whose declared unit is the unit of the curve's x axis
+(`ImpedanceCorrectionData`'s correction curves): every x converts from `source_unit` to the
+declared unit, the y axis is a dimensionless multiplier and passes through unchanged.
+"""
+function set_value!(
+    s::Staged{T},
+    prop::Symbol,
+    value::IC.PiecewiseLinearData,
+    source_unit::AbstractString,
+) where {T}
+    target, quantity = _declared(s, prop)
+    points = [
+        IC.XYCoords(;
+            x = _convert(s, prop, Float64(point.x), source_unit, target, quantity),
+            y = point.y,
+        ) for point in value.points
+    ]
+    s.fields[prop] = IC.PiecewiseLinearData(;
+        function_type = value.function_type,
+        points = points,
+    )
+    return
+end
+
+"""
 Reject a unit supplied for something that cannot carry one.
 
 Either the property declares no unit, or the value is neither a number nor a compound tuple.

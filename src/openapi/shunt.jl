@@ -6,7 +6,7 @@
 # value — the RAW's own GL/BL and BINIT/Bi.
 #
 # Every other field this file writes is outside that rescale and is used exactly as PFFP's
-# own psse.jl parser wrote it: `switched_shunt`'s `admittance_limits` (a voltage band, see
+# own psse.jl parser wrote it: `switched_shunt`'s VSWLO/VSWHI band (see
 # `make_switched_admittance!`) and all of `facts`.
 
 """Fixed admittance (PSS/E `FIXED SHUNT`)."""
@@ -47,7 +47,25 @@ const SWITCHED_ADMITTANCE_CONTROL_MODE_NAMES = Dict(
     3 => "DISCRETE_REACTIVE_PLANT",
     4 => "DISCRETE_REACTIVE_VSC",
     5 => "DISCRETE_ADMITTANCE_REMOTE",
+    6 => "DISCRETE_REACTIVE_FACTS",
 )
+
+"""The band field a switched-shunt control mode selects for PSS/E's VSWLO/VSWHI pair:
+`voltage_limits` under the voltage modes, `reactive_power_range_limits` under the reactive and
+remote-admittance modes, and no band under `UNDEFINED`/`FIXED`. Exhaustive over the enum."""
+function _switched_admittance_band_field(control_mode::AbstractString)
+    if control_mode == "UNDEFINED" || control_mode == "FIXED"
+        return nothing
+    elseif control_mode == "DISCRETE_VOLTAGE" || control_mode == "CONTINUOUS_VOLTAGE"
+        return :voltage_limits
+    elseif control_mode in (
+        "DISCRETE_REACTIVE_PLANT", "DISCRETE_REACTIVE_VSC",
+        "DISCRETE_ADMITTANCE_REMOTE", "DISCRETE_REACTIVE_FACTS",
+    )
+        return :reactive_power_range_limits
+    end
+    throw(IS.DataFormatError("unhandled switched shunt control_mode $control_mode"))
+end
 
 function _switched_admittance_control_mode(code::Integer)
     if !haskey(SWITCHED_ADMITTANCE_CONTROL_MODE_NAMES, code)
@@ -82,11 +100,13 @@ end
 """
 Switched admittance (PSS/E `SWITCHED SHUNT`).
 
-`admittance_limits` mirrors PSCB's own field verbatim: PSS/E's `VSWLO`/`VSWHI` are a
-controlled-voltage band, not an admittance band, despite the oracle's field name — a
-pre-existing PSCB naming quirk reproduced faithfully, not fixed here. Being voltages, they
-are outside `_make_per_unit!`'s admittance rescale and take no `base_power` factor, unlike
-`solved_admittance` and `y_increase`.
+PSS/E's `VSWLO`/`VSWHI` (the pm dict's `admittance_limits` pair, a name kept from the
+oracle) is one band whose meaning follows `MODSW`: a controlled-voltage band under the
+voltage modes, written to `voltage_limits` in pu, and under the reactive and
+remote-admittance modes a fraction of the regulated device's reactive range, written to
+`reactive_power_range_limits` as a dimensionless band. Under `FIXED`/`UNDEFINED` the columns
+are inert and no band is written. Neither band is inside `_make_per_unit!`'s admittance
+rescale, so no `base_power` factor applies, unlike `solved_admittance` and `y_increase`.
 
 The schema dropped `SwitchedAdmittance`'s own fixed `Y` field (the total admittance is now
 `number_engaged` * `y_increase`, unless `solved_admittance` overrides it): `d["bs"]`
@@ -113,10 +133,13 @@ function make_switched_admittance!(
     set_value!(component, :admittance_units, "COMPONENT_MVAR")
     set_value!(component, :number_of_steps, d["step_number"])
     _set_y_increase!(component, d["y_increment"] * base_power, "MVAr")
-    admittance_limits = d["admittance_limits"]
-    set_value!(component, :admittance_limits,
-        (min = admittance_limits[1], max = admittance_limits[2]), "MVAr")
     set_value!(component, :control_mode, control_mode)
+    band = _switched_admittance_band_field(control_mode)
+    if !isnothing(band)
+        lo, hi = d["admittance_limits"]
+        unit = band == :voltage_limits ? "pu" : "1"
+        set_value!(component, band, (min = lo, max = hi), unit)
+    end
     set_value!(
         component,
         :regulated_bus_number,
