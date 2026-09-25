@@ -17,6 +17,11 @@ const PARSER_TAP_RATIO_CORRECTION_TOL = 1e-5
 
 const ZERO_IMPEDANCE_REACTANCE_THRESHOLD = 1e-4
 
+# PSS/E RAW source versions grouped by record layout. Stage-2 readers branch on these
+# families, not on literal revision strings.
+const PSSE_LEGACY_RATING_VERSIONS = ("30", "32", "33")  # RATEA/B/C, REMOT, no node fields
+const PSSE_TWELVE_RATING_VERSIONS = ("34", "35")  # RATE1..12, FCREG/NREG, NDR/NDI
+
 # PSS/E bus type codes (RAW bus record IDE field), carried through the pm dict's
 # "bus_type" unchanged. Matpower uses the same encoding. The codes index
 # PM_BUS_TYPE_NAMES, so the two cannot drift.

@@ -109,6 +109,27 @@ end
     @test vscline["rated_dc_voltage"] == 150.0
 end
 
+@testset "PSSE VSC line out of service with no DC-voltage-controlling converter" begin
+    # WECC planning cases carry VSC lines with MDC = 0 and both converters TYPE = 0.
+    # PSS/E keeps the record; the parser must keep it as unavailable rather than abort.
+    file = joinpath(@__DIR__, "fixtures", "synthetic_v35_vsc_line_out_of_service.raw")
+    pm_data = @test_logs(
+        (:warn, r"VSCLINE1\s+is out of service"),
+        match_mode = :any,
+        PowerModelsData(file).data,
+    )
+    vscline = only(values(pm_data["vscline"]))
+    @test vscline["br_status"] == 0
+    @test vscline["available"] == false
+    @test vscline["dc_voltage_control_from"] == false
+    @test vscline["dc_voltage_control_to"] == false
+    # Largest |DCSET| stands in for the DC voltage base; no scheduled flow.
+    @test vscline["rated_dc_voltage"] == 150.0
+    @test vscline["pf"] == 0.0
+    @test vscline["if"] == 0.0
+    @test isfinite(vscline["r"])
+end
+
 @testset "PSSE VSC converter loss: BLOSS is per-unitized on the DC base kV" begin
     # BLOSS is kW per DC ampere, so its LinearCurve slope is p.u. power per p.u. current:
     # BLOSS / base_kV, not BLOSS / (1000 * baseMVA), which is not even dimensionless.
@@ -416,4 +437,27 @@ end
     @test transformer_3w["tertiary_turns_ratio"] ≈ 1.0
     @test transformer_3w["RMI3"] == -30.0
     @test transformer_3w["RMA3"] == 30.0
+end
+
+@testset "PSSE duplicate TRANSFORMER records: first read is kept, later ones dropped" begin
+    # XFMR_A and XFMR_B both join buses 201-202; their circuit ids '1 ' and ' 1' are the
+    # same identity to PSS/E once stripped. XFMR_C on 203-204 shares nothing but bus names.
+    file = joinpath(@__DIR__, "fixtures", "synthetic_v35_duplicate_transformer_names.raw")
+    pm_data = @test_logs(
+        (:warn, r"Duplicate TRANSFORMER record between buses 201-202 with circuit id '1'"),
+        match_mode = :any,
+        PowerModelsData(file).data,
+    )
+    transformers = [b for b in values(pm_data["branch"]) if b["transformer"]]
+    @test length(transformers) == 2
+
+    kept = only(b for b in transformers if b["f_bus"] == 201 && b["t_bus"] == 202)
+    @test kept["ext"]["psse_name"] == "XFMR_A      "
+    @test kept["br_x"] == 0.05
+    @test kept["rate_a"] ≈ 0.4  # 40 MVA on the 100 MVA base
+    @test kept["source_id"][5] == "1"  # circuit id stored stripped
+
+    other = only(b for b in transformers if b["f_bus"] == 203 && b["t_bus"] == 204)
+    @test other["ext"]["psse_name"] == "XFMR_C      "
+    @test other["br_x"] == 0.05
 end

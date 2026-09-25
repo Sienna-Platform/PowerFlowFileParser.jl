@@ -351,3 +351,19 @@ end
     @test PFP.get_value(circuit, :reactive_power_flow) ≈ 0.1
     @test PFP.get_value(circuit, :base_power) == 50.0
 end
+
+@testset "TwoWindingTransformer: a fixture with duplicate PSS/E records builds one circuit" begin
+    # The PSS/E reader drops the duplicate 201-202 record (see test_parse_psse.jl), so the
+    # build sees one transformer per identity and the registry's own guard never fires.
+    file = joinpath(@__DIR__, "fixtures", "synthetic_v35_duplicate_transformer_names.raw")
+    sys = PFP.build_openapi_system(PFP.PowerModelsData(file))
+    names = sort([
+        PFP.get_value(t, :name) for t in PFP.get_components(sys, "TwoWindingTransformer")
+    ])
+    @test names == ["TAP_201-LOW_202-i_1", "TAP_203-LOW_204-i_1"]
+    @test length(PFP.get_components(sys, "TransformerCircuit")) == 2
+    kept = _transformer_circuit_between(sys, 201, 202)
+    @test PFP.get_value(kept, :x) == 0.05
+    @test PFP.get_value(kept, :rating) == 40.0
+    @test length(PFP.get_components(sys, "Line")) == 2
+end

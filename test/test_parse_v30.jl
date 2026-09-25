@@ -45,6 +45,12 @@ end
     @test_throws IS.DataFormatError PowerModelsData(
         joinpath(@__DIR__, "fixtures", "v31_header.raw"),
     )
+    # a @! column comment does not make a file v35; REV still decides
+    with_marker =
+        "@!IC,SBASE,REV\n" * read(joinpath(@__DIR__, "fixtures", "v31_header.raw"), String)
+    @test_throws IS.DataFormatError PowerFlowFileParser._parse_pti_data(
+        IOBuffer(with_marker),
+    )
 end
 
 @testset "v30 multi-terminal DC NDCLN layout" begin
@@ -105,12 +111,15 @@ end
     rv = PowerFlowFileParser._resolve_pti_version
     # REV must be read from both comma- and whitespace-delimited headers
     for delim in (", ", "  ")
-        @test rv(["0$(delim)100.0$(delim)33 / c", "c1", "c2"], false) == 33
-        @test rv(["0$(delim)100.0$(delim)32 / c", "c1", "c2"], false) == 32
+        @test rv(["0$(delim)100.0$(delim)33 / c", "c1", "c2"], 1) == 33
+        @test rv(["0$(delim)100.0$(delim)32 / c", "c1", "c2"], 1) == 32
     end
     # a missing REV field defaults to 30 in either style
-    @test rv(["0, 100.00 / c", "c1", "c2"], false) == 30
-    @test rv(["0  100.00 / c", "c1", "c2"], false) == 30
-    # a v35 file is identified by its @! marker regardless of header delimiter
-    @test rv(["@!...", "0 100.0 33"], true) == 35
+    @test rv(["0, 100.00 / c", "c1", "c2"], 1) == 30
+    @test rv(["0  100.00 / c", "c1", "c2"], 1) == 30
+    # a @! column comment is skipped when locating the header and never implies v35;
+    # v34 exports carry the same marker
+    @test PowerFlowFileParser._find_header_line(["@!...", "0 100.0 33"]) == 2
+    @test rv(["@!...", "0 100.0 33"], 2) == 33
+    @test rv(["@!...", "0 100.0 34"], 2) == 34
 end
