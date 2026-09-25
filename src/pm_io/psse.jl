@@ -2058,27 +2058,16 @@ function _psse2pm_dcline!(pm_data::Dict, pti_data::Dict, import_all::Bool)
                     ),
                 )
             end
-            ZbaseR = rectifier_base_voltage^2 / baseMVA
-            # RDC is a DC-circuit resistance in ohms; its per-unit base is the DC voltage
-            # (VSCHD), not the AC commutating base (EBASR) used for the converter branches.
-            # A blocked line (MDC=0) carries no DC voltage schedule to per-unitize on, so
-            # its inert resistance falls back to the rectifier AC base.
-            dc_base_voltage = dcline["VSCHD"]
-            Zbase_dc = if !iszero(dc_base_voltage)
-                dc_base_voltage^2 / baseMVA
-            elseif sub_data["available"]
+            if iszero(dcline["VSCHD"]) && sub_data["available"]
                 throw(
                     ArgumentError(
                         "DC line $(sub_data["name"]): Scheduled DC voltage VSCHD cannot be 0",
                     ),
                 )
-            else
-                @warn "DC line $(sub_data["name"]) is out of service (MDC=0) with a zero scheduled DC voltage VSCHD; per-unitizing RDC on the rectifier AC base instead."
-                ZbaseR
             end
             sub_data["rectifier_bridges"] = dcline["NBR"]
-            sub_data["rectifier_rc"] = dcline["RCR"] / ZbaseR
-            sub_data["rectifier_xc"] = dcline["XCR"] / ZbaseR
+            sub_data["rectifier_rc"] = dcline["RCR"]
+            sub_data["rectifier_xc"] = dcline["XCR"]
             sub_data["rectifier_base_voltage"] = rectifier_base_voltage
 
             inverter_base_voltage = dcline["EBASI"]
@@ -2089,10 +2078,9 @@ function _psse2pm_dcline!(pm_data::Dict, pti_data::Dict, import_all::Bool)
                     ),
                 )
             end
-            ZbaseI = inverter_base_voltage^2 / baseMVA
             sub_data["inverter_bridges"] = dcline["NBI"]
-            sub_data["inverter_rc"] = dcline["RCI"] / ZbaseI
-            sub_data["inverter_xc"] = dcline["XCI"] / ZbaseI
+            sub_data["inverter_rc"] = dcline["RCI"]
+            sub_data["inverter_xc"] = dcline["XCI"]
             sub_data["inverter_base_voltage"] = inverter_base_voltage
 
             sub_data["switch_mode_voltage"] = dcline["VCMOD"]
@@ -2158,9 +2146,11 @@ function _psse2pm_dcline!(pm_data::Dict, pti_data::Dict, import_all::Bool)
             sub_data["reactive_power_limits_to"] =
                 (min = sub_data["qmint"], max = sub_data["qmaxt"])
 
-            sub_data["rectifier_capacitor_reactance"] = dcline["XCAPR"] / ZbaseR
-            sub_data["inverter_capacitor_reactance"] = dcline["XCAPI"] / ZbaseI
-            sub_data["r"] = dcline["RDC"] / Zbase_dc
+            # Impedances stay in ohms: downstream per-unitizes RDC on VSCHD and the
+            # converter fields on EBASR/EBASI.
+            sub_data["rectifier_capacitor_reactance"] = dcline["XCAPR"]
+            sub_data["inverter_capacitor_reactance"] = dcline["XCAPI"]
+            sub_data["r"] = dcline["RDC"]
 
             if pm_data["source_version"] == "30"
                 sub_data["ext"] = Dict{String, Any}(
@@ -2305,8 +2295,7 @@ function _psse2pm_dcline!(pm_data::Dict, pti_data::Dict, import_all::Bool)
             sub_data["pminf"] = -sub_data["pmaxf"]
             sub_data["pmint"] = -sub_data["pmaxt"]
 
-            Zbase = base_voltage^2 / baseMVA
-            sub_data["r"] = dcline["RDC"] / Zbase
+            sub_data["r"] = dcline["RDC"]
             sub_data["pf"] = flow_setpoint / baseMVA
             sub_data["if"] = 1000.0 * (flow_setpoint / base_voltage)
 
