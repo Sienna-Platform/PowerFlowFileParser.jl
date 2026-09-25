@@ -397,26 +397,28 @@ end
     # Pins the structural guarantee: an
     # instance-level-discriminated field with no verdict in
     # `_DEVICEBASE_INSTANCE_DISPATCHED` must error, not silently fall through unconverted.
-    # `TwoTerminalVSCLine.dc_setpoint_from` (governed by `dc_control_from`) is real and
-    # instance-dispatched today but deliberately not registered -- this package's readers
-    # never reach a document containing it without first hitting the recorded VSC
-    # voltage-control gap (`_vsc_voltage_control_unsupported`), so it is exactly the kind
-    # of "not yet classified" field the guard exists for.
-    vsc = PFP.stage(PFP.PO.TwoTerminalVSCLine)
-    PFP.set_value!(vsc, :id, 1)
-    PFP.set_value!(vsc, :name, "vsc")
-    PFP.set_value!(vsc, :available, true)
-    PFP.set_value!(vsc, :arc, 0)
-    PFP.set_value!(vsc, :power_units, "NATURAL_UNITS")
-    PFP.set_value!(vsc, :active_power_flow, 0.0, "MW")
-    PFP.set_value!(vsc, :active_power_limits_from, (min = 0.0, max = 0.0), "MW")
-    PFP.set_value!(vsc, :active_power_limits_to, (min = 0.0, max = 0.0), "MW")
-    PFP.set_value!(vsc, :rating, 0.0, "MVA")
-    PFP.set_value!(vsc, :base_power, 100.0, "MVA")
+    # `InterconnectingConverter.dc_voltage_setpoint` (governed by
+    # `voltage_setpoint_units`) is real and instance-dispatched but deliberately not
+    # registered: no PSS/E record produces an InterconnectingConverter, so this package's
+    # readers never emit one, and it is exactly the kind of "not yet classified" field the
+    # guard exists for.
+    ic = PFP.stage(PFP.PO.InterconnectingConverter)
+    PFP.set_value!(ic, :id, 1)
+    PFP.set_value!(ic, :name, "ic")
+    PFP.set_value!(ic, :available, true)
+    PFP.set_value!(ic, :bus, 0)
+    PFP.set_value!(ic, :dc_bus, 0)
+    PFP.set_value!(ic, :power_units, "NATURAL_UNITS")
+    PFP.set_value!(ic, :active_power, 0.0, "MW")
+    PFP.set_value!(ic, :active_power_limits, (min = 0.0, max = 0.0), "MW")
+    PFP.set_value!(ic, :rating, 0.0, "MVA")
+    PFP.set_value!(ic, :base_power, 100.0, "MVA")
+    PFP.set_value!(ic, :dc_control, "DC_VOLTAGE")
+    PFP.set_value!(ic, :ac_control, "AC_REACTIVE_POWER")
     @test_throws ErrorException PFP._devicebase_classification(
-        PFP.materialize(vsc),
-        "TwoTerminalVSCLine",
-        :dc_setpoint_from,
+        PFP.materialize(ic),
+        "InterconnectingConverter",
+        :dc_voltage_setpoint,
     )
 end
 

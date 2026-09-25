@@ -1450,6 +1450,8 @@ function _psse2pm_transformer!(pm_data::Dict, pti_data::Dict, import_all::Bool, 
                     _tap_ratio_limits(transformer, 1, tap_scale)
                 sub_data["VMA1"] = transformer["VMA1"]
                 sub_data["VMI1"] = transformer["VMI1"]
+                sub_data["RM_PRESENT1"] = transformer["RM_PRESENT1"]
+                sub_data["VM_PRESENT1"] = transformer["VM_PRESENT1"]
                 sub_data["NTP1"] = transformer["NTP1"]
                 if import_all
                     _import_remaining_keys!(
@@ -1880,6 +1882,8 @@ function _psse2pm_transformer!(pm_data::Dict, pti_data::Dict, import_all::Bool, 
                         _tap_ratio_limits(transformer, i, turns_ratio_scales[i])
                     sub_data["VMA$i"] = transformer["VMA$i"]
                     sub_data["VMI$i"] = transformer["VMI$i"]
+                    sub_data["RM_PRESENT$i"] = transformer["RM_PRESENT$i"]
+                    sub_data["VM_PRESENT$i"] = transformer["VM_PRESENT$i"]
                     sub_data["NTP$i"] = transformer["NTP$i"]
                 end
 
@@ -1937,6 +1941,21 @@ function _psse2pm_transformer!(pm_data::Dict, pti_data::Dict, import_all::Bool, 
     return
 end
 
+"""PSS(R)E two-terminal DC `MDC` control-mode codes, in the schema's `LCCControlMode`
+spelling: 0 blocked, 1 power, 2 current. Exhaustive on purpose: an unknown code errors
+rather than landing in a default mode, the same posture as
+`_switched_admittance_control_mode` for switched shunts."""
+function _lcc_control_mode(code::Integer, name)
+    code == 0 && return "BLOCKED"
+    code == 1 && return "POWER"
+    code == 2 && return "CURRENT"
+    throw(
+        DataFormatError(
+            "DC line $name: unsupported two-terminal DC MDC control mode=$code",
+        ),
+    )
+end
+
 """
 DC voltage base and scheduled flow of a VSC line, taken from the converter that controls
 DC voltage (TYPE = 1). PSS/E keeps out-of-service lines (MDC = 0, or a converter with
@@ -1982,6 +2001,7 @@ PSS(R)E Two-Terminal DC specification. For Voltage Source Converters, "source_id
 is given by `["IBUS1", "IBUS2", "NAME"]`, where "IBUS1" is "IBUS" of the first
 converter bus, and "IBUS2" is the "IBUS" of the second converter bus, in the
 PSS(R)E Voltage Source Converter specification.
+
 """
 function _psse2pm_dcline!(pm_data::Dict, pti_data::Dict, import_all::Bool)
     @info "Parsing PSS(R)E Two-Terminal and VSC DC line data into a PowerModels Dict..."
@@ -2022,11 +2042,10 @@ function _psse2pm_dcline!(pm_data::Dict, pti_data::Dict, import_all::Bool)
                 push!(pm_data["connected_buses"], sub_data["t_bus"])
             end
 
-            if dcline["MDC"] == 1
-                sub_data["power_mode"] = true
-            else
-                sub_data["power_mode"] = false
-            end
+            # `MDC` is three-valued; a blocked line (0) is neither power- nor
+            # current-controlled, so it is carried as its own mode rather than folded into
+            # `available = false` alone.
+            sub_data["control_mode"] = _lcc_control_mode(dcline["MDC"], sub_data["name"])
             sub_data["available"] = dcline["MDC"] != 0
             sub_data["br_status"] = sub_data["available"]
 

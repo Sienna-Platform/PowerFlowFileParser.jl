@@ -1,6 +1,6 @@
 # `data["dcline"]` IS a native PowerModels section — `_make_per_unit!` divides its power
 # fields (`pf`/`qf`/`p*f`/`q*f`/`p*t`/`q*t`) by `baseMVA`. The LCC-specific fields (`r`,
-# `transfer_setpoint`, `scheduled_dc_voltage`, `rectifier_*`, `inverter_*`, and the rest
+# `transfer_setpoint` (raw SETVL), `scheduled_dc_voltage`, `rectifier_*`, `inverter_*`, and the rest
 # of the PSS/E-native block) have no PowerModels counterpart, so `_make_per_unit!` never
 # touches them: they arrive already in the natural unit the schema's `NATURAL_UNITS`
 # default expects (ohms, kV, radians, ...). `TwoTerminalGenericHVDCLine`/
@@ -58,18 +58,18 @@ function make_lcc_line!(
     set_value!(component, :active_power_flow, get(d, "pf", 0.0) * sys_mbase, "MW")
     set_value!(component, :parameter_units, "NATURAL_UNITS")
     set_value!(component, :r, d["r"], "ohm")
-    set_value!(component, :power_mode, Bool(d["power_mode"]))
-    if d["power_mode"]
-        transfer_setpoint_unit = "MW"
-    else
-        transfer_setpoint_unit = "A"
+    # `control_mode` (PSS/E MDC) selects which schedule the raw SETVL is: a power in MW
+    # under POWER, a current in amperes under CURRENT, and nothing under BLOCKED, where the
+    # line holds no schedule and both setpoints stay absent. Exhaustive over the enum.
+    control_mode = d["control_mode"]
+    set_value!(component, :control_mode, control_mode)
+    if control_mode == "POWER"
+        set_value!(component, :power_transfer_setpoint, d["transfer_setpoint"], "MW")
+    elseif control_mode == "CURRENT"
+        set_value!(component, :current_transfer_setpoint, d["transfer_setpoint"], "A")
+    elseif control_mode != "BLOCKED"
+        throw(IS.DataFormatError("DC line $name: unknown LCC control_mode $control_mode"))
     end
-    set_value!(
-        component,
-        :transfer_setpoint,
-        d["transfer_setpoint"],
-        transfer_setpoint_unit,
-    )
     set_value!(component, :dc_voltage_units, "NATURAL_UNITS")
     set_value!(component, :scheduled_dc_voltage, d["scheduled_dc_voltage"], "kV")
     set_value!(component, :rectifier_bridges, Int(d["rectifier_bridges"]))
@@ -179,16 +179,18 @@ convention as `data["dcline"]`'s native fields, so this maker multiplies them ba
 
 `dc_current`("if")/`max_dc_current_from`/`to`/`power_factor_weighting_fraction_from`/`to`
 are already natural (Amperes / a bare fraction) and pass through unscaled.
-`dc_setpoint_from`/`to` is per-unit on `rated_dc_voltage` when the converter controls DC
-voltage, or on `sys_mbase` when it controls DC power.
+The pm dict's `dc_setpoint_from`/`to` is per-unit on `rated_dc_voltage` when the converter
+controls DC voltage, or on `sys_mbase` when it controls DC power; each lands on the one wire
+field its mode selects, `dc_voltage_setpoint_*` (pu) or `dc_power_setpoint_*` (MW), and the
+other stays absent. Likewise `ac_setpoint_from`/`to` lands on `ac_voltage_setpoint_*` (pu)
+under AC voltage control or `power_factor_setpoint_*` otherwise.
 
 `setpoint_voltage_units` (decoupled from `voltage_units`, which tags only
 `voltage_limits_from`/`to`) is set unconditionally to `COMPONENT_BASE`: PSS/E always reports a
 voltage-controlling side's DC setpoint as p.u. of `rated_dc_voltage` (`psse.jl` pre-divides
 `DCSET` by `base_voltage`) and a voltage-controlling AC setpoint (`ACSET`) as p.u. of the AC
-bus's own base voltage — never kV. The `DC_POWER`/`AC_REACTIVE_POWER` branches have their own
-fixed units (`MW`/`1`) and ignore this discriminator, so setting it unconditionally is safe
-regardless of which sides actually control voltage.
+bus's own base voltage — never kV. It governs only `dc_voltage_setpoint_*` and
+`ac_voltage_setpoint_*`; the power and power-factor setpoints carry their own fixed units.
 
 `psse.jl` also captures each converter's own AC bus base kV as `base_voltage_from`/
 `base_voltage_to`, threaded onto the document as `rated_ac_voltage_from`/
@@ -225,17 +227,19 @@ function make_vscline!(
     set_value!(component, :setpoint_voltage_units, "COMPONENT_BASE")
     if d["dc_voltage_control_from"]
         set_value!(component, :dc_control_from, "DC_VOLTAGE")
-        set_value!(component, :dc_setpoint_from, d["dc_setpoint_from"], "pu")
+        set_value!(component, :dc_voltage_setpoint_from, d["dc_setpoint_from"], "pu")
     else
         set_value!(component, :dc_control_from, "DC_POWER")
-        set_value!(component, :dc_setpoint_from, d["dc_setpoint_from"] * sys_mbase, "MW")
+        set_value!(
+            component, :dc_power_setpoint_from, d["dc_setpoint_from"] * sys_mbase, "MW",
+        )
     end
     if d["ac_voltage_control_from"]
         set_value!(component, :ac_control_from, "AC_VOLTAGE")
-        set_value!(component, :ac_setpoint_from, d["ac_setpoint_from"], "pu")
+        set_value!(component, :ac_voltage_setpoint_from, d["ac_setpoint_from"], "pu")
     else
         set_value!(component, :ac_control_from, "AC_REACTIVE_POWER")
-        set_value!(component, :ac_setpoint_from, d["ac_setpoint_from"], "1")
+        set_value!(component, :power_factor_setpoint_from, d["ac_setpoint_from"], "1")
     end
     set_value!(component, :rated_ac_voltage_from, d["base_voltage_from"], "kV")
     set_value!(
@@ -257,17 +261,19 @@ function make_vscline!(
     set_value!(component, :reactive_power_to, get(d, "qt", 0.0) * sys_mbase, "MVAr")
     if d["dc_voltage_control_to"]
         set_value!(component, :dc_control_to, "DC_VOLTAGE")
-        set_value!(component, :dc_setpoint_to, d["dc_setpoint_to"], "pu")
+        set_value!(component, :dc_voltage_setpoint_to, d["dc_setpoint_to"], "pu")
     else
         set_value!(component, :dc_control_to, "DC_POWER")
-        set_value!(component, :dc_setpoint_to, d["dc_setpoint_to"] * sys_mbase, "MW")
+        set_value!(
+            component, :dc_power_setpoint_to, d["dc_setpoint_to"] * sys_mbase, "MW",
+        )
     end
     if d["ac_voltage_control_to"]
         set_value!(component, :ac_control_to, "AC_VOLTAGE")
-        set_value!(component, :ac_setpoint_to, d["ac_setpoint_to"], "pu")
+        set_value!(component, :ac_voltage_setpoint_to, d["ac_setpoint_to"], "pu")
     else
         set_value!(component, :ac_control_to, "AC_REACTIVE_POWER")
-        set_value!(component, :ac_setpoint_to, d["ac_setpoint_to"], "1")
+        set_value!(component, :power_factor_setpoint_to, d["ac_setpoint_to"], "1")
     end
     set_value!(component, :rated_ac_voltage_to, d["base_voltage_to"], "kV")
     set_value!(

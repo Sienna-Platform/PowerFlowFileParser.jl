@@ -95,7 +95,33 @@ end
     )
     blocked_dcline = only(values(pm_blocked["dcline"]))
     @test blocked_dcline["available"] == false
+    @test blocked_dcline["control_mode"] == "BLOCKED"
     @test blocked_dcline["r"] ≈ 5.0 / (200.0^2 / 100.0)
+end
+
+@testset "Two-terminal DC MDC maps to the three LCCControlMode strings" begin
+    # MDC=1 (14-bus fixture) and MDC=2 (discriminator fixture) parse to their names; an
+    # unknown code is rejected rather than defaulted. MDC=0 is covered above.
+    power =
+        only(values(parse_file(joinpath(@__DIR__, "modified_14bus_system.raw"))["dcline"]))
+    @test power["control_mode"] == "POWER"
+    current = only(
+        values(
+            parse_file(
+                joinpath(
+                    @__DIR__,
+                    "fixtures",
+                    "synthetic_v35_transformer_discriminators.raw",
+                ),
+            )["dcline"],
+        ),
+    )
+    @test current["control_mode"] == "CURRENT"
+    @test current["available"]
+    @test_throws PowerFlowFileParser.DataFormatError PowerFlowFileParser._lcc_control_mode(
+        42,
+        "x",
+    )
 end
 
 @testset "PSSE VSC line captures each converter's own AC bus base_kv" begin
