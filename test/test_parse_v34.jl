@@ -137,7 +137,7 @@ end
     @test !occursin("\"", dc["source_id"][end])
 
     vsc = only(values(pm["vscline"]))
-    @test vsc["ext"]["RMPCT_FROM"] == 75.0
+    @test vsc["rmpct_from"] == 75.0
     @test vsc["ext"]["NREG_FROM"] == 8
     @test vsc["ext"]["NREG_TO"] == 0
 

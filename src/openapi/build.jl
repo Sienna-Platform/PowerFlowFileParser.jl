@@ -61,6 +61,61 @@ function _check_unconsumed_sections(data::Dict)
 end
 
 """
+Members of one bus's sharing group: a two-terminal line contributes at most one converter,
+since one attribute attaches to a component once; a second converter of the same line on
+the same bus is reported and left out.
+"""
+function _sharing_members(members::Vector{VoltageControlMember}, bus_number::Int)
+    kept = VoltageControlMember[]
+    seen = Set{Int}()
+    for member in members
+        if member.component_id in seen
+            @warn "both converters of $(member.component_type) id=$(member.component_id) regulate bus $bus_number; only the first joins the bus's ReactivePowerSharing group"
+            continue
+        end
+        push!(seen, member.component_id)
+        push!(kept, member)
+    end
+    return kept
+end
+
+"""
+One `ReactivePowerSharing` attribute per bus that two or more setpoint devices hold, from the
+members every device reader recorded (`record_voltage_control_member!`): the attribute is
+associated with each member and one `voltage_control_associations` row carries the member's
+weight (PSS/E RMPCT / 100) and, for a VSC converter, its terminal. A bus with a single device
+gets no group. Runs after every device reader, so the members are complete.
+"""
+function read_voltage_control!(sys::OpenAPISystem, data::Dict; kwargs...)
+    reg = get_registry(sys)
+    by_bus = Dict{Int, Vector{VoltageControlMember}}()
+    for member in sys.voltage_control_members
+        push!(get!(by_bus, member.bus_number, VoltageControlMember[]), member)
+    end
+    for bus_number in sort!(collect(keys(by_bus)))
+        members = _sharing_members(by_bus[bus_number], bus_number)
+        length(members) >= 2 || continue
+        name = "bus$(bus_number)_reactive_power_sharing"
+        attribute = stage(PO.ReactivePowerSharing)
+        control_id = register!(reg, "ReactivePowerSharing", name)
+        set_value!(attribute, :id, control_id)
+        set_value!(attribute, :name, name)
+        add_supplemental_attribute!(sys, attribute, first(members).component_id)
+        for member in members[2:end]
+            add_supplemental_attribute_association!(
+                sys, attribute, member.component_id, member.component_type,
+            )
+        end
+        for member in members
+            add_voltage_control_association!(
+                sys, control_id, member.component_id, member.weight, member.terminal,
+            )
+        end
+    end
+    return
+end
+
+"""
 Assemble an `OpenAPISystem` from `pm_data`.
 
 Reader order is a dependency order: load zones before buses, buses before every reader
@@ -98,6 +153,7 @@ function build_openapi_system(
     read_switch_breaker!(sys, data; kwargs...)
     read_dc_branches!(sys, data; kwargs...)
     read_shunts!(sys, data; kwargs...)
+    read_voltage_control!(sys, data; kwargs...)
     read_attributes!(sys, data; kwargs...)
     apply_device_base_conversion!(sys)
 

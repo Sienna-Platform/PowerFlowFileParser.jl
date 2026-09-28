@@ -210,14 +210,32 @@ function _declared(s::Staged{T}, prop::Symbol) where {T}
             ),
         )
     end
-    try
-        return IC.declared_unit(T, Val(prop)), IC.declared_quantity(T, Val(prop))
-    catch e
-        (e isa ErrorException || e isa MethodError) || rethrow()
-    end
+    fixed = _type_level_units(T, prop)
+    isnothing(fixed) || return fixed
     _default_bases!(s)
     shadow = _shadow(s)
     return IC.declared_unit(shadow, Val(prop)), IC.declared_quantity(shadow, Val(prop))
+end
+
+# A discriminated property has no type-level unit: asking for one raises, and that answer
+# never changes for a (type, property) pair. It is remembered here rather than re-raised for
+# every component, since a large case stages millions of such fields and recording each
+# exception's backtrace dominates the build on some platforms.
+const _TYPE_LEVEL_UNITS = Dict{Tuple{DataType, Symbol}, Union{Nothing, Tuple{Any, Any}}}()
+
+"""
+`(unit, quantity)` of `T.prop` when its declared unit is fixed, resolvable from the type
+alone, or `nothing` when it depends on a discriminator only an instance carries.
+"""
+function _type_level_units(::Type{T}, prop::Symbol) where {T}
+    return get!(_TYPE_LEVEL_UNITS, (T, prop)) do
+        try
+            (IC.declared_unit(T, Val(prop)), IC.declared_quantity(T, Val(prop)))
+        catch e
+            (e isa ErrorException || e isa MethodError) || rethrow()
+            nothing
+        end
+    end
 end
 
 function _reject_declared(s::Staged{T}, prop::Symbol) where {T}
@@ -498,4 +516,21 @@ function get_value(o, prop::Symbol, unit::AbstractString)
     end
     return value * IC.conversion_factor(quantity, source) /
            IC.conversion_factor(quantity, unit)
+end
+
+"""
+Assign a field whose declared type keeps `Nothing` as a real schema value (not merely the
+optional-field placeholder every generated field also carries): `_concrete_field_type` strips
+both `Absent` and `Nothing` before computing the single concrete type `_coerce` builds, so
+`_coerce` cannot construct a bare `nothing` for a field whose schema spells an absent
+relationship as an explicit `null`, such as the remote regulated bus references. A
+non-`nothing` value still goes through the normal `set_value!` enforcement.
+"""
+function _set_nullable!(s::Staged, prop::Symbol, value)
+    if isnothing(value)
+        s.fields[prop] = nothing
+    else
+        set_value!(s, prop, value)
+    end
+    return
 end

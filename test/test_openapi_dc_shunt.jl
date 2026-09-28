@@ -9,6 +9,7 @@
     @test PFP.get_value(line, :parameter_units) == "NATURAL_UNITS"
     # The pm dict holds the impedances per-unit; the document carries ohms.
     @test PFP.get_value(line, :r) ≈ d["r"] * d["scheduled_dc_voltage"]^2 / 100.0
+    @test PFP.get_value(line, :compounding_resistance) == d["compounding_resistance"]
     @test PFP.get_value(line, :power_mode) == d["power_mode"]
     @test PFP.get_value(line, :transfer_setpoint) == d["transfer_setpoint"]
     @test PFP.get_value(line, :scheduled_dc_voltage) == d["scheduled_dc_voltage"]
@@ -131,7 +132,7 @@ end
     @test PFP.get_value(facts, :voltage_setpoint) == d["voltage_setpoint"]
     @test PFP.get_value(facts, :max_shunt_current) == d["max_shunt_current"]
     @test PFP.get_value(facts, :reactive_power_required) == 0.0
-    @test PFP.get_value(facts, :regulated_bus_number) == d["regulated_bus_number"]
+    @test isnothing(PFP.get_value(facts, :remote_regulated_bus_id))
 end
 
 @testset "_facts_control_mode rejects a code outside the current 0-2 enum domain" begin

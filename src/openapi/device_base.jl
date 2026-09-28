@@ -111,6 +111,18 @@ const _DEVICEBASE_INSTANCE_DISPATCHED = Dict{Tuple{String, Symbol}, Symbol}(
     ("TwoWindingTransformer", :magnetizing_shunt) => :skip,
     ("ThreeWindingTransformer", :magnetizing_shunt) => :skip,
     ("FACTSControlDevice", :voltage_setpoint) => :skip,
+    # voltage_setpoint_units is always "COMPONENT_BASE" (generation.jl): per unit on the
+    # regulated bus base voltage, a voltage rather than a power, identical in both document
+    # conventions.
+    ("ThermalStandard", :voltage_setpoint) => :skip,
+    ("ThermalMultiStart", :voltage_setpoint) => :skip,
+    ("HydroDispatch", :voltage_setpoint) => :skip,
+    ("HydroTurbine", :voltage_setpoint) => :skip,
+    ("HydroPumpTurbine", :voltage_setpoint) => :skip,
+    ("RenewableDispatch", :voltage_setpoint) => :skip,
+    ("EnergyReservoirStorage", :voltage_setpoint) => :skip,
+    ("SynchronousCondenser", :voltage_setpoint) => :skip,
+    ("Source", :voltage_setpoint) => :skip,
     # control_objective governs both of TransformerCircuit's own control fields.
     # `control_limits` resolves to Dimensionless ("1") or Angle ("rad") on EVERY
     # control_objective branch (checked against every enum value in the schema, not just
@@ -182,15 +194,8 @@ depending on a runtime discriminator field only the instance-level method reads.
 Type-level method (every power-family field: its unit now depends on the component's own
 `power_units`) raises `MethodError` rather than the schema's own `ErrorException`; both mean
 "not fixed" here."""
-function _has_fixed_declared_unit(::Type{T}, prop::Symbol) where {T}
-    try
-        IC.declared_unit(T, Val(prop))
-        return true
-    catch e
-        (e isa ErrorException || e isa MethodError) || rethrow()
-        return false
-    end
-end
+_has_fixed_declared_unit(::Type{T}, prop::Symbol) where {T} =
+    !isnothing(_type_level_units(T, prop))
 
 """
 Classification for a `key.prop` whose Type-level declared unit is NOT fixed (an
