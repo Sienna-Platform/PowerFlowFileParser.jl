@@ -1,21 +1,7 @@
-# PowerModels' PIECEWISE_LINEAR / POLYNOMIAL cost
-# models already describe a $/hr curve directly (MATPOWER Table B-4), so unlike PTDP's
-# table-driven cost.jl there is no fuel-price/heat-rate separation here: a MATPOWER-shaped
-# generator cost becomes a `CostCurve`, never a `FuelCurve`.
-#
-# The schema also gained a level of oneOf wrapping since this file was last written:
-# `ThermalGenerationCost`/`HydroGenerationCost.variable_operation_cost` is now
-# `ProductionVariableCostCurve` (`Union{CostCurve, FuelCurve}`), and
-# `ThermalGenerationCost`/`StorageCost.start_up` is now `ThermalGenerationCostStartUp`/
-# `StorageCostStartUp` (`Union{Float64, StartUpStages}`/`Union{Float64,
-# StorageCostStartUp2}`) — both plain one-field oneOf wrappers with an auto-generated
-# single-arg constructor, so a bare `CostCurve`/`Float64` needs an explicit `T(value)`
-# wrap here (this file builds these with a literal kwarg call, not through
-# `units.jl`'s `set_value!`, whose `_coerce` would otherwise do this automatically).
-# `RenewableGenerationCost`/`LoadCost.variable_operation_cost` stayed plain `CostCurve` —
-# not every owner picked up the wrapper, so check each type rather than assuming.
-# `CostCurve` itself also gained a `variable_cost_type` discriminator ("COST"), the
-# `ProductionVariableCostCurve` counterpart to `FuelCurve`'s own "FUEL".
+# MATPOWER cost models (manual Table B-4) are $/h curves, so a generator cost becomes a
+# `CostCurve`, never a `FuelCurve`. Every cost curve is in natural units: MW on x, $/h on y.
+# Values of oneOf fields (`ProductionVariableCostCurve`, `*CostStartUp`) are wrapped by hand:
+# these kwarg constructors bypass `set_value!`'s coercion.
 
 """The schema's declared `vom_cost` default for `CostCurve`/`FuelCurve`: a zero
 linear input-output curve (Core/common.json defs.CostCurve.properties.vom_cost.default).
@@ -56,15 +42,15 @@ function _zero_cost_curve()
 end
 
 """
-Piecewise-linear cost from MATPOWER's alternating (MW, \$/hr) pairs (cost model `1`).
+Piecewise-linear cost from the pm dict's alternating (x, \$/h) pairs (cost model `1`), with
+x per-unit on `sys_mbase` (`_make_per_unit!`); the points are emitted in MW.
 
 Ported from PSCB's PIECEWISE_LINEAR branch: the fixed cost is the y-intercept of the
 first segment's slope, and the variable cost is the same points shifted down by that
-fixed cost — PSCB's own comment expects a future update to fold the two together
-instead of separating them here.
+fixed cost.
 """
-function _piecewise_linear_cost(cost_component::Vector{Float64})
-    power_p = [c for (ix, c) in enumerate(cost_component) if isodd(ix)]
+function _piecewise_linear_cost(cost_component::Vector{Float64}, sys_mbase::Float64)
+    power_p = [c * sys_mbase for (ix, c) in enumerate(cost_component) if isodd(ix)]
     cost_p = [c for (ix, c) in enumerate(cost_component) if iseven(ix)]
     points = collect(zip(power_p, cost_p))
     (first_x, first_y), (second_x, second_y) = points[1], points[2]
@@ -78,9 +64,8 @@ end
 """
 Polynomial cost from MATPOWER's coefficients, highest degree first (cost model `2`).
 
-Ported from PSCB's POLYNOMIAL branch: coefficients divide by `sys_mbase^i` (`i` counted
-from the lowest degree up), undoing PowerModels' own per-unit correction back onto a
-device-base representation — exact when `mbase == sys_mbase`, PSCB's implicit assumption.
+`_make_per_unit!` multiplied the degree-`i` coefficient by `sys_mbase^i`; dividing it back
+gives \$/h against MW. `make_thermal_cost` carries the constant term as the fixed cost.
 Only linear and quadratic polynomials are supported; anything higher throws, matching
 PSCB.
 """
@@ -128,7 +113,7 @@ function make_thermal_cost(gen_name::AbstractString, pm_gen::Dict, sys_mbase::Fl
     cost_component = Float64.(pm_gen["cost"])
     model = pm_gen["model"]
     if model == 1
-        function_data, fixed = _piecewise_linear_cost(cost_component)
+        function_data, fixed = _piecewise_linear_cost(cost_component, sys_mbase)
     elseif model == 2
         function_data = _polynomial_cost(gen_name, cost_component, sys_mbase)
         fixed = pm_gen["ncost"] >= 1 ? last(cost_component) : 0.0
