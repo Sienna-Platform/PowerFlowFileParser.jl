@@ -526,12 +526,14 @@ function _psse2pm_generator!(pm_data::Dict, pti_data::Dict, import_all::Bool, nb
                 error("Unsupported PSS(R)E source version: $(pm_data["source_version"])")
             end
 
-            # Default Cost functions
+            # PSS/E carries no cost data. PowerModels consumers expect one, so this is
+            # PowerModels' own placeholder; `cost_placeholder` keeps emitters from using it.
             sub_data["model"] = 2
             sub_data["startup"] = 0.0
             sub_data["shutdown"] = 0.0
             sub_data["ncost"] = 2
             sub_data["cost"] = [1.0, 0.0]
+            sub_data["cost_placeholder"] = true
 
             sub_data["source_id"] = ["generator", string(bus_number), gen_id]
             sub_data["index"] = ix

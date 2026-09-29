@@ -127,27 +127,19 @@ end
     end
 end
 
-@testset "every 14-bus generator's real POLYNOMIAL cost (model=2) matches the hand-derived coefficients" begin
-    # Every gen has cost=[100.0, 0.0], ncost=2, mbase == sys_mbase == 100: PowerModels'
-    # own per-unit correction scaled the synthetic PSS/E default (proportional_term=1.0,
-    # constant_term=0.0) by mva_base, and PSCB's `/ sys_mbase^i` undoes exactly that.
-    sys = PFP.build_openapi_system(fourteen_bus_pm_data())
-    for gen in PFP.get_components(sys, "ThermalStandard")
-        # `set_value!` routes `operation_cost` through OpenAPI.jl's oneOf `setproperty!`,
-        # which wraps the assigned `PC.ThermalGenerationCost` in a
-        # `ThermalStandardOperationCost(value = ...)` — unwrap with `.value`, matching
-        # PowerTableDataParser's own test convention.
-        cost = PFP.get_value(gen, :operation_cost).value
-        @test cost.fixed == 0.0
-        @test cost.start_up.value == 0.0
-        @test cost.shut_down == 0.0
-        # variable_operation_cost is a `ProductionVariableCostCurve` oneOf wrapper
-        # (`Union{CostCurve, FuelCurve}`) now, one `.value` deep from the CostCurve itself.
-        variable = cost.variable_operation_cost.value
-        function_data = variable.value_curve.value.function_data.value
-        @test function_data.quadratic_term == 0.0
-        @test function_data.proportional_term == 1.0
-        @test function_data.constant_term == 0.0
+@testset "PSS/E generators get the zero cost, not the reader's placeholder" begin
+    pm = fourteen_bus_pm_data()
+    gens = collect(values(pm.data["gen"]))
+    @test all(g -> g["cost_placeholder"] && haskey(g, "cost"), gens)
+    # PowerModels-style consumers still see a cost model.
+    @test PFP.calc_gen_cost(pm.data) isa Float64
+    sys = PFP.build_openapi_system(pm)
+    thermals = PFP.get_components(sys, "ThermalStandard")
+    @test !isempty(thermals)
+    zero_cost = PFP.IC.encode(PFP._zero_thermal_cost())
+    for gen in thermals
+        # `.value` unwraps the `ThermalStandardOperationCost` oneOf `set_value!` builds.
+        @test PFP.IC.encode(PFP.get_value(gen, :operation_cost).value) == zero_cost
     end
 end
 

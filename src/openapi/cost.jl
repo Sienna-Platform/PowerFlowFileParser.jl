@@ -93,22 +93,29 @@ function _polynomial_cost(gen_name::AbstractString, cost_component::Vector{Float
     )
 end
 
+_zero_thermal_cost() =
+    PC.ThermalGenerationCost(;
+        cost_type = "THERMAL",
+        variable_operation_cost = PC.ProductionVariableCostCurve(_zero_cost_curve()),
+        fixed = 0.0,
+        start_up = PC.ThermalGenerationCostStartUp(0.0),
+        shut_down = 0.0,
+    )
+
 """
 Thermal generation cost from a MATPOWER-shaped `pm_gen`'s `"model"`/`"cost"` fields.
 
 Model `1` is PIECEWISE_LINEAR, `2` is POLYNOMIAL (MATPOWER manual Table B-4). A generator
-carrying neither key gets a zero cost curve, matching PSCB's own fallback (and its warning).
+carrying neither key gets a zero cost, matching PSCB's own fallback (and its warning), and
+so does the PSS/E reader's `cost_placeholder`, silently since PSS/E never has costs.
 """
 function make_thermal_cost(gen_name::AbstractString, pm_gen::Dict, sys_mbase::Float64)
+    if get(pm_gen, "cost_placeholder", false)
+        return _zero_thermal_cost()
+    end
     if !haskey(pm_gen, "model")
         @warn "Generator cost data not included for Generator: $gen_name"
-        return PC.ThermalGenerationCost(;
-            cost_type = "THERMAL",
-            variable_operation_cost = PC.ProductionVariableCostCurve(_zero_cost_curve()),
-            fixed = 0.0,
-            start_up = PC.ThermalGenerationCostStartUp(0.0),
-            shut_down = 0.0,
-        )
+        return _zero_thermal_cost()
     end
     cost_component = Float64.(pm_gen["cost"])
     model = pm_gen["model"]
