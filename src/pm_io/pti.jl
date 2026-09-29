@@ -2001,6 +2001,26 @@ function _parse_line_element!(
             @debug "The following fields in $section are missing: $missing_str"
         end
     end
+    _record_control_band_presence!(data, section, dtypes)
+end
+
+# A transformer winding line carries its control bands as RMI/RMA (actuator) and VMI/VMA
+# (target). `_populate_defaults!` later replaces every "" with the PSS(R)E default, after
+# which a band the file omitted is indistinguishable from one it stated. That distinction
+# decides whether a consumer may write the band at all: under a non-voltage COD the default
+# 0.9-1.1 is a voltage band and must not be recorded as MVAr or MW. So presence is captured
+# here, while "" still means absent, as `RM_PRESENT<k>`/`VM_PRESENT<k>` per winding.
+const _CONTROL_BAND_FLAGS = (("RM_PRESENT", "RMI", "RMA"), ("VM_PRESENT", "VMI", "VMA"))
+
+function _record_control_band_presence!(data::Dict, section::AbstractString, dtypes::Dict)
+    startswith(section, "TRANSFORMER ") || return
+    names = Set(first(entry) for entry in dtypes[section])
+    for k in 1:3, (flag, lo, hi) in _CONTROL_BAND_FLAGS
+        lo_k, hi_k = "$lo$k", "$hi$k"
+        (lo_k in names && hi_k in names) || continue
+        data["$flag$k"] = data[lo_k] != "" && data[hi_k] != ""
+    end
+    return
 end
 
 const _comment_split = r"(?!\B[\'][^\']*)[\/](?![^\']*[\']\B)"
