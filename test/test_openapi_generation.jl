@@ -144,7 +144,6 @@ end
         # variable_operation_cost is a `ProductionVariableCostCurve` oneOf wrapper
         # (`Union{CostCurve, FuelCurve}`) now, one `.value` deep from the CostCurve itself.
         variable = cost.variable_operation_cost.value
-        @test variable.power_units.value == "COMPONENT_BASE"
         function_data = variable.value_curve.value.function_data.value
         @test function_data.quadratic_term == 0.0
         @test function_data.proportional_term == 1.0
@@ -217,7 +216,6 @@ end
     # variable_operation_cost is a `ProductionVariableCostCurve` oneOf wrapper
     # (`Union{CostCurve, FuelCurve}`) now, one `.value` deep from the CostCurve itself.
     cost_curve = cost.variable_operation_cost.value
-    @test cost_curve.power_units.value == "NATURAL_UNITS"
     fd = cost_curve.value_curve.value.function_data.value
     @test fd.function_type == "LINEAR"
     @test fd.proportional_term == 0.0

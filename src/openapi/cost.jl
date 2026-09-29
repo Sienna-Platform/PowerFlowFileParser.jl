@@ -34,12 +34,10 @@ function _zero_vom_cost()
     )
 end
 
-"""A `CostCurve` with a zero linear value curve, matching PSCB's `zero(CostCurve)`
-(`NaturalUnit`, not `ComponentBaseUnit`) — the fallback for every generator/load type that
-has no cost data to read from a PowerModels dict."""
+"""A `CostCurve` with a zero linear value curve, matching PSCB's `zero(CostCurve)`: the
+fallback for every generator/load type that has no cost data to read from a PowerModels dict."""
 function _zero_cost_curve()
     return PC.CostCurve(;
-        power_units = IC.UnitSystem("NATURAL_UNITS"),
         variable_cost_type = "COST",
         value_curve = PC.ValueCurve(
             PC.InputOutputCurve(;
@@ -114,9 +112,7 @@ end
 Thermal generation cost from a MATPOWER-shaped `pm_gen`'s `"model"`/`"cost"` fields.
 
 Model `1` is PIECEWISE_LINEAR, `2` is POLYNOMIAL (MATPOWER manual Table B-4). A generator
-carrying neither key gets a zero natural-unit cost curve, matching PSCB's own fallback
-(and its warning). The resulting variable cost is `COMPONENT_BASE` per-unit — PSCB's
-`CostCurve(_, IS.CU)` — never natural units, unlike the zero-cost fallback.
+carrying neither key gets a zero cost curve, matching PSCB's own fallback (and its warning).
 """
 function make_thermal_cost(gen_name::AbstractString, pm_gen::Dict, sys_mbase::Float64)
     if !haskey(pm_gen, "model")
@@ -143,7 +139,6 @@ function make_thermal_cost(gen_name::AbstractString, pm_gen::Dict, sys_mbase::Fl
         cost_type = "THERMAL",
         variable_operation_cost = PC.ProductionVariableCostCurve(
             PC.CostCurve(;
-                power_units = IC.UnitSystem("COMPONENT_BASE"),
                 variable_cost_type = "COST",
                 value_curve = PC.ValueCurve(
                     PC.InputOutputCurve(;
