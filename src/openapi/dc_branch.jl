@@ -14,8 +14,7 @@
 
 """A linear `LossCurve` with fixed `"NATURAL_UNITS"` power units, shared by every
 converter/two-terminal loss curve site: loss values arrive unscaled regardless of the
-run's own `power_units` convention (see this file's header), the same fixed-natural
-pattern `cost.jl`'s `_zero_cost_curve` uses."""
+run's own `power_units` convention (see this file's header)."""
 function _loss_curve(proportional_term::Float64, constant_term::Float64)
     return PC.LossCurve(;
         power_units = IC.UnitSystem("NATURAL_UNITS"),

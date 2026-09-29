@@ -220,7 +220,7 @@ end
     end
 end
 
-@testset "no \"model\" key gives a zero natural-unit cost (PSCB's own fallback)" begin
+@testset "no \"model\" key gives a zero cost (PSCB's own fallback)" begin
     d = Dict{String, Any}(
         "mbase" => 100.0, "gen_status" => true, "pg" => 2.0, "qg" => -0.5,
         "pmax" => 99.99, "pmin" => -99.99, "qmax" => 99.99, "qmin" => -99.99,

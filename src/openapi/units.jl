@@ -112,8 +112,8 @@ end
 Recursive fallback: a required compound "shape" type (`MinMax`, `UpDown`, `FromTo`, ...) is
 plain numbers with no validation, so a zeroed instance is always constructible. A field
 named for one of the [`_DEFAULT_BASIS`](@ref) discriminators (`power_units`, ...) uses that
-same default, whatever struct it turns up nested in — a oneOf variant's own basis field
-(`CostCurve.power_units`, say) is exactly as placeholder-able as the top-level one
+same default, whatever struct it turns up nested in: a nested struct's own basis field
+(`LossCurve.power_units`, say) is exactly as placeholder-able as the top-level one
 `_default_bases!` defaults. A required field with no such shape and no case above (an enum
 wrapper outside that known set) means a caller staged a discriminated numeric field before
 the enum field its shadow needs — a genuine ordering bug, so this fails loudly rather than
