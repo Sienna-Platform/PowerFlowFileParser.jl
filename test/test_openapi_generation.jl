@@ -144,7 +144,7 @@ end
         # variable_operation_cost is a `ProductionVariableCostCurve` oneOf wrapper
         # (`Union{CostCurve, FuelCurve}`) now, one `.value` deep from the CostCurve itself.
         variable = cost.variable_operation_cost.value
-        @test variable.power_units.value == "COMPONENT_BASE"
+        @test variable.power_units.value == "NATURAL_UNITS"
         function_data = variable.value_curve.value.function_data.value
         @test function_data.quadratic_term == 0.0
         @test function_data.proportional_term == 1.0
@@ -172,10 +172,41 @@ end
     end
 end
 
+@testset "MATPOWER costs are the gencost values in \$/h against MW" begin
+    pm = PFP.PowerModelsData(joinpath(@__DIR__, "fixtures", "matpower_cost_units.m"))
+    # Costs are natural in either document convention, so both give the same curves.
+    for power_units in PFP.UNIT_SYSTEMS
+        sys = PFP.build_openapi_system(pm; power_units = power_units)
+        costs = Dict(
+            PFP.get_value(gen, :name) => PFP.get_value(gen, :operation_cost).value for
+            gen in PFP.get_components(sys, "ThermalStandard")
+        )
+        # gencost: 2 1500 0 3  0.02 16 200
+        quadratic = costs["gen-1"]
+        curve = quadratic.variable_operation_cost.value
+        @test curve.power_units.value == "NATURAL_UNITS"
+        fd = curve.value_curve.value.function_data.value
+        @test fd.quadratic_term ≈ 0.02
+        @test fd.proportional_term ≈ 16.0
+        @test fd.constant_term == 0.0
+        @test quadratic.fixed ≈ 200.0
+        @test quadratic.start_up.value == 1500.0
+        # gencost: 1 0 0 3  10 300  40 900  60 1600; the first segment meets x = 0 at 100.
+        piecewise = costs["gen-2"]
+        curve = piecewise.variable_operation_cost.value
+        @test curve.power_units.value == "NATURAL_UNITS"
+        fd = curve.value_curve.value.function_data.value
+        @test piecewise.fixed ≈ 100.0
+        @test [p.x for p in fd.points] ≈ [10.0, 40.0, 60.0]
+        @test [p.y for p in fd.points] ≈ [300.0, 900.0, 1600.0] .- 100.0
+    end
+end
+
 @testset "a real PIECEWISE_LINEAR cost (model=1, case5_pwlc.m) shifts points by the fixed cost" begin
     pm = PFP.PowerModelsData(joinpath(MATPOWER_DIR, "case5_pwlc.m"))
     sys = PFP.build_openapi_system(pm)
     data = pm.data
+    sys_mbase = data["baseMVA"]
     for gen in PFP.get_components(sys, "ThermalStandard")
         d = only(
             v for v in values(data["gen"]) if
@@ -194,8 +225,9 @@ end
         fd = cost.variable_operation_cost.value.value_curve.value.function_data.value
         @test fd.function_type == "PIECEWISE_LINEAR"
         @test length(fd.points) == length(points)
+        # The pm dict holds x per-unit on the system base; the document carries MW.
         for (p, (x, y)) in zip(fd.points, points)
-            @test p.x ≈ x
+            @test p.x ≈ x * sys_mbase
             @test p.y ≈ y - fixed
         end
     end
