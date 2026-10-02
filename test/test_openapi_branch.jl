@@ -239,6 +239,21 @@ end
     @test length(PFP.get_components(sys, "Line")) == 5
 end
 
+@testset "matpower: a pure phase shifter (tap=0, shift!=0) builds a TwoWindingTransformer" begin
+    pm = PFP.PowerModelsData(joinpath(@__DIR__, "fixtures", "case5_pure_pst.m"))
+    d = only(b for b in values(pm.data["branch"]) if b["f_bus"] == 2 && b["t_bus"] == 3)
+    @test !d["transformer"] && d["tap"] == 1.0
+    @test d["b_fr"] == d["b_to"] == 0.01852 / 2
+    sys = PFP.build_openapi_system(pm)
+    circuit = _transformer_circuit_between(sys, 2, 3)
+    @test PFP.get_value(circuit, :tap) == 1.0
+    @test PFP.get_value(circuit, :alpha) ≈ deg2rad(5.0)
+    @test PFP.get_value(circuit, :base_voltage_primary) == 230.0
+    @test PFP.get_value(circuit, :base_voltage_secondary) == 230.0
+    @test length(PFP.get_components(sys, "TwoWindingTransformer")) == 3
+    @test length(PFP.get_components(sys, "Line")) == 4
+end
+
 @testset "zero-impedance branch becomes a DiscreteControlledACBranch of type SWITCH" begin
     data = fourteen_bus_pm_data().data
     d = first(values(data["branch"]))

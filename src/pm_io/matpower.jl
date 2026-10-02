@@ -237,7 +237,8 @@ function _parse_matpower_string(data_string::String)
             gen_data = row_to_typed_dict(gen_row, _mp_gen_columns)
             bus_data = get(pv_bus_lookup, gen_data["gen_bus"], nothing)
             if bus_data !== nothing
-                if bus_data["bus_type"] ∈ MP_FIX_VOLTAGE_BUSES &&
+                if gen_data["gen_status"] != 0 &&
+                   bus_data["bus_type"] ∈ MP_FIX_VOLTAGE_BUSES &&
                    bus_data["vm"] != gen_data["vg"]
                     @info "Correcting vm in bus $(gen_data["gen_bus"]) to $(gen_data["vg"]) to match generator set-point"
                     if gen_data["gen_bus"] ∈ keys(corrected_pv_bus_vm)
@@ -496,7 +497,10 @@ function _matpower_to_powermodels!(mp_data::Dict{String, <:Any})
         bus_ind => bus_data["base_kv"] for (bus_ind, bus_data) in pm_data["bus"]
     )
     for transf in values(pm_data["branch"])
-        if transf["transformer"] == true && !haskey(transf, "base_voltage_from")
+        # A pure phase shifter (tap 0, shift != 0) stays transformer=false but builds as a
+        # transformer downstream, so it needs base voltages too.
+        is_transformer = transf["transformer"] || !iszero(transf["shift"])
+        if is_transformer && !haskey(transf, "base_voltage_from")
             transf["base_voltage_from"] = base_voltages[transf["f_bus"]]
             transf["base_voltage_to"] = base_voltages[transf["t_bus"]]
         end

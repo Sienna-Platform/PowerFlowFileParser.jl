@@ -90,3 +90,27 @@ end
         test_parse(path)
     end
 end
+
+@testset "Out-of-service generator does not set the PV bus voltage" begin
+    case = """
+    function mpc = case_off_gen_vg
+    mpc.version = '2';
+    mpc.baseMVA = 100;
+    mpc.bus = [
+        1   3   0   0   0   0   1   1.0    0   230   1   1.1   0.9;
+        2   2   0   0   0   0   1   1.0    0   230   1   1.1   0.9;
+        3   1   50  10  0   0   1   1.0    0   230   1   1.1   0.9;
+    ];
+    mpc.gen = [
+        1   0    0   100  -100  1.00  100  1   200  0   0   0   0   0   0   0   0   0   0   0   0;
+        2   0    0   100  -100  1.10  100  0   200  0   0   0   0   0   0   0   0   0   0   0   0;
+        2   40   0   100  -100  1.02  100  1   200  0   0   0   0   0   0   0   0   0   0   0   0;
+    ];
+    mpc.branch = [
+        1   2   0.01   0.1   0   100   100   100   0   0   1   -360   360;
+        2   3   0.01   0.1   0   100   100   100   0   0   1   -360   360;
+    ];
+    """
+    pm_dict = parse_file(IOBuffer(case); filetype = "m")
+    @test pm_dict["bus"][2]["vm"] == 1.02
+end
