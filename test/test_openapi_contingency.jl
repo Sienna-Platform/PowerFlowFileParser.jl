@@ -155,6 +155,47 @@ end
     )
 end
 
+@testset "a bus outage emits DC line and FACTS device rows with their component types" begin
+    pm = oc_pm(oc_block("DC", "OPEN BUS 111"), oc_block("FX", "OPEN BUS 108"))
+    @test [
+        e["action"] for e in pm["contingency"]["DC"]["elements"] if
+        e["section"] == "dcline"
+    ] == ["open_dc_line"]
+    @test [
+        e["action"] for e in pm["contingency"]["FX"]["elements"] if
+        e["section"] == "facts"
+    ] == ["remove_facts"]
+    sys = oc_build(pm)
+    reg = PFP.get_registry(sys)
+    outages = oc_outages(sys)
+    for (label, section, type) in
+        (("DC", "dcline", "TwoTerminalLCCLine"), ("FX", "facts", "FACTSControlDevice"))
+        id = PFP.get_source_id(reg, section, "1")
+        rows = [
+            r for r in oc_rows(sys, outages[label]) if
+            PFP.get_value(r, :component_id) == id
+        ]
+        @test length(rows) == 1
+        @test PFP.get_value(only(rows), :component_type) == type
+    end
+end
+
+@testset "a bus outage emits a VSC line row as TwoTerminalVSCLine" begin
+    raw = joinpath(@__DIR__, "fixtures", "synthetic_v35_vsc_line.raw")
+    con = tempname() * ".con"
+    write(con, oc_block("VSC", "OPEN BUS 3") * "END\n")
+    pm = oc_quiet(() -> PFP.PowerModelsData(raw; con_files = [con]).data)
+    @test ("vscline", "1") in
+          [(e["section"], e["key"]) for e in pm["contingency"]["VSC"]["elements"]]
+    sys = oc_build(pm)
+    id = PFP.get_source_id(PFP.get_registry(sys), "vscline", "1")
+    rows = [
+        r for r in oc_rows(sys, oc_outages(sys)["VSC"]) if
+        PFP.get_value(r, :component_id) == id
+    ]
+    @test PFP.get_value(only(rows), :component_type) == "TwoTerminalVSCLine"
+end
+
 @testset "a contingency with no emittable element warns once and creates no outage" begin
     pm = oc_pm(OC_MIXED)
     logger = Test.TestLogger(; min_level = Logging.Warn)
@@ -306,12 +347,12 @@ end
         section_count(section) = count(e -> e["section"] == section, elements)
         emitted = filter(c -> any(PFP._is_emittable_element, c["elements"]),
             collect(values(contingencies)))
-        @test section_count("switch") == 16_285
-        @test section_count("breaker") == 4_946
+        @test section_count("switch") == 16_329
+        @test section_count("breaker") == 4_947
         @test section_count("generic_connector") == 25
-        @test length(elements) == 123_119
+        @test length(elements) == 123_266
         @test length(emittable) == length(elements)
-        @test length(emitted) == 36_158
+        @test length(emitted) == 36_190
         @test length(contingencies) == length(emitted)
 
         build_time = @elapsed sys = oc_build(pm)
@@ -330,7 +371,13 @@ end
         @test length(rows) == length(emittable)
         @test count(
             PFP.get_value(r, :component_type) == "DiscreteControlledACBranch" for r in rows
-        ) == 16_285 + 4_946 + 25
+        ) == 16_329 + 4_947 + 25
+        @test count(
+            PFP.get_value(r, :component_type) == "TwoTerminalLCCLine" for r in rows
+        ) == section_count("dcline")
+        @test count(
+            PFP.get_value(r, :component_type) == "FACTSControlDevice" for r in rows
+        ) == section_count("facts")
         @test count("\"identifier\"", text) == length(emitted)
         rm(path)
     end

@@ -5,8 +5,9 @@
 
 """The (action, pm section) pairs that map to a component that the schemas can outage. Switching
 devices (sections switch/breaker/generic_connector) are DiscreteControlledACBranch
-components, and the emitter treats them like branches. Bus disconnects arrive already
-expanded into these pairs."""
+components, and the emitter treats them like branches. The pairs for DC lines, VSC lines and
+FACTS devices map to their own component types. Bus disconnects arrive already expanded into
+these pairs."""
 const _EMITTABLE_CONTINGENCY_ELEMENTS = Set([
     ("open_branch", "branch"),
     ("open_branch", "switch"),
@@ -17,6 +18,9 @@ const _EMITTABLE_CONTINGENCY_ELEMENTS = Set([
     ("remove_load", "load"),
     ("remove_shunt", "shunt"),
     ("remove_switched_shunt", "switched_shunt"),
+    ("open_dc_line", "dcline"),
+    ("open_dc_line", "vscline"),
+    ("remove_facts", "facts"),
 ])
 
 function _is_emittable_element(element::Dict)

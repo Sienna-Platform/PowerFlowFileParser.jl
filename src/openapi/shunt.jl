@@ -235,6 +235,7 @@ function read_shunts!(sys::OpenAPISystem, data::Dict; kwargs...)
         full_name = "$(bus_number)_$(name)"
         bus_id = get_bus_id(reg, bus_number)
         make_facts!(sys, reg, full_name, d, bus_id)
+        record_source!(reg, "facts", d_key)
     end
     return
 end

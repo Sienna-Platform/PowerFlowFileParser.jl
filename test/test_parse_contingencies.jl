@@ -711,13 +711,25 @@ end
         @test ("branch", "21") in targets(pm, "t")
     end
 
-    @testset "DC line, VSC line and FACTS device skip the block" begin
+    @testset "DC line, VSC line and FACTS device are attached elements" begin
         pm = fresh_pm()
         key(n) = only(k for (k, e) in pm["bus"] if e["source_id"][2] == string(n))
-        pm["dcline"]["90"] = Dict{String, Any}("f_bus" => key(200), "t_bus" => key(201))
-        pm["vscline"]["91"] = Dict{String, Any}("f_bus" => key(301), "t_bus" => key(401))
-        pm["facts"]["92"] = Dict{String, Any}("bus" => key(501), "tbus" => key(601))
-        pm["facts"]["93"] = Dict{String, Any}("bus" => key(103), "tbus" => 0)
+        pm["dcline"]["90"] = Dict{String, Any}(
+            "source_id" => ["dcline", 90],
+            "f_bus" => key(200), "t_bus" => key(201), "br_status" => true,
+        )
+        pm["vscline"]["91"] = Dict{String, Any}(
+            "source_id" => ["vscline", 91],
+            "f_bus" => key(301), "t_bus" => key(401), "br_status" => 1,
+        )
+        pm["facts"]["92"] = Dict{String, Any}(
+            "source_id" => ["facts", 92],
+            "bus" => key(501), "tbus" => key(601), "available" => true,
+        )
+        pm["facts"]["93"] = Dict{String, Any}(
+            "source_id" => ["facts", 93],
+            "bus" => key(103), "tbus" => 0, "available" => true,
+        )
         add_con!(
             pm,
             con_file(
@@ -725,16 +737,67 @@ end
                 block("vsc", "OPEN BUS 301"),
                 block("facts", "OPEN BUS 601"),
                 block("shunt", "OPEN BUS 103"),
+                block("both", "OPEN BUS 200", "OPEN BUS 201"),
                 block("ok", "OPEN BUS 105"),
             ),
         )
-        @test collect(keys(pm["contingency"])) == ["ok"]
-        @test all(
-            r -> occursin("a DC line or FACTS device attached", r),
-            skip_reasons(pm),
+        @test isempty(pm["contingency_skipped"])
+        @test ("dcline", "90") in targets(pm, "dc")
+        @test ("vscline", "91") in targets(pm, "vsc")
+        @test ("facts", "92") in targets(pm, "facts")
+        @test ("facts", "93") in targets(pm, "shunt")
+        @test count(==(("dcline", "90")), targets(pm, "both")) == 1
+        device(id, section) =
+            only(e for e in elements_of(pm, id) if e["section"] == section)
+        @test device("dc", "dcline")["action"] == "open_dc_line"
+        @test device("vsc", "vscline")["action"] == "open_dc_line"
+        @test device("facts", "facts")["action"] == "remove_facts"
+        @test device("facts", "facts")["via_bus"] == 601
+        @test device("dc", "dcline")["in_service"]
+    end
+
+    @testset "out-of-service DC line, VSC line and FACTS device are excluded" begin
+        pm = fresh_pm()
+        key(n) = only(k for (k, e) in pm["bus"] if e["source_id"][2] == string(n))
+        pm["dcline"]["90"] = Dict{String, Any}(
+            "source_id" => ["dcline", 90],
+            "f_bus" => key(200), "t_bus" => key(201), "br_status" => false,
         )
-        @test [s["label"] for s in pm["contingency_skipped"]] ==
-              ["dc", "vsc", "facts", "shunt"]
+        pm["vscline"]["91"] = Dict{String, Any}(
+            "source_id" => ["vscline", 91],
+            "f_bus" => key(301), "t_bus" => key(401), "br_status" => 0,
+        )
+        pm["facts"]["92"] = Dict{String, Any}(
+            "source_id" => ["facts", 92],
+            "bus" => key(501), "tbus" => 0, "available" => false,
+        )
+        add_con!(
+            pm,
+            con_file(
+                block("dc", "OPEN BUS 201"),
+                block("vsc", "OPEN BUS 301"),
+                block("facts", "OPEN BUS 501"),
+            ),
+        )
+        @test isempty(pm["contingency_skipped"])
+        for id in ("dc", "vsc", "facts")
+            @test !any(
+                t -> t[1] in ("dcline", "vscline", "facts"),
+                targets(pm, id),
+            )
+        end
+    end
+
+    @testset "a three-winding transformer bus with a DC line still skips" begin
+        pm = fresh_pm()
+        key(n) = only(k for (k, e) in pm["bus"] if e["source_id"][2] == string(n))
+        pm["dcline"]["90"] = Dict{String, Any}(
+            "source_id" => ["dcline", 90],
+            "f_bus" => key(104), "t_bus" => key(201), "br_status" => true,
+        )
+        add_con!(pm, con_file(block("t", "OPEN BUS 104")))
+        @test isempty(pm["contingency"])
+        @test occursin("a three-winding transformer attached", only(skip_reasons(pm)))
     end
 
     @testset "a bus with nothing in service attached is skipped" begin
@@ -886,12 +949,11 @@ end
         contingencies = pm["contingency"]
         skipped = pm["contingency_skipped"]
         @test length(contingencies) + length(skipped) == blocks
-        @test length(contingencies) == 36_158
-        @test length(skipped) == 632
+        @test length(contingencies) == 36_190
+        @test length(skipped) == 600
         reason_count(f) = count(s -> f(s["reason"]), skipped)
         @test reason_count(r -> occursin("has a three-winding transformer attached", r)) ==
               581
-        @test reason_count(r -> occursin("has a DC line or FACTS device attached", r)) == 32
         @test reason_count(r -> occursin("has no in-service attached element", r)) == 13
         @test reason_count(r -> startswith(r, "CLOSE BRANCH target")) == 6
         @test length(pm["multisection_line"]) == 27
@@ -901,18 +963,20 @@ end
             by_action[e["action"]] = get(by_action, e["action"], 0) + 1
         end
         @test by_action == Dict(
-            "open_branch" => 100_012,
+            "open_branch" => 100_102,
             "open_3w_transformer" => 3_229,
-            "remove_unit" => 1_837,
-            "remove_load" => 11_466,
+            "remove_unit" => 1_841,
+            "remove_load" => 11_467,
             "remove_shunt" => 380,
-            "remove_switched_shunt" => 6_195,
+            "remove_switched_shunt" => 6_218,
+            "open_dc_line" => 14,
+            "remove_facts" => 15,
         )
         @test !haskey(by_action, "open_bus")
         @test count(
             e -> haskey(e, "via_bus"),
             (e for c in values(contingencies) for e in c["elements"]),
-        ) == 60_182
+        ) == 60_326
         @test all(c -> !isempty(c["elements"]), values(contingencies))
         @test count(
             e -> !e["in_service"],

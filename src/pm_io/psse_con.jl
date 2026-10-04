@@ -285,6 +285,9 @@ const _CON_STATUS_KEY = Dict(
     "load" => "status",
     "shunt" => "status",
     "switched_shunt" => "status",
+    "dcline" => "br_status",
+    "vscline" => "br_status",
+    "facts" => "available",
 )
 
 function _con_element(pm::Dict, a::ConAction, action::String, section::String, key)
@@ -403,6 +406,9 @@ const _BUS_OUTAGE_ACTION = Dict(
     "load" => "remove_load",
     "shunt" => "remove_shunt",
     "switched_shunt" => "remove_switched_shunt",
+    "dcline" => "open_dc_line",
+    "vscline" => "open_dc_line",
+    "facts" => "remove_facts",
 )
 
 # The function recasts a bus disconnect as outages of each in-service element on the bus.
@@ -558,10 +564,12 @@ one `Dict` for one resolved target. It holds `"action"`, `"section"`, `"key"`, `
 `OPEN BRANCH` on a switching device keeps the real section of the device.
 
 `OPEN BUS` and `DISCONNECT BUS` become N-k outages. Each gets one element for each in-service
-branch, transformer, switching device, unit, load, fixed shunt and switched shunt on the bus,
-with `"via_bus"` set. PSS/E keeps injectors in service but dead. The function keeps an element
-that repeats in a block once. The function skips the block in two cases. The bus has a
-three-winding transformer, a DC line or a FACTS device. Or the bus has no in-service element.
+branch, transformer, switching device, unit, load, fixed shunt, switched shunt, DC line, VSC
+line and FACTS device on the bus, with `"via_bus"` set. A DC line or VSC line has the action
+`"open_dc_line"`. A FACTS device has the action `"remove_facts"`, and it attaches to its bus
+and to its nonzero terminal bus. PSS/E keeps injectors in service but dead. The function keeps
+an element that repeats in a block once. The function skips the block in two cases. The bus
+has a three-winding transformer. Or the bus has no in-service element.
 
 Like PSS/E, a problem skips only its contingency and logs a `@warn`. These problems cause a
 skip: an unresolved record, an ambiguous record, an unsupported form, or a `CLOSE BRANCH` on

@@ -42,7 +42,8 @@ struct _PsseIndex
     blocking::Dict{Int, String}
 end
 
-# In-service branch-like elements and injectors, by RAW bus number. A bus outage removes them.
+# In-service branch-like elements, injectors, DC lines and FACTS devices, by RAW bus number.
+# A bus outage removes them.
 const _ATTACHED_BRANCH_SECTIONS = ("branch", "switch", "breaker", "generic_connector")
 const _ATTACHED_INJECTOR_SECTIONS = ("gen", "load", "shunt", "switched_shunt")
 
@@ -52,6 +53,14 @@ end
 
 function _raw_bus(pm::Dict, key::Integer)
     return _sid_bus(pm["bus"][key]["source_id"][2])
+end
+
+function _facts_buses(pm::Dict, e::Dict)
+    buses = [_raw_bus(pm, e["bus"])]
+    if !iszero(e["tbus"])
+        push!(buses, _raw_bus(pm, e["tbus"]))
+    end
+    return buses
 end
 
 function _index_attached!(index::_PsseIndex, pm::Dict)
@@ -81,16 +90,18 @@ function _index_attached!(index::_PsseIndex, pm::Dict)
         end
     end
     for section in ("dcline", "vscline")
-        for e in values(get(pm, section, empty))
-            for bus in (e["f_bus"], e["t_bus"])
-                get!(index.blocking, _raw_bus(pm, bus), "a DC line or FACTS device")
+        for (key, e) in get(pm, section, empty)
+            if _in_service(e, section)
+                for bus in unique((_raw_bus(pm, e["f_bus"]), _raw_bus(pm, e["t_bus"])))
+                    _index_add!(index.attached, bus, (section, key))
+                end
             end
         end
     end
-    for e in values(get(pm, "facts", empty))
-        for bus in (e["bus"], e["tbus"])
-            if !iszero(bus)
-                get!(index.blocking, _raw_bus(pm, bus), "a DC line or FACTS device")
+    for (key, e) in get(pm, "facts", empty)
+        if _in_service(e, "facts")
+            for bus in unique(_facts_buses(pm, e))
+                _index_add!(index.attached, bus, ("facts", key))
             end
         end
     end
