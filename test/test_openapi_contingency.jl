@@ -39,6 +39,7 @@ const OC_ALL = oc_block(
     "REMOVE SWSHUNT 1 FROM BUS 101",
 )
 const OC_BUS_ONLY = oc_block("BUSONLY", "OPEN BUS 106")
+const OC_BUS_NONE = oc_block("NOBUS", "OPEN BUS 1001")
 
 function oc_outages(sys)
     return Dict(
@@ -91,29 +92,20 @@ end
     types = PFP.get_document(sys).component_types_by_id
     outages = oc_outages(sys)
 
-    @test sort(collect(keys(outages))) == ["ALLKINDS", "MIXED"]
-    @test length(PFP.get_supplemental_attributes(sys, "FixedForcedOutage")) == 2
+    @test sort(collect(keys(outages))) == ["ALLKINDS", "BUSONLY", "MIXED"]
+    @test length(PFP.get_supplemental_attributes(sys, "FixedForcedOutage")) == 3
     @test all(PFP.get_value(o, :outage_status) == 1.0 for o in values(outages))
 
     @test all(PFP.get_value(o, :id) > maximum(keys(types)) for o in values(outages))
 
     mixed_rows = oc_rows(sys, outages["MIXED"])
-    @test length(mixed_rows) == 3
+    mixed_elements = pm["contingency"]["MIXED"]["elements"]
+    @test length(mixed_elements) == 7
+    @test length(mixed_rows) == length(mixed_elements)
     @test all(PFP.get_value(r, :attribute_type) == "FixedForcedOutage" for r in mixed_rows)
     mixed_ids = sort([PFP.get_value(r, :component_id) for r in mixed_rows])
-    branch_key = only(
-        k for (k, v) in pm["branch"] if v["source_id"][2:3] == [101, 102]
-    )
-    gen_key = only(
-        k for (k, v) in pm["gen"] if v["source_id"][2:3] == ["101", "2 "]
-    )
-    switch_key = only(
-        k for (k, v) in pm["switch"] if v["source_id"][2:3] == [104, 105]
-    )
     @test mixed_ids == sort([
-        PFP.get_source_id(reg, "branch", branch_key),
-        PFP.get_source_id(reg, "switch", switch_key),
-        PFP.get_source_id(reg, "gen", gen_key),
+        PFP.get_source_id(reg, e["section"], e["key"]) for e in mixed_elements
     ])
     for r in mixed_rows
         @test PFP.get_value(r, :component_type) == types[PFP.get_value(r, :component_id)]
@@ -138,12 +130,17 @@ end
     ])
 end
 
-@testset "open_bus is not emitted; switching devices are" begin
+@testset "a bus disconnect emits one row per expanded element; switching devices are emitted" begin
     pm = oc_pm(OC_BUS_ONLY)
-    @test length(pm["contingency"]["BUSONLY"]["elements"]) == 1
+    elements = pm["contingency"]["BUSONLY"]["elements"]
+    @test length(elements) == 7
+    @test all(e["via_bus"] == 106 for e in elements)
     sys = oc_build(pm)
-    @test isempty(PFP.get_supplemental_attributes(sys, "FixedForcedOutage"))
-    @test isempty(oc_outages(sys))
+    outage = oc_outages(sys)["BUSONLY"]
+    reg = PFP.get_registry(sys)
+    @test sort([PFP.get_value(r, :component_id) for r in oc_rows(sys, outage)]) == sort([
+        PFP.get_source_id(reg, e["section"], e["key"]) for e in elements
+    ])
 
     switch_only = oc_pm(
         oc_block("SW", "OPEN BRANCH FROM BUS 104 TO BUS 105 CKT '*1'",
@@ -158,17 +155,26 @@ end
     )
 end
 
-@testset "the skip summary is one warning with the counts" begin
-    pm = oc_pm(OC_MIXED, OC_BUS_ONLY)
+@testset "a contingency with no emittable element warns once and creates no outage" begin
+    pm = oc_pm(OC_MIXED)
     logger = Test.TestLogger(; min_level = Logging.Warn)
     Logging.with_logger(logger) do
         PFP.build_openapi_system(PFP.PowerModelsData(pm))
     end
-    messages = [string(l.message) for l in logger.logs]
-    summary = only(filter(m -> occursin("not fully emitted", m), messages))
-    @test occursin("2 open_bus", summary)
-    @test !occursin("switching", summary)
+    @test isempty(logger.logs)
+
+    pm["contingency"]["EMPTY"] = Dict{String, Any}(
+        "source_id" => ["contingency", "EMPTY"], "label" => "EMPTY", "elements" => [],
+    )
+    logger = Test.TestLogger(; min_level = Logging.Warn)
+    sys = Logging.with_logger(logger) do
+        PFP.build_openapi_system(PFP.PowerModelsData(pm))
+    end
+    summary = only(
+        filter(m -> occursin("no emittable", m), string.(l.message for l in logger.logs)),
+    )
     @test occursin("1 contingencies", summary)
+    @test sort(collect(keys(oc_outages(sys)))) == ["MIXED"]
 end
 
 @testset "contingencies survive a JSON round trip" begin
@@ -179,12 +185,13 @@ end
         PFP.get_value(o, :identifier) => o for
         o in PFP.PD.get_supplemental_attributes(doc, "FixedForcedOutage")
     )
-    @test sort(collect(keys(outages))) == ["ALLKINDS", "MIXED"]
+    @test sort(collect(keys(outages))) == ["ALLKINDS", "BUSONLY", "MIXED"]
     rows(name) = [
         a for a in doc.supplemental_attribute_associations if
         PFP.get_value(a, :attribute_id) == PFP.get_value(outages[name], :id)
     ]
-    @test length(rows("MIXED")) == 3
+    @test length(rows("MIXED")) == 7
+    @test length(rows("BUSONLY")) == 7
     @test length(rows("ALLKINDS")) == 4
     @test all(PFP.get_value(o, :outage_status) == 1.0 for o in values(outages))
 end
@@ -196,8 +203,8 @@ end
     pm["contingency"] = Dict{String, Any}()
     @test oc_json(oc_build(pm))[1] == without
 
-    # nothing emittable: no outage, no id consumed
-    @test oc_json(oc_build(oc_pm(OC_BUS_ONLY)))[1] == without
+    # A skipped bus disconnect gives no contingency, no outage and no used id.
+    @test oc_json(oc_build(oc_pm(OC_BUS_NONE)))[1] == without
 
     with_outages, _ = oc_json(oc_build(oc_pm(OC_MIXED)))
     @test with_outages != without
@@ -209,7 +216,7 @@ end
     k2 = only(k for (k, v) in pm["branch"] if v["source_id"][2:3] == [102, 103])
     pm["monitor"] = Dict{String, Any}(
         "branches" => [["branch", k1], ["branch", k2]], "buses" => [101, 102],
-        "voltage_band" => (0.95, 1.05),
+        "voltage_band" => (0.95, 1.05), "all_branches" => false,
     )
     logger = Test.TestLogger(; min_level = Logging.Info)
     sys = Logging.with_logger(logger) do
@@ -237,8 +244,37 @@ end
     end
 
     @test_throws IS.DataFormatError oc_build(
-        merge(pm, Dict("monitor" => Dict("branches" => [["branch", "nope"]]))),
+        merge(
+            pm,
+            Dict(
+                "monitor" =>
+                    Dict("branches" => [["branch", "nope"]], "all_branches" => false),
+            ),
+        ),
     )
+end
+
+@testset "all_branches writes no monitored_components, a subset writes the list" begin
+    pm = oc_pm(OC_MIXED, OC_ALL)
+    PFP.monitor_all_branches!(pm)
+    logger = Test.TestLogger(; min_level = Logging.Info)
+    sys = Logging.with_logger(logger) do
+        PFP.build_openapi_system(PFP.PowerModelsData(pm))
+    end
+    @test any(
+        l.level == Logging.Info && occursin("monitored by default", string(l.message))
+        for l in logger.logs
+    )
+    @test length(oc_outages(sys)) == 2
+    @test !occursin("monitored_components", oc_json(sys)[1])
+
+    pm = oc_pm(OC_MIXED, OC_ALL)
+    k1 = first(keys(pm["branch"]))
+    pm["monitor"] = Dict{String, Any}(
+        "branches" => [["branch", k1]], "buses" => Int[],
+        "voltage_band" => (-Inf, Inf), "all_branches" => false,
+    )
+    @test occursin("monitored_components", oc_json(oc_build(pm))[1])
 end
 
 @testset "no monitor key leaves monitored_components absent" begin
@@ -267,18 +303,16 @@ end
         contingencies = pm["contingency"]
         elements = [e for c in values(contingencies) for e in c["elements"]]
         emittable = filter(PFP._is_emittable_element, elements)
-        n_bus = count(PFP._is_bus_element, elements)
         section_count(section) = count(e -> e["section"] == section, elements)
         emitted = filter(c -> any(PFP._is_emittable_element, c["elements"]),
             collect(values(contingencies)))
-        @test n_bus == 12_577
-        @test section_count("switch") == 837
-        @test section_count("breaker") == 1_383
-        @test section_count("generic_connector") == 5
-        @test length(emittable) == 63_302
-        @test length(elements) - n_bus == length(emittable)
-        @test length(emitted) == 26_725
-        @test length(contingencies) - length(emitted) == 10_059
+        @test section_count("switch") == 16_285
+        @test section_count("breaker") == 4_946
+        @test section_count("generic_connector") == 25
+        @test length(elements) == 123_119
+        @test length(emittable) == length(elements)
+        @test length(emitted) == 36_158
+        @test length(contingencies) == length(emitted)
 
         build_time = @elapsed sys = oc_build(pm)
         json_time = @elapsed (text, path) = oc_json(sys)
@@ -296,7 +330,7 @@ end
         @test length(rows) == length(emittable)
         @test count(
             PFP.get_value(r, :component_type) == "DiscreteControlledACBranch" for r in rows
-        ) == 837 + 1_383 + 5
+        ) == 16_285 + 4_946 + 25
         @test count("\"identifier\"", text) == length(emitted)
         rm(path)
     end

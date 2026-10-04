@@ -55,8 +55,8 @@ function register!(reg::IdRegistry, type_name::AbstractString, name::AbstractStr
     return id
 end
 
-"""Map the pm dict entry `(section, key)` to the id of the component most recently
-registered. Call right after the maker that built that entry's component."""
+"""Map the pm dict entry `(section, key)` to the id of the most recent registered component.
+Call it right after the maker that builds the component of that entry."""
 function record_source!(reg::IdRegistry, section::AbstractString, key)
     reg.by_source[(String(section), key)] = reg.last_registered[]
     return

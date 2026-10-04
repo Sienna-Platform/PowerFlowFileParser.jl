@@ -9,6 +9,7 @@ export PowerModelsData
 export parse_file
 export add_contingencies!
 export add_monitored!
+export monitor_all_branches!
 export OpenAPISystem
 export to_json
 export build_openapi_system

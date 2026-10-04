@@ -1,9 +1,9 @@
 """
-One parsed record of a PSS/E `.con` contingency block. `kind` is one of `:open_branch`
+One record of a PSS/E `.con` contingency block. The field `kind` is one of `:open_branch`
 (two or three buses), `:open_3w_transformer`, `:open_3w_winding`, `:remove_unit`,
 `:remove_load`, `:remove_shunt`, `:remove_switched_shunt`, `:open_bus`, `:close_branch`.
-`id` is the circuit or equipment id, stripped and not case-folded when quoted; empty when
-the form has none.
+The field `id` is the circuit or equipment id. A quoted id keeps its case and loses its
+padding. The field is empty when the record has no id.
 """
 struct ConAction
     kind::Symbol
@@ -29,8 +29,8 @@ end
 const _CON_TOKEN = r"'[^']*'|\"[^\"]*\"|/|[^\s'\"/]+"
 const _CON_QUOTED = ('\'', '"')
 
-# Keywords are uppercased; a quoted token keeps its case minus quotes and padding. `/` outside
-# quotes starts a comment.
+# Keywords change to uppercase. A quoted token keeps its case but loses quotes and padding.
+# A `/` outside quotes starts a comment.
 function _con_tokens(line::AbstractString)
     toks = String[]
     for m in eachmatch(_CON_TOKEN, line)
@@ -47,7 +47,7 @@ function _con_tokens(line::AbstractString)
     return toks
 end
 
-# Merge the multi-word spellings into one keyword each.
+# Merge each multi-word spelling into one keyword.
 function _con_normalize(toks::Vector{String})
     out = String[]
     i = 1
@@ -73,7 +73,8 @@ function _con_normalize(toks::Vector{String})
     return out
 end
 
-# Pattern words: a keyword, `A|B` alternatives, `#` an integer capture, `*` any-token capture.
+# A pattern word is a keyword, `A|B` for alternatives, `#` to capture an integer, or `*` to
+# capture any token.
 function _con_match(toks::Vector{String}, pattern::Vector{String})
     ints = Int[]
     strs = String[]
@@ -97,7 +98,8 @@ end
 
 _con_pattern(s::String) = String.(split(s))
 
-# The omitted-CKT default of '1' is PSEB's (PSS/E 35 POM), not documented for `.con`.
+# PSEB (PSS/E 35 POM) defines the default '1' for an omitted CKT. The `.con` format does not
+# document it.
 const _CON_FORMS = [
     (_con_pattern("OPEN|TRIP BRANCH FROM BUS # TO BUS # CKT|CIRCUIT *"), :open_branch, ""),
     (_con_pattern("OPEN|TRIP BRANCH FROM BUS # TO BUS #"), :open_branch, "1"),
@@ -156,7 +158,7 @@ function _con_unsupported_reason(toks::Vector{String})
     return ""
 end
 
-# Returns (action, reason); reason is empty when the record parses.
+# Returns (action, reason). The reason is empty when the record is valid.
 function _parse_con_action(toks::Vector{String}, line::Int, text::String)
     for (pattern, kind, default_id) in _CON_FORMS
         ok, ints, strs = _con_match(toks, pattern)
@@ -175,8 +177,9 @@ function _parse_con_action(toks::Vector{String}, line::Int, text::String)
     return ConAction(:unsupported, Int[], "", line, text), reason
 end
 
-# (line number, stripped text, tokens) of every non-blank, non-comment line. Bytes are
-# decoded as latin1: real files hold non-UTF-8 bytes in comments.
+# Returns (line number, stripped text, tokens) for each line that is not blank and not a
+# comment. The function decodes bytes as latin1, because real files have non-UTF-8 bytes in
+# comments.
 function _con_records(path::String)
     text = String(Char.(read(path)))
     out = Tuple{Int, String, Vector{String}}[]
@@ -200,10 +203,16 @@ end
     _read_con(path) -> (blocks::Vector{ConBlock}, skipped::Vector{ConSkipped})
 
 Parse a PSS/E ACCC `.con` file into blocks. Like PSS/E, a problem skips only the affected
-contingency, with a `@warn`: an unsupported or unrecognized record, a label repeated within
-the file (the later one), a missing `END` (the block, when another CONTINGENCY follows or
-the file ends), an unquoted multi-word label, or content after the terminating
-`END` (ignored). Only an unreadable file throws.
+contingency and logs a `@warn`. These problems cause a skip:
+
+  - An unsupported or unrecognized record.
+  - A label that the file repeats. The function skips the later block.
+  - A missing `END`. The function skips the block when another CONTINGENCY follows or the
+    file ends.
+  - An unquoted multi-word label.
+
+The function also skips content after the terminating `END`. Only an unreadable file throws an
+error.
 """
 function _read_con(path::String)
     blocks = ConBlock[]
@@ -298,7 +307,7 @@ function _con_elements(pm::Dict, a::ConAction, action::String, targets::Vector{_
     return [_con_element(pm, a, action, section, key) for (section, key) in targets]
 end
 
-# Returns (targets, reason); reason is empty on a unique match.
+# Returns (targets, reason). The reason is empty when exactly one target matches.
 function _con_unique(table::Dict, key, a::ConAction, what::String)
     targets = get(table, key, _Target[])
     if isempty(targets)
@@ -385,19 +394,48 @@ function _con_resolve(::Val{:remove_switched_shunt}, pm, index, a)
     )
 end
 
+const _BUS_OUTAGE_ACTION = Dict(
+    "branch" => "open_branch",
+    "switch" => "open_branch",
+    "breaker" => "open_branch",
+    "generic_connector" => "open_branch",
+    "gen" => "remove_unit",
+    "load" => "remove_load",
+    "shunt" => "remove_shunt",
+    "switched_shunt" => "remove_switched_shunt",
+)
+
+# The function recasts a bus disconnect as outages of each in-service element on the bus.
+# PSS/E keeps the units, loads and shunts of the bus in service but dead, so the outage
+# includes them.
 function _con_resolve(::Val{:open_bus}, pm, index, a)
     bus = only(a.buses)
     if !haskey(index.bus, bus)
         return Dict{String, Any}[], "no bus $bus in the RAW: `$(a.text)`"
     end
-    return [_con_element(pm, a, "open_bus", "bus", index.bus[bus])], ""
+    if haskey(index.blocking, bus)
+        return Dict{String, Any}[],
+        "bus $bus has $(index.blocking[bus]) attached; a bus outage cannot be recast as a component outage: `$(a.text)`"
+    end
+    targets = get(index.attached, bus, _Target[])
+    if isempty(targets)
+        return Dict{String, Any}[],
+        "bus $bus has no in-service attached element: `$(a.text)`"
+    end
+    elements = Dict{String, Any}[]
+    for (section, key) in sort(targets)
+        e = _con_element(pm, a, _BUS_OUTAGE_ACTION[section], section, key)
+        e["via_bus"] = bus
+        push!(elements, e)
+    end
+    return elements, ""
 end
 
 _is_close(e::Dict) = e["action"] == "close_branch"
 _is_open(e::Dict) = !_is_close(e)
 
-# Returns (elements, reason). A CLOSE on an out-of-service target blocks the whole contingency:
-# opening the rest alone would outage more than the file describes.
+# Returns (elements, reason). A CLOSE on an out-of-service target skips the whole contingency.
+# Without the close action, the open actions alone would outage more than the file describes.
 function _resolve_block(pm::Dict, index::_PsseIndex, block::ConBlock)
     resolved = Dict{String, Any}[]
     for a in block.actions
@@ -413,7 +451,7 @@ function _resolve_block(pm::Dict, index::_PsseIndex, block::ConBlock)
             "CLOSE BRANCH target $(e["source_id"]) (line $(e["line"])) is out of service in the RAW; the block needs a close action that is not supported"
         end
     end
-    return filter(_is_open, resolved), ""
+    return unique(e -> (e["section"], e["key"]), filter(_is_open, resolved)), ""
 end
 
 function _warn_flags(path::String, block::ConBlock, elements::Vector{Dict{String, Any}})
@@ -436,8 +474,8 @@ end
 
 _stem(path::String) = first(splitext(basename(path)))
 
-# Labels repeated across files are keyed "<file stem>:<label>", every occurrence. Returns
-# (key, reason); the earlier bare entry is re-keyed by `_rekey_earlier!`.
+# A label that more than one file repeats gets the key "<file stem>:<label>" for each
+# occurrence. Returns (key, reason). `_rekey_earlier!` re-keys the earlier bare entry.
 function _contingency_key(
     contingencies::Dict,
     labels::Set{String},
@@ -495,7 +533,7 @@ end
 function _summary_reasons(skipped::Vector{Dict{String, Any}})
     counts = Dict{String, Int}()
     for s in skipped
-        reason = first(split(s["reason"], '`'))
+        reason = replace(first(split(s["reason"], '`')), r"\d+" => "N")
         counts[reason] = get(counts, reason, 0) + 1
     end
     return join(
@@ -507,33 +545,42 @@ end
 """
     add_contingencies!(pm::Dict, con_path::String)
 
-Parse the PSS/E ACCC `.con` file at `con_path` and resolve each contingency against the
-PM-dict through `source_id`, adding it to `pm["contingency"]`, keyed by identifier: the bare
-label, or `"<file stem>:<label>"` for labels repeated across files (an earlier entry is re-keyed
-when a later call repeats its label). Each entry holds `"source_id"`, `"label"`, `"file"`,
-`"line"` and `"elements"`, one `Dict` per resolved target with `"action"`, `"section"`,
-`"key"`, `"source_id"`, `"in_service"` and `"line"`. A multi-section line yields one element
-per segment; an `OPEN BRANCH` on a switching device keeps its real section; `OPEN BUS` yields
-an `"open_bus"` element on section `"bus"`.
+Parse the PSS/E ACCC `.con` file at `con_path`. Resolve each contingency against the PM-dict
+through `source_id`, and add it to `pm["contingency"]` under its identifier.
 
-Like PSS/E, a problem skips only its contingency, with a `@warn`: an unresolved or ambiguous
-record, an unsupported form, or a `CLOSE BRANCH` on a target that is out of service in the RAW.
-`CLOSE BRANCH` records are otherwise skipped with a warning. Skipped blocks are appended to
-`pm["contingency_skipped"]` as `Dict("label", "file", "line", "reason")`, and one summary
-`@warn` per file gives the counts. Targets already out of service are resolved and flagged
-`"in_service" => false`, with a warning. Only an unreadable file throws.
+The identifier is the bare label. When a label occurs in more than one `.con` file, every
+occurrence becomes `"<file stem>:<label>"`. A later call that repeats a label re-keys the
+earlier entry. So the identifiers depend on which files the caller loads together.
 
-The skip-and-continue policy follows PSS/E's alarm-and-skip handling of contingency errors;
-it differs from failing the whole file and adding nothing. The `.con` lists are validated
-against a different RAW upstream, so a case that PSS/E would skip can differ here.
+Each entry holds `"source_id"`, `"label"`, `"file"`, `"line"` and `"elements"`. An element is
+one `Dict` for one resolved target. It holds `"action"`, `"section"`, `"key"`, `"source_id"`,
+`"in_service"` and `"line"`. A multi-section line gives one element for each segment. An
+`OPEN BRANCH` on a switching device keeps the real section of the device.
 
-An omitted circuit id defaults to `"1"`, inferred from the PSS/E PSEB commands rather than from
-a `.con` format specification. `REMOVE LOAD`, `REMOVE SHUNT`, `REMOVE SWSHUNT` and `OPEN BUS`
-are likewise inferred from data and related PSS/E commands (`DROP`, `DISCONNECT BUS`).
+`OPEN BUS` and `DISCONNECT BUS` become N-k outages. Each gets one element for each in-service
+branch, transformer, switching device, unit, load, fixed shunt and switched shunt on the bus,
+with `"via_bus"` set. PSS/E keeps injectors in service but dead. The function keeps an element
+that repeats in a block once. The function skips the block in two cases. The bus has a
+three-winding transformer, a DC line or a FACTS device. Or the bus has no in-service element.
 
-The contingency identifier is the bare label. Only when a label occurs in more than one `.con`
-file does every occurrence become `"<file stem>:<label>"`, so identifiers depend on which files
-are loaded together.
+Like PSS/E, a problem skips only its contingency and logs a `@warn`. These problems cause a
+skip: an unresolved record, an ambiguous record, an unsupported form, or a `CLOSE BRANCH` on
+an out-of-service target. The function skips each other `CLOSE BRANCH` record with a
+warning, because the function has no close action.
+
+The function appends each skipped block to `pm["contingency_skipped"]` as
+`Dict("label", "file", "line", "reason")`. It logs one summary `@warn` for each file with the
+counts. The function resolves a target that is already out of service, sets
+`"in_service" => false`, and logs a warning. Only an unreadable file throws an error.
+
+The skip policy follows the alarm-and-skip handling of contingency errors in PSS/E. It differs
+from a failure of the whole file that adds nothing. The upstream validation of the `.con` lists
+used a different RAW. So PSS/E can skip other contingencies than this function does.
+
+An omitted circuit id defaults to `"1"`. The author inferred the default from the PSS/E PSEB
+commands, not from a `.con` format specification. Likewise, the author inferred the forms
+`REMOVE LOAD`, `REMOVE SHUNT`, `REMOVE SWSHUNT` and `OPEN BUS` from data and from related
+PSS/E commands (`DROP`, `DISCONNECT BUS`).
 """
 function add_contingencies!(pm::Dict, con_path::String)
     blocks, read_skipped = _read_con(con_path)

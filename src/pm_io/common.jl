@@ -8,6 +8,7 @@
         con_files = String[],
         mon_file = "",
         sub_file = "",
+        monitor_all_branches = false,
     )
 
 Parses a Matpower .m `file` or PTI (PSS(R)E-v33) .raw `file` into a
@@ -16,11 +17,16 @@ PowerModels data structure. All fields from PTI files will be imported if
 after a converged power flow: its switched shunts then take BINIT as their solved
 admittance rather than reconstructing one from the engaged blocks.
 
-PSS/E `con_files` are added with [`add_contingencies!`](@ref), once per file in order, and
-`mon_file` (with the optional `sub_file`) with [`add_monitored!`](@ref). Without them the
-result has no `"contingency"` or `"monitor"` key. Bad contingency or monitor records are
-skipped with a warning rather than failing the file; the `.mon` / `.sub` semantics are
-unverified (see [`add_monitored!`](@ref)).
+The function adds the PSS/E `con_files` with [`add_contingencies!`](@ref), once for each file
+in order. It adds `mon_file` (with the optional `sub_file`) with [`add_monitored!`](@ref).
+Without these files, the result has no `"contingency"` or `"monitor"` key. A bad contingency
+or monitor record causes a skip with a warning, and the file does not fail. The `.mon` and
+`.sub` semantics are unverified (see [`add_monitored!`](@ref)).
+
+With `monitor_all_branches = true`, the function monitors every branch with
+[`monitor_all_branches!`](@ref). It is an alternative to `mon_file`. If the caller gives both,
+the function throws an `ArgumentError`. A document without `monitored_components` monitors all
+branches.
 """
 function parse_file(
     file::String;
@@ -31,6 +37,7 @@ function parse_file(
     con_files = String[],
     mon_file = "",
     sub_file = "",
+    monitor_all_branches = false,
 )
     pm_data = open(file) do io
         pm_data = parse_file(
@@ -47,11 +54,19 @@ function parse_file(
         con_files = con_files,
         mon_file = mon_file,
         sub_file = sub_file,
+        monitor_all_branches = monitor_all_branches,
     )
     return pm_data
 end
 
-function add_con_mon_files!(pm::Dict; con_files, mon_file, sub_file)
+function add_con_mon_files!(pm::Dict; con_files, mon_file, sub_file, monitor_all_branches)
+    if monitor_all_branches && !isempty(mon_file)
+        throw(
+            ArgumentError(
+                "monitor_all_branches and mon_file $mon_file are alternatives: give one",
+            ),
+        )
+    end
     if isempty(mon_file) && !isempty(sub_file)
         throw(ArgumentError("sub_file $sub_file given without mon_file"))
     end
@@ -60,6 +75,8 @@ function add_con_mon_files!(pm::Dict; con_files, mon_file, sub_file)
     end
     if !isempty(mon_file)
         add_monitored!(pm, mon_file; sub_path = sub_file)
+    elseif monitor_all_branches
+        monitor_all_branches!(pm)
     end
     return
 end

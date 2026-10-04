@@ -2600,8 +2600,8 @@ function _psse2pm_multisection_line!(pm_data::Dict, pti_data::Dict, import_all::
     if !haskey(pti_data, "MULTI-SECTION LINE")
         return
     end
-    # Segments are matched on the bus numbers the RAW file declared (source_id), not on
-    # endpoints that may have been routed to node-buses.
+    # Match the segments on the bus numbers that the RAW file declares (source_id). Do not use
+    # endpoints, because the function can route them to node-buses.
     lookup = _segment_lookup(pm_data)
     for multisec_line in pti_data["MULTI-SECTION LINE"]
         filter!(x -> x.second != "", multisec_line)

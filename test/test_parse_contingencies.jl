@@ -269,7 +269,7 @@ function multisection_pm()
     return quiet(() -> PFFP.parse_file(IOBuffer(CON_MULTISECTION_RAW); filetype = "raw"))
 end
 
-# Runs add_contingencies! on a fixture file; returns the file path and the captured logs.
+# Run add_contingencies! on a fixture file. Return the file path and the captured logs.
 function add_con!(pm, body::String; name = "")
     path = con_fixture(body)
     if !isempty(name)
@@ -371,7 +371,7 @@ skip_reasons(pm) = [s["reason"] for s in pm["contingency_skipped"]]
                 block("sh", "REMOVE SHUNT 1 FROM BUS 111"),
                 block("sw1", "REMOVE SWSHUNT 1 FROM BUS 101"),
                 block("sw2", "REMOVE SWITCHED SHUNT 1 FROM BUS 113"),
-                block("bus", "OPEN BUS 105", "DISCONNECT BUS 1001"),
+                block("bus", "OPEN BUS 105", "DISCONNECT BUS 112"),
             ),
         )
         @test isempty(pm["contingency_skipped"])
@@ -390,9 +390,16 @@ skip_reasons(pm) = [s["reason"] for s in pm["contingency_skipped"]]
         @test s2["key"] == "2"
         @test s2["source_id"] == ["switched shunt", 113, 2]
         bs = elements_of(pm, "bus")
-        @test [(e["action"], e["section"], e["key"]) for e in bs] ==
-              [("open_bus", "bus", 105), ("open_bus", "bus", 1001)]
-        @test bs[1]["source_id"] == ["bus", "105"]
+        @test [(e["via_bus"], e["action"], e["section"], e["key"]) for e in bs] == [
+            (105, "open_branch", "branch", "2"),
+            (105, "open_branch", "branch", "22"),
+            (105, "open_branch", "branch", "5"),
+            (105, "remove_load", "load", "5"),
+            (105, "open_branch", "switch", "1"),
+            (112, "open_branch", "branch", "9"),
+            (112, "open_branch", "breaker", "1"),
+            (112, "remove_load", "load", "11"),
+        ]
     end
 
     @testset "switched shunt id is sw_id, not the counter" begin
@@ -599,24 +606,176 @@ skip_reasons(pm) = [s["reason"] for s in pm["contingency_skipped"]]
         @test sort(collect(keys(pm["contingency"]))) == ["A", "U"]
         @test isempty(filter(r -> occursin("repeated", r.message), logs))
 
-        _, logs = add_con!(pm, con_file(block("A", "OPEN BUS 107")); name = "two.con")
+        _, logs = add_con!(pm, con_file(block("A", "OPEN BUS 200")); name = "two.con")
         @test sort(collect(keys(pm["contingency"]))) == ["U", "one:A", "two:A"]
         @test pm["contingency"]["one:A"]["source_id"] == ["contingency", "one:A"]
         @test pm["contingency"]["one:A"]["label"] == "A"
-        @test only(elements_of(pm, "one:A"))["key"] == 105
-        @test only(elements_of(pm, "two:A"))["key"] == 107
+        @test all(e -> e["via_bus"] == 105, elements_of(pm, "one:A"))
+        @test all(e -> e["via_bus"] == 200, elements_of(pm, "two:A"))
         @test any(r -> occursin("repeated", r.message), logs)
 
-        add_con!(pm, con_file(block("A", "OPEN BUS 108")); name = "three.con")
+        add_con!(pm, con_file(block("A", "OPEN BUS 201")); name = "three.con")
         @test sort(collect(keys(pm["contingency"]))) ==
               ["U", "one:A", "three:A", "two:A"]
+    end
+end
+
+@testset "PSS/E .con bus disconnects are recast as N-k outages" begin
+    function targets(pm, id)
+        return [(e["section"], e["key"]) for e in elements_of(pm, id)]
+    end
+
+    @testset "attached branches, transformer, switch, injectors, via_bus" begin
+        pm = fresh_pm()
+        add_con!(pm, con_file(block("b", "OPEN BUS 105"), block("d", "DISCONNECT BUS 106")))
+        @test isempty(pm["contingency_skipped"])
+        @test targets(pm, "b") == [
+            ("branch", "2"), ("branch", "22"), ("branch", "5"), ("load", "5"),
+            ("switch", "1"),
+        ]
+        @test all(e -> e["via_bus"] == 105 && e["in_service"], elements_of(pm, "b"))
+        actions =
+            Dict((e["section"], e["key"]) => e["action"] for e in elements_of(pm, "b"))
+        @test actions[("branch", "22")] == "open_branch"
+        @test actions[("switch", "1")] == "open_branch"
+        @test actions[("load", "5")] == "remove_load"
+        d = Dict((e["section"], e["key"]) => e["action"] for e in elements_of(pm, "d"))
+        @test d[("gen", "4")] == "remove_unit"
+        @test d[("shunt", "2")] == "remove_shunt"
+        @test all(e -> e["via_bus"] == 106, elements_of(pm, "d"))
+        @test !any(e -> e["action"] == "open_bus", elements_of(pm, "d"))
+        add_con!(pm, con_file(block("s", "OPEN BUS 101")); name = "s.con")
+        @test ("switched_shunt", "1") in targets(pm, "s")
+        @test any(e -> e["action"] == "remove_switched_shunt", elements_of(pm, "s"))
+    end
+
+    @testset "out-of-service attachments are excluded" begin
+        pm = fresh_pm()
+        pm["branch"]["5"]["br_status"] = 0
+        pm["load"]["5"]["status"] = 0
+        add_con!(pm, con_file(block("b", "OPEN BUS 105")))
+        @test sort(targets(pm, "b")) ==
+              [("branch", "2"), ("branch", "22"), ("switch", "1")]
+    end
+
+    @testset "a block that opens a bus and its branch has no duplicate element" begin
+        pm = fresh_pm()
+        add_con!(
+            pm,
+            con_file(
+                block(
+                    "dup",
+                    "OPEN BRANCH FROM BUS 104 TO BUS 105 CKT '*1'",
+                    "OPEN BUS 105",
+                    "OPEN BUS 112",
+                    "OPEN BUS 105",
+                ),
+            ),
+        )
+        ts = targets(pm, "dup")
+        @test allunique(ts)
+        @test count(==(("switch", "1")), ts) == 1
+        @test ("breaker", "1") in ts
+    end
+
+    @testset "adjacent buses share their connecting branch once" begin
+        pm = fresh_pm()
+        add_con!(pm, con_file(block("adj", "OPEN BUS 105", "OPEN BUS 106")))
+        ts = targets(pm, "adj")
+        @test allunique(ts)
+        @test ("branch", "22") in ts
+    end
+
+    @testset "three-winding transformer at the bus skips the block" begin
+        pm = fresh_pm()
+        _, logs =
+            add_con!(pm, con_file(block("t", "OPEN BUS 104"), block("ok", "OPEN BUS 105")))
+        @test collect(keys(pm["contingency"])) == ["ok"]
+        s = only(pm["contingency_skipped"])
+        @test s["label"] == "t"
+        @test occursin("bus 104 has a three-winding transformer attached", s["reason"])
+        @test occursin("cannot be recast as a component outage", s["reason"])
+        @test any(r -> occursin("Skipping contingency 't'", r.message), logs)
+    end
+
+    @testset "an out-of-service three-winding transformer does not block" begin
+        pm = fresh_pm()
+        for e in values(pm["3w_transformer"])
+            e["available"] = false
+        end
+        empty!(pm["dcline"])
+        empty!(pm["vscline"])
+        empty!(pm["facts"])
+        add_con!(pm, con_file(block("t", "OPEN BUS 104")))
+        @test isempty(pm["contingency_skipped"])
+        @test ("branch", "21") in targets(pm, "t")
+    end
+
+    @testset "DC line, VSC line and FACTS device skip the block" begin
+        pm = fresh_pm()
+        key(n) = only(k for (k, e) in pm["bus"] if e["source_id"][2] == string(n))
+        pm["dcline"]["90"] = Dict{String, Any}("f_bus" => key(200), "t_bus" => key(201))
+        pm["vscline"]["91"] = Dict{String, Any}("f_bus" => key(301), "t_bus" => key(401))
+        pm["facts"]["92"] = Dict{String, Any}("bus" => key(501), "tbus" => key(601))
+        pm["facts"]["93"] = Dict{String, Any}("bus" => key(103), "tbus" => 0)
+        add_con!(
+            pm,
+            con_file(
+                block("dc", "OPEN BUS 201"),
+                block("vsc", "OPEN BUS 301"),
+                block("facts", "OPEN BUS 601"),
+                block("shunt", "OPEN BUS 103"),
+                block("ok", "OPEN BUS 105"),
+            ),
+        )
+        @test collect(keys(pm["contingency"])) == ["ok"]
+        @test all(
+            r -> occursin("a DC line or FACTS device attached", r),
+            skip_reasons(pm),
+        )
+        @test [s["label"] for s in pm["contingency_skipped"]] ==
+              ["dc", "vsc", "facts", "shunt"]
+    end
+
+    @testset "a bus with nothing in service attached is skipped" begin
+        pm = fresh_pm()
+        pm["branch"]["15"]["br_status"] = 0
+        pm["branch"]["18"]["br_status"] = 0
+        add_con!(
+            pm,
+            con_file(block("none", "OPEN BUS 1001"), block("dead", "OPEN BUS 200")),
+        )
+        @test isempty(pm["contingency"])
+        @test all(r -> occursin("has no in-service attached element", r), skip_reasons(pm))
+        @test occursin("bus 1001 has no in-service attached element", skip_reasons(pm)[1])
+    end
+
+    @testset "a switching device between buses counts as attached" begin
+        pm = multisection_pm()
+        add_con!(pm, con_file(block("b", "OPEN BUS 2")))
+        @test sort(targets(pm, "b")) == [("branch", "1"), ("switch", "1")]
+        add_con!(pm, con_file(block("c", "OPEN BUS 3")); name = "x.con")
+        @test sort(targets(pm, "c")) == [("branch", "2"), ("switch", "1")]
+    end
+
+    @testset "summary groups skipped bus blocks regardless of bus number" begin
+        pm = fresh_pm()
+        _, logs = add_con!(
+            pm,
+            con_file(block("a", "OPEN BUS 104"), block("b", "OPEN BUS 107")),
+        )
+        summary = only(filter(r -> occursin("summary", lowercase(r.message)), logs))
+        @test occursin(
+            "2 x bus N has a three-winding transformer attached",
+            summary.message,
+        )
     end
 end
 
 @testset "con_files and mon_file kwargs" begin
     raw = FOURTEEN_BUS_FIXTURE
     one = con_fixture(con_file(block("A", "OPEN BUS 105"), block("U", "OPEN BUS 106")))
-    two = con_fixture(con_file(block("A", "OPEN BUS 107")))
+    two = con_fixture(con_file(block("A", "OPEN BUS 200")))
     stem(p) = splitext(basename(p))[1]
 
     @testset "neither key without kwargs" begin
@@ -643,6 +802,18 @@ end
     @testset "a single file keeps bare labels, constructor adds once" begin
         pm = quiet(() -> PFFP.PowerModelsData(raw; con_files = [one]).data)
         @test sort(collect(keys(pm["contingency"]))) == ["A", "U"]
+    end
+
+    @testset "monitor_all_branches with a mon_file throws" begin
+        mon = con_fixture("MONITOR ALL BRANCHES\nEND\n")
+        @test_throws ArgumentError PFFP.parse_file(
+            raw; mon_file = mon, monitor_all_branches = true,
+        )
+        pm = quiet(
+            () -> PFFP.parse_file(raw; con_files = [one], monitor_all_branches = true),
+        )
+        @test pm["monitor"]["all_branches"]
+        @test haskey(pm, "contingency")
     end
 
     @testset "sub_file without mon_file throws" begin
@@ -715,10 +886,14 @@ end
         contingencies = pm["contingency"]
         skipped = pm["contingency_skipped"]
         @test length(contingencies) + length(skipped) == blocks
-        @test length(contingencies) == 36_784
-        @test length(skipped) == 6
-        @test all(s -> startswith(s["reason"], "CLOSE BRANCH target"), skipped)
-        @test all(s -> occursin("out of service in the RAW", s["reason"]), skipped)
+        @test length(contingencies) == 36_158
+        @test length(skipped) == 632
+        reason_count(f) = count(s -> f(s["reason"]), skipped)
+        @test reason_count(r -> occursin("has a three-winding transformer attached", r)) ==
+              581
+        @test reason_count(r -> occursin("has a DC line or FACTS device attached", r)) == 32
+        @test reason_count(r -> occursin("has no in-service attached element", r)) == 13
+        @test reason_count(r -> startswith(r, "CLOSE BRANCH target")) == 6
         @test length(pm["multisection_line"]) == 27
 
         by_action = Dict{String, Int}()
@@ -726,16 +901,19 @@ end
             by_action[e["action"]] = get(by_action, e["action"], 0) + 1
         end
         @test by_action == Dict(
-            "open_branch" => 53_976,
-            "open_3w_transformer" => 3_232,
-            "open_bus" => 12_577,
-            "remove_unit" => 1_384,
-            "remove_load" => 381,
+            "open_branch" => 100_012,
+            "open_3w_transformer" => 3_229,
+            "remove_unit" => 1_837,
+            "remove_load" => 11_466,
             "remove_shunt" => 380,
-            "remove_switched_shunt" => 3_949,
+            "remove_switched_shunt" => 6_195,
         )
-        @test count(c -> all(e -> e["action"] == "open_bus", c["elements"]),
-            values(contingencies)) == 10_059
+        @test !haskey(by_action, "open_bus")
+        @test count(
+            e -> haskey(e, "via_bus"),
+            (e for c in values(contingencies) for e in c["elements"]),
+        ) == 60_182
+        @test all(c -> !isempty(c["elements"]), values(contingencies))
         @test count(
             e -> !e["in_service"],
             (e for c in values(contingencies) for e in c["elements"]),

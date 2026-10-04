@@ -562,7 +562,7 @@ end
     pm_data = Logging.with_logger(logger) do
         PFP.parse_file(IOBuffer(multisection_clean_raw()); filetype = "raw")
     end
-    # &2 names the same buses, so it resolves to the same segments.
+    # &2 names the same buses, so it gives the same segments.
     @test !any(r -> occursin("Multi-section line", r.message), logger.logs)
     ms = sort(collect(values(pm_data["multisection_line"])); by = m -> m["index"])
     @test [m["source_id"] for m in ms] ==

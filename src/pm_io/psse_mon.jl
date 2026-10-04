@@ -11,7 +11,7 @@ function _mon_warn(path::String, n::Int, text::String, reason::String)
     return
 end
 
-# RAW bus number => PM bus key; star and node buses carry another source_id.
+# RAW bus number => PM bus key. Star buses and node buses have another source_id.
 function _raw_buses(pm::Dict)
     out = Dict{Int, Int}()
     for (key, b) in get(pm, "bus", Dict())
@@ -23,7 +23,7 @@ function _raw_buses(pm::Dict)
     return out
 end
 
-# Returns (raw bus numbers, reason); reason is empty when the selector resolves.
+# Returns (raw bus numbers, reason). The reason is empty when the selector resolves.
 function _sub_selector(pm::Dict, raw::Dict{Int, Int}, toks::Vector{String})
     head = first(toks)
     args = toks[2:end]
@@ -61,8 +61,8 @@ function _sub_selector(pm::Dict, raw::Dict{Int, Int}, toks::Vector{String})
     return none, "unsupported subsystem record"
 end
 
-# Subsystem name => RAW bus numbers. A plain block unions its selectors; a nested JOIN ... END
-# intersects its own, and joins union into the subsystem like any other selector.
+# Subsystem name => RAW bus numbers. A plain block unions its selectors. A nested JOIN ... END
+# intersects its own selectors, and the subsystem unions the result like any other selector.
 function _read_subsystems(pm::Dict, raw::Dict{Int, Int}, sub_path::String)
     subs = Dict{String, Set{Int}}()
     if isempty(sub_path)
@@ -135,7 +135,7 @@ function _read_subsystems(pm::Dict, raw::Dict{Int, Int}, sub_path::String)
     return subs
 end
 
-# Returns ([section, key] of in-service branch-like elements, RAW bus numbers of each element's ends).
+# Returns ([section, key] of each in-service branch-like element, RAW bus numbers of its ends).
 function _branch_ends(pm::Dict)
     keys_ = Vector{String}[]
     ends = Vector{Int}[]
@@ -188,26 +188,41 @@ end
 """
     add_monitored!(pm::Dict, mon_path::String; sub_path::String = "")
 
-Read a PSS/E monitored-element (`.mon`) file, with subsystems from the `.sub` file `sub_path`,
-into `pm["monitor"] = Dict("branches" => [[section, key], ...], "buses" => [PM bus keys],
-"voltage_band" => (lo, hi))`. `section` is the PM section holding the element (`branch`,
-`switch`, `breaker`, `generic_connector`, `3w_transformer`); keys collide across sections, so
-a branch is the pair. Pairs are unique, in first-seen order. The band is `(-Inf, Inf)` without a voltage-range record.
+Read a PSS/E monitored-element (`.mon`) file, with subsystems from the `.sub` file `sub_path`.
+Store the result in `pm["monitor"] = Dict("branches" => [[section, key], ...],
+"buses" => [PM bus keys], "voltage_band" => (lo, hi), "all_branches" => Bool)`.
 
-`.mon` records: `MONITOR ALL BRANCHES`; `MONITOR BRANCHES IN SUBSYSTEM s`; `MONITOR TIES
-FROM SUBSYSTEM s`; `MONITOR VOLTAGE RANGE SUBSYSTEM s lo hi` (per unit; the subsystem's buses
-are monitored). `.sub` records: `SUBSYSTEM s` ... `END` holding `AREA`, `ZONE`, `OWNER` (numbers
-matched to the bus entry's field), `KVRANGE lo hi` (kV, `base_kv`) and `BUS` (RAW bus numbers),
-unioned; a nested `JOIN` ... `END` intersects its selectors.
+The field `all_branches` is true when the file has `MONITOR ALL BRANCHES`. A document without
+`monitored_components` monitors all branches. The `section` is the PM section
+of the element: `branch`, `switch`, `breaker`, `generic_connector` or `3w_transformer`. Keys
+collide across sections, so a branch is the pair. The pairs are unique, in first-seen order.
+Without a voltage-range record, the band is `(-Inf, Inf)`.
 
-No real `.mon` / `.sub` file was available, so semantics are inferred. Only in-service
-branches, switching devices and three-winding transformers are considered, with ends taken from
-`source_id` (RAW buses, not routed node-buses). `IN` = every end in the subsystem; `TIES` = some
-but not all ends in it.
+The `.mon` records are:
 
-A bad record (unsupported, undefined subsystem, unknown area or bus, a voltage range that
-differs from an earlier one) is skipped with a `@warn` naming file, line and record, and the
-rest of the file is processed. Only an unreadable file throws.
+  - `MONITOR ALL BRANCHES`
+  - `MONITOR BRANCHES IN SUBSYSTEM s`
+  - `MONITOR TIES FROM SUBSYSTEM s`
+  - `MONITOR VOLTAGE RANGE SUBSYSTEM s lo hi`, in per unit. It monitors the buses of the
+    subsystem.
+
+A `.sub` record `SUBSYSTEM s` ... `END` holds these selectors. The function unions them:
+
+  - `AREA`, `ZONE` and `OWNER`: numbers that match the field of the bus entry.
+  - `KVRANGE lo hi`: kV, compared with `base_kv`.
+  - `BUS`: RAW bus numbers.
+
+A nested `JOIN` ... `END` intersects its selectors.
+
+No real `.mon` or `.sub` file was available, so the author inferred the semantics. The function
+considers only in-service branches, switching devices and three-winding transformers. It takes
+their ends from `source_id` (RAW buses, not routed node-buses). `IN` means that every end is in
+the subsystem. `TIES` means that some ends, but not all, are in the subsystem.
+
+A bad record causes a skip with a `@warn` that names the file, the line and the record. The
+function then processes the rest of the file. These records are bad: an unsupported record, an
+undefined subsystem, an unknown area or bus, and a voltage range that differs from an earlier
+one. Only an unreadable file throws an error.
 """
 function add_monitored!(pm::Dict, mon_path::String; sub_path::String = "")
     raw = _raw_buses(pm)
@@ -217,12 +232,14 @@ function add_monitored!(pm::Dict, mon_path::String; sub_path::String = "")
     buses = Int[]
     band = (-Inf, Inf)
     has_band = false
+    all_branches = false
     for (n, text, toks) in _con_records(mon_path)
         if toks == ["END"]
             break
         end
         if first(_con_match(toks, _con_pattern("MONITOR ALL BRANCHES")))
             append!(branches, keys_)
+            all_branches = true
             continue
         end
         ok, _, caps = _con_match(toks, _con_pattern("MONITOR BRANCHES IN SUBSYSTEM *"))
@@ -268,6 +285,29 @@ function add_monitored!(pm::Dict, mon_path::String; sub_path::String = "")
         "branches" => unique!(branches),
         "buses" => sort!(unique!(buses)),
         "voltage_band" => band,
+        "all_branches" => all_branches,
+    )
+    return
+end
+
+"""
+    monitor_all_branches!(pm::Dict)
+
+Set `pm["monitor"]` to monitor every in-service branch, switching device and three-winding
+transformer. The result has the same `"branches"` pairs as a `.mon` file with
+`MONITOR ALL BRANCHES`, no buses, the band `(-Inf, Inf)` and `"all_branches" => true`.
+
+Use it when no `.mon` file exists and the caller wants to monitor all branches. The OpenAPI
+emitter writes no `monitored_components` for it. A document without `monitored_components`
+monitors all branches.
+"""
+function monitor_all_branches!(pm::Dict)
+    keys_, _ = _branch_ends(pm)
+    pm["monitor"] = Dict{String, Any}(
+        "branches" => keys_,
+        "buses" => Int[],
+        "voltage_band" => (-Inf, Inf),
+        "all_branches" => true,
     )
     return
 end

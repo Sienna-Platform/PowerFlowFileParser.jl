@@ -71,7 +71,24 @@ has_warn(msgs, pats...) = any(m -> all(p -> occursin(p, m), pats), msgs)
               Set(["branch", "switch", "breaker", "3w_transformer"])
         @test isempty(m["buses"])
         @test m["voltage_band"] == (-Inf, Inf)
+        @test m["all_branches"]
         @test isempty(msgs)
+    end
+
+    @testset "all_branches is false without MONITOR ALL BRANCHES" begin
+        pm = mon_pm()
+        m, _ =
+            run_monitored(pm, "MONITOR BRANCHES IN SUBSYSTEM AREA2\nEND\n"; sub = SUB_BODY)
+        @test haskey(m, "all_branches")
+        @test !m["all_branches"]
+    end
+
+    @testset "monitor_all_branches! matches MONITOR ALL BRANCHES" begin
+        from_file, _ = run_monitored(mon_pm(), "MONITOR ALL BRANCHES\nEND\n")
+        pm = mon_pm()
+        PFFP.monitor_all_branches!(pm)
+        @test pm["monitor"] == from_file
+        @test pm["monitor"]["all_branches"]
     end
 
     @testset "pairs are unique and in first-seen order" begin
@@ -229,4 +246,16 @@ end
     @test !haskey(pm, "contingency")
     pm = PFFP.parse_file(raw; mon_file = mon)
     @test !isempty(pm["monitor"]["branches"])
+    pm = PFFP.PowerModelsData(raw; monitor_all_branches = true).data
+    @test pm["monitor"]["all_branches"]
+    @test pm["monitor"]["branches"] ==
+          run_monitored(mon_pm(), "MONITOR ALL BRANCHES\nEND\n")[1]["branches"]
+    pm = PFFP.parse_file(raw; monitor_all_branches = true)
+    @test pm["monitor"]["all_branches"]
+    @test_throws r"alternatives" PFFP.parse_file(
+        raw; monitor_all_branches = true, mon_file = mon,
+    )
+    @test_throws ArgumentError PFFP.PowerModelsData(
+        raw; monitor_all_branches = true, mon_file = mon,
+    )
 end

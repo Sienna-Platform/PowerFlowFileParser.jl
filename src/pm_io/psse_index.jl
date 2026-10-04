@@ -10,7 +10,7 @@ function _triple(a::Integer, b::Integer, c::Integer)
     return (s[1], s[2], s[3])
 end
 
-# A transformer's source_id carries a winding-3 bus slot, so its circuit sits one place later.
+# The source_id of a transformer has a winding-3 bus slot, so its circuit is one place later.
 function _branch_ckt(sid::Vector)
     if sid[1] == "transformer"
         return _segment_ckt(sid[5])
@@ -24,9 +24,10 @@ function _index_add!(index::Dict, key, target)
 end
 
 """
-Lookup tables from the identity a `.con` record names to PM-dict `(section, key)` targets,
-built once from `source_id` (the RAW's own bus numbers, correct under node-breaker routing).
-Every value is a vector so duplicate identities surface as ambiguity instead of overwriting.
+Lookup tables from the identity that a `.con` record names to PM-dict `(section, key)` targets.
+The constructor builds the tables once from `source_id`. That field has the bus numbers of the
+RAW, which stay correct under node-breaker routing. Every value is a vector, so a duplicate
+identity gives an ambiguity and does not overwrite an entry.
 """
 struct _PsseIndex
     branch::Dict{Tuple{Tuple{Int, Int}, String}, Vector{_Target}}
@@ -37,6 +38,63 @@ struct _PsseIndex
     switched_shunt::Dict{Tuple{Int, String}, Vector{_Target}}
     bus::Dict{Int, Int}
     multisection::Dict{Tuple{Tuple{Int, Int}, String}, Vector{Vector{_Target}}}
+    attached::Dict{Int, Vector{_Target}}
+    blocking::Dict{Int, String}
+end
+
+# In-service branch-like elements and injectors, by RAW bus number. A bus outage removes them.
+const _ATTACHED_BRANCH_SECTIONS = ("branch", "switch", "breaker", "generic_connector")
+const _ATTACHED_INJECTOR_SECTIONS = ("gen", "load", "shunt", "switched_shunt")
+
+function _in_service(e::Dict, section::String)
+    return !iszero(e[_CON_STATUS_KEY[section]])
+end
+
+function _raw_bus(pm::Dict, key::Integer)
+    return _sid_bus(pm["bus"][key]["source_id"][2])
+end
+
+function _index_attached!(index::_PsseIndex, pm::Dict)
+    empty = Dict{String, Any}()
+    for section in _ATTACHED_BRANCH_SECTIONS
+        for (key, e) in get(pm, section, empty)
+            if _in_service(e, section)
+                sid = e["source_id"]
+                for bus in (_sid_bus(sid[2]), _sid_bus(sid[3]))
+                    _index_add!(index.attached, bus, (section, key))
+                end
+            end
+        end
+    end
+    for section in _ATTACHED_INJECTOR_SECTIONS
+        for (key, e) in get(pm, section, empty)
+            if _in_service(e, section)
+                _index_add!(index.attached, _sid_bus(e["source_id"][2]), (section, key))
+            end
+        end
+    end
+    for e in values(get(pm, "3w_transformer", empty))
+        if _in_service(e, "3w_transformer")
+            for bus in e["source_id"][2:4]
+                get!(index.blocking, _sid_bus(bus), "a three-winding transformer")
+            end
+        end
+    end
+    for section in ("dcline", "vscline")
+        for e in values(get(pm, section, empty))
+            for bus in (e["f_bus"], e["t_bus"])
+                get!(index.blocking, _raw_bus(pm, bus), "a DC line or FACTS device")
+            end
+        end
+    end
+    for e in values(get(pm, "facts", empty))
+        for bus in (e["bus"], e["tbus"])
+            if !iszero(bus)
+                get!(index.blocking, _raw_bus(pm, bus), "a DC line or FACTS device")
+            end
+        end
+    end
+    return
 end
 
 function _PsseIndex(pm::Dict)
@@ -50,8 +108,10 @@ function _PsseIndex(pm::Dict)
         Dict(),
         Dict(),
         Dict(),
+        Dict(),
+        Dict(),
     )
-    for section in ("branch", "switch", "breaker", "generic_connector")
+    for section in _ATTACHED_BRANCH_SECTIONS
         for (key, e) in get(pm, section, empty)
             sid = e["source_id"]
             _index_add!(
@@ -98,5 +158,6 @@ function _PsseIndex(pm::Dict)
             [(String(s[1]), String(s[2])) for s in e["segments"]],
         )
     end
+    _index_attached!(index, pm)
     return index
 end
