@@ -2574,53 +2574,72 @@ function _psse2pm_switch_breaker!(pm_data::Dict, pti_data::Dict, import_all::Boo
     return
 end
 
-function _psse2pm_multisection_line!(pm_data::Dict, pti_data::Dict, import_all::Bool)
-    @info "Adding PSS(R)E Multi-section Lines data into the branches PowerModels Dict..."
-    branch_lookup = Dict{Tuple{Int, Int}, Int}()
-    if haskey(pm_data, "branch")
-        for branch in pm_data["branch"]
-            # MULTI-SECTION LINE records name their segments by the bus numbers the RAW
-            # file declared, so the lookup is keyed on the branch's PSS(R)E identity
-            # rather than on endpoints that may have been routed to node-buses.
-            sid = get(branch, "source_id", nothing)
-            key = if sid !== nothing && sid[1] == "branch"
-                (sid[2]::Int, sid[3]::Int)
-            else
-                (branch["f_bus"], branch["t_bus"])
-            end
-            branch_lookup[key] = branch["index"]
+_segment_ckt(ckt::AbstractString) = uppercase(strip(ckt))
+
+function _segment_lookup(pm_data::Dict)
+    lookup = Dict{Tuple{Int, Int}, Vector{Tuple{String, Int}}}()
+    for section in ("branch", "switch", "breaker", "generic_connector")
+        for element in pm_data[section]
+            sid = element["source_id"]
+            push!(
+                get!(
+                    lookup,
+                    (min(sid[2], sid[3]), max(sid[2], sid[3])),
+                    Tuple{String, Int}[],
+                ),
+                (section, element["index"]),
+            )
         end
     end
-    if haskey(pti_data, "MULTI-SECTION LINE")
-        for multisec_line in pti_data["MULTI-SECTION LINE"]
-            filter!(x -> x.second != "", multisec_line)
-            f_bus = multisec_line["I"]
-            t_bus = multisec_line["J"]
-            id = filter(isdigit, multisec_line["ID"])
-            # Sort by dummy bus index
-            dummy_buses = sort([
-                (k, v) for (k, v) in multisec_line if startswith(k, "DUM") && v != ""
-            ])
-            dummy_bus_numbers = [x[2] for x in dummy_buses]
-            all_buses = [f_bus; dummy_bus_numbers; t_bus]
-            for ix in 1:(length(all_buses) - 1)
-                branch_index = nothing
-                if haskey(branch_lookup, (all_buses[ix], all_buses[ix + 1]))
-                    branch_index = branch_lookup[(all_buses[ix], all_buses[ix + 1])]
-                elseif haskey(branch_lookup, (all_buses[ix + 1], all_buses[ix]))
-                    branch_index = branch_lookup[(all_buses[ix + 1], all_buses[ix])]
-                else
-                    @warn "Branch between buses $(all_buses[ix]) and $(all_buses[ix + 1]) not found in branch data. Skipping segment."
-                    continue
-                end
-                # Proceed if a valid branch is found
-                if branch_index !== nothing
-                    ext = get(pm_data["branch"][branch_index], "ext", Dict{String, Any}())
-                    ext["from_multisection"] = true
-                    ext["multisection_psse_entry"] = multisec_line
-                    pm_data["branch"][branch_index]["ext"] = ext
-                end
+    return lookup
+end
+
+function _psse2pm_multisection_line!(pm_data::Dict, pti_data::Dict, import_all::Bool)
+    @info "Adding PSS(R)E Multi-section Lines data into the branches PowerModels Dict..."
+    pm_data["multisection_line"] = []
+    if !haskey(pti_data, "MULTI-SECTION LINE")
+        return
+    end
+    # Segments are matched on the bus numbers the RAW file declared (source_id), not on
+    # endpoints that may have been routed to node-buses.
+    lookup = _segment_lookup(pm_data)
+    for multisec_line in pti_data["MULTI-SECTION LINE"]
+        filter!(x -> x.second != "", multisec_line)
+        f_bus = multisec_line["I"]
+        t_bus = multisec_line["J"]
+        id = multisec_line["ID"]
+        dummy_buses = sort([
+            (k, v) for (k, v) in multisec_line if startswith(k, "DUM") && v != ""
+        ])
+        all_buses = [f_bus; [x[2] for x in dummy_buses]; t_bus]
+        segments = Vector{Any}()
+        for ix in 1:(length(all_buses) - 1)
+            a, b = all_buses[ix], all_buses[ix + 1]
+            candidates = get(lookup, (min(a, b), max(a, b)), Tuple{String, Int}[])
+            if isempty(candidates)
+                @warn "Multi-section line $f_bus-$t_bus '$id': no branch or switching device between buses $a and $b. Omitting the line from \"multisection_line\"."
+                continue
+            elseif length(candidates) > 1
+                @warn "Multi-section line $f_bus-$t_bus '$id': buses $a-$b have $(length(candidates)) parallel circuits, so the segment is ambiguous. Omitting the line from \"multisection_line\"."
+                continue
             end
+            section, index = only(candidates)
+            push!(segments, [section, string(index)])
+            segment = pm_data[section][index]
+            ext = get(segment, "ext", Dict{String, Any}())
+            ext["from_multisection"] = true
+            ext["multisection_psse_entry"] = multisec_line
+            segment["ext"] = ext
+        end
+        if length(segments) == length(all_buses) - 1
+            push!(
+                pm_data["multisection_line"],
+                Dict{String, Any}(
+                    "index" => length(pm_data["multisection_line"]) + 1,
+                    "source_id" => ["multisection_line", f_bus, t_bus, id],
+                    "segments" => segments,
+                ),
+            )
         end
     end
     return

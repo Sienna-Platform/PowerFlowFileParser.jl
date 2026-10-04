@@ -7,6 +7,8 @@ module PowerFlowFileParser
 
 export PowerModelsData
 export parse_file
+export add_contingencies!
+export add_monitored!
 export OpenAPISystem
 export to_json
 export build_openapi_system
@@ -57,6 +59,7 @@ include("openapi/switch_breaker.jl")
 include("openapi/dc_branch.jl")
 include("openapi/shunt.jl")
 include("openapi/attributes.jl")
+include("openapi/contingency.jl")
 include("openapi/device_base.jl")
 include("openapi/build.jl")
 

@@ -29,6 +29,10 @@ Currently Supports MATPOWER and PSSE data files parsed by PowerModels.
 - `correct_branch_rating::Bool=true`: Correct branch ratings during parsing
 - `solved_case::Bool=false`: Treat a PSS(R)E .raw file as written out from a converged
   power flow, so switched shunts take BINIT as their solved admittance
+- `con_files::Vector{String}=String[]`: PSS/E `.con` files, added with `add_contingencies!`
+  once per file, after transformer status correction
+- `mon_file::String=""`: PSS/E `.mon` file, added with `add_monitored!` (semantics unverified)
+- `sub_file::String=""`: PSS/E `.sub` file defining the subsystems `mon_file` refers to
 
 # Example
 ```julia
@@ -50,6 +54,12 @@ function PowerModelsData(file::Union{String, IO}; kwargs...)
     )
     pm_data = PowerModelsData(pm_dict)
     correct_pm_transformer_status!(pm_data)
+    add_con_mon_files!(
+        pm_data.data;
+        con_files = get(kwargs, :con_files, String[]),
+        mon_file = get(kwargs, :mon_file, ""),
+        sub_file = get(kwargs, :sub_file, ""),
+    )
     return pm_data
 end
 

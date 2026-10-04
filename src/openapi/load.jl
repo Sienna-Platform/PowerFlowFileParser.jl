@@ -185,7 +185,7 @@ function read_loads!(sys::OpenAPISystem, data::Dict; kwargs...)
     end
     unmatched_dgen_keys = Set(keys(dgen_lookup))
 
-    for (_, d) in _sorted_pm_entries(data["load"])
+    for (d_key, d) in _sorted_pm_entries(data["load"])
         bus_id = get_bus_id(reg, Int(d["load_bus"]))
         name = String(_get_name(d))
         is_interruptible = haskey(d, "interruptible")
@@ -196,6 +196,7 @@ function read_loads!(sys::OpenAPISystem, data::Dict; kwargs...)
         else
             _make_power_load!(sys, reg, bus_id, d, name, base_power)
         end
+        record_source!(reg, "load", d_key)
 
         load_source_id = get(d, "source_id", String[])
         if length(load_source_id) >= 3 && load_source_id[1] == "load"

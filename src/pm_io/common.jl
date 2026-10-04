@@ -5,6 +5,9 @@
         validate = true,
         correct_branch_rating = true,
         solved_case = false,
+        con_files = String[],
+        mon_file = "",
+        sub_file = "",
     )
 
 Parses a Matpower .m `file` or PTI (PSS(R)E-v33) .raw `file` into a
@@ -12,6 +15,12 @@ PowerModels data structure. All fields from PTI files will be imported if
 `import_all` is true (Default: false). Set `solved_case` when a .raw file was written out
 after a converged power flow: its switched shunts then take BINIT as their solved
 admittance rather than reconstructing one from the engaged blocks.
+
+PSS/E `con_files` are added with [`add_contingencies!`](@ref), once per file in order, and
+`mon_file` (with the optional `sub_file`) with [`add_monitored!`](@ref). Without them the
+result has no `"contingency"` or `"monitor"` key. Bad contingency or monitor records are
+skipped with a warning rather than failing the file; the `.mon` / `.sub` semantics are
+unverified (see [`add_monitored!`](@ref)).
 """
 function parse_file(
     file::String;
@@ -19,6 +28,9 @@ function parse_file(
     validate = true,
     correct_branch_rating = true,
     solved_case = false,
+    con_files = String[],
+    mon_file = "",
+    sub_file = "",
 )
     pm_data = open(file) do io
         pm_data = parse_file(
@@ -30,7 +42,26 @@ function parse_file(
             filetype = split(lowercase(file), '.')[end],
         )
     end
+    add_con_mon_files!(
+        pm_data;
+        con_files = con_files,
+        mon_file = mon_file,
+        sub_file = sub_file,
+    )
     return pm_data
+end
+
+function add_con_mon_files!(pm::Dict; con_files, mon_file, sub_file)
+    if isempty(mon_file) && !isempty(sub_file)
+        throw(ArgumentError("sub_file $sub_file given without mon_file"))
+    end
+    for con_file in con_files
+        add_contingencies!(pm, con_file)
+    end
+    if !isempty(mon_file)
+        add_monitored!(pm, mon_file; sub_path = sub_file)
+    end
+    return
 end
 
 "Parses the iostream from a file"
