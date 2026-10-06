@@ -24,20 +24,25 @@
 # Its `r_primary`/`x_primary`/... and pairwise `r_12`/`x_12`/... are, like the 2W case,
 # rebased by `psse.jl` onto their own winding base and passed through as device-base pu.
 
+const _REQUIRED_RATING_KEYS =
+    ("rate_a", "rating_primary", "rating_secondary", "rating_tertiary")
+
 """
 Rating from a pm branch/transformer dict entry, matching PSCB's `_get_rating`: an absent
-`"rate_a"` key means "unbounded" (`INFINITE_BOUND`); an absent `"rate_b"`/`"rate_c"`/
-`"rating_primary"`/etc. means "not specified" (`nothing`, left to the schema's own
-optional field). A present-but-zero value also means "unbounded" — PSS/E's own convention
+`"rate_a"` or `"rating_primary"`/`"rating_secondary"`/`"rating_tertiary"` key means
+"unbounded" (`INFINITE_BOUND`), because the schema requires those ratings; an absent
+`"rate_b"`/`"rate_c"` means "not specified" (`nothing`, left to the schema's own optional
+field). A present-but-zero value also means "unbounded" — PSS/E's own convention
 for an unset rating (matpower's own zero-rating convention lands here too since PFFP's
 matpower parser leaves zero rate_a in place rather than deleting the key, unlike the
 PSS/E path).
 """
 function _get_rating(name::AbstractString, d::Dict, key::AbstractString)
     if !haskey(d, key)
-        # Ternary exception: verbatim port of the oracle's own
-        # `key == "rate_a" ? INFINITE_BOUND : nothing` (`_get_rating`).
-        return key == "rate_a" ? INFINITE_BOUND : nothing
+        if key in _REQUIRED_RATING_KEYS
+            return INFINITE_BOUND
+        end
+        return nothing
     end
     if isapprox(d[key], 0.0)
         @info "$name rating $key value: $(d[key]). Unbounded value implied as per PSS/E manual."
@@ -277,7 +282,7 @@ function _make_transformer_circuit!(
     set_value!(circuit, :x, x, "pu")
     _set_transformer_control_fields!(circuit, d, control_suffix, record)
     set_value!(circuit, :base_power, base_power, "MVA")
-    set_optional_value!(circuit, :rating, rating, "MVA")
+    set_value!(circuit, :rating, rating, "MVA")
     set_optional_value!(circuit, :rating_b, rating_b, "MVA")
     set_optional_value!(circuit, :rating_c, rating_c, "MVA")
     set_value!(circuit, :active_power_flow, active_power_flow, "MW")
