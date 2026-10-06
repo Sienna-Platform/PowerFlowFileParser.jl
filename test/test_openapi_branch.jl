@@ -123,16 +123,20 @@ end
     @test PFP.get_value(circuit, :rating) ≈ d["rate_a"] * d["base_power"]
     @test PFP.get_value(circuit, :active_power_flow) == 0.0
     @test PFP.get_value(circuit, :reactive_power_flow) == 0.0
-    # COD1 = 0 => FIXED; RMI1/RMA1/VMI1/VMA1 are the schema defaults, present verbatim.
+    # COD1 = 0 => FIXED selects the tap band and the voltage band; the other three bands
+    # stay absent. RMI1/RMA1/VMI1/VMA1 are the schema defaults, present verbatim.
     @test PFP.get_value(circuit, :control_objective) == "FIXED"
     @test _matches_nt(
-        PFP.get_value(circuit, :control_limits),
+        PFP.get_value(circuit, :tap_ratio_limits),
         (min = d["RMI1"], max = d["RMA1"]),
     )
     @test _matches_nt(
-        PFP.get_value(circuit, :controlled_quantity_limits),
+        PFP.get_value(circuit, :controlled_voltage_limits),
         (min = d["VMI1"], max = d["VMA1"]),
     )
+    @test PFP.get_value(circuit, :phase_angle_limits) isa PFP.IC.Absent
+    @test PFP.get_value(circuit, :controlled_reactive_power_flow_limits) isa PFP.IC.Absent
+    @test PFP.get_value(circuit, :controlled_active_power_flow_limits) isa PFP.IC.Absent
     @test PFP.get_value(circuit, :number_of_tap_positions) == Int(d["NTP1"])
 
     transformer = _two_winding_transformer_for(sys, circuit)
@@ -307,46 +311,53 @@ end
     @test !isnothing(_two_winding_transformer_for(sys, circuit))
 end
 
-@testset "TransformerCircuit.controlled_quantity_limits passes through UNSCALED under COMPONENT_BASE for a power-flow-family control_objective" begin
-    # Regression: `controlled_quantity_limits`'s schema quantity DOES switch with
-    # `control_objective` (pu for VOLTAGE-family objectives, MW/MVAr for ACTIVE_POWER_FLOW/
-    # REACTIVE_POWER_FLOW/CONTROL_OF_DC_LINE-family ones), which made a first cut of the
-    # COMPONENT_BASE registry classify it `:dynamic` (converting the power-flow-family
-    # branches by the circuit's own base_power). That was wrong: PowerSystems' own
-    # `to_openapi` calls the SAME unscaled `_minmax_po(get_controlled_quantity_limits(...))`
-    # in BOTH `ComponentBaseUnit` and `NaturalUnit` (export_handwritten.jl:166-167, :195-196) —
-    # this field never scales with the document convention, regardless of
-    # `control_objective`. Invisible on the 14-bus fixture because every circuit there is
-    # `control_objective = "FIXED"` (already `:skip` either way) — this test uses
-    # `COD1 = 3` ("ACTIVE_POWER_FLOW", MW-declared) specifically to exercise the branch
-    # the bug was in.
-    #
-    # base_power = 50, sys_mbase = 100 (base_conversion-sensitive, same discipline as the
-    # storage/generator COMPONENT_BASE tests): active_power_flow/reactive_power_flow DO
-    # convert (10.0/50.0 = 0.2, 5.0/50.0 = 0.1) so this test also proves the fix did not
-    # collaterally stop scaling this circuit's other power fields. controlled_quantity_limits
-    # must come out exactly (50.0, 150.0) -- if it were wrongly divided by base_power = 50
-    # it would read (1.0, 3.0) instead, a clearly different and wrong number.
-    sys = PFP.OpenAPISystem(100.0; power_units = "COMPONENT_BASE")
+function _control_test_circuit(d::Dict; power_units = "COMPONENT_BASE")
+    sys = PFP.OpenAPISystem(100.0; power_units = power_units)
     reg = PFP.get_registry(sys)
     from_id = _register_bus!(sys, 1, "b1")
     to_id = _register_bus!(sys, 2, "b2")
-    d = Dict{String, Any}(
-        "tap" => 1.0, "shift" => 0.0,
-        "COD1" => 3, "RMI1" => -10.0, "RMA1" => 10.0, "VMI1" => 50.0, "VMA1" => 150.0,
-    )
+    merged = merge(Dict{String, Any}("tap" => 1.0, "shift" => 0.0), d)
     PFP._make_transformer_circuit!(
-        sys, reg, d, from_id, to_id, "test_xfmr";
+        sys, reg, merged, from_id, to_id, "test_xfmr";
         tap_key = "tap", angle_key = "shift", control_suffix = 1, available = true,
         r = 0.01, x = 0.05, rating = 100.0, rating_b = nothing, rating_c = nothing,
         base_power = 50.0, base_voltage_primary = 100.0, base_voltage_secondary = 100.0,
         active_power_flow = 10.0, reactive_power_flow = 5.0,
     )
     PFP.apply_device_base_conversion!(sys)
-    circuit = only(PFP.get_components(sys, "TransformerCircuit"))
+    return only(PFP.get_components(sys, "TransformerCircuit"))
+end
+
+const _BAND_FIELDS = (
+    :tap_ratio_limits, :phase_angle_limits, :controlled_voltage_limits,
+    :controlled_reactive_power_flow_limits, :controlled_active_power_flow_limits,
+)
+_absent_bands(circuit) =
+    Tuple(f for f in _BAND_FIELDS if PFP.get_value(circuit, f) isa PFP.IC.Absent)
+
+@testset "TransformerCircuit power-flow target band converts by the circuit's own base under COMPONENT_BASE" begin
+    # COD1 = 3 (ACTIVE_POWER_FLOW) selects the angle band, written in radians, and the
+    # MW band. The MW band is a power field on the circuit base (50 MVA here, not the
+    # 100 MVA system base), so under COMPONENT_BASE it divides like `active_power_flow`
+    # does: 50/50 = 1.0, 150/50 = 3.0. Under the old single polymorphic field this band
+    # was never converted; the split is what lets it carry a unit of its own.
+    circuit = _control_test_circuit(
+        Dict{String, Any}(
+            "COD1" => 3, "RMI1" => -10.0, "RMA1" => 10.0, "VMI1" => 50.0,
+            "VMA1" => 150.0,
+        ),
+    )
     @test PFP.get_value(circuit, :control_objective) == "ACTIVE_POWER_FLOW"
-    @test PFP.get_value(circuit, :controlled_quantity_limits).min == 50.0
-    @test PFP.get_value(circuit, :controlled_quantity_limits).max == 150.0
+    @test PFP.get_value(circuit, :phase_angle_limits).min ≈ deg2rad(-10.0)
+    @test PFP.get_value(circuit, :phase_angle_limits).max ≈ deg2rad(10.0)
+    @test PFP.get_value(circuit, :controlled_active_power_flow_limits).min == 1.0
+    @test PFP.get_value(circuit, :controlled_active_power_flow_limits).max == 3.0
+    @test _absent_bands(circuit) ==
+          (
+        :tap_ratio_limits,
+        :controlled_voltage_limits,
+        :controlled_reactive_power_flow_limits,
+    )
     @test PFP.get_value(circuit, :active_power_flow) ≈ 0.2
     @test PFP.get_value(circuit, :reactive_power_flow) ≈ 0.1
     @test PFP.get_value(circuit, :base_power) == 50.0
@@ -366,4 +377,63 @@ end
     @test PFP.get_value(kept, :x) == 0.05
     @test PFP.get_value(kept, :rating) == 40.0
     @test length(PFP.get_components(sys, "Line")) == 2
+end
+
+@testset "TransformerCircuit bands follow the presence flags: defaults only where 0.9-1.1 is a real default" begin
+    # No COD at all: no control block, every band absent (no invented limits).
+    uncontrolled = _control_test_circuit(Dict{String, Any}())
+    @test PFP.get_value(uncontrolled, :control_objective) == "UNDEFINED"
+    @test _absent_bands(uncontrolled) == _BAND_FIELDS
+
+    # COD1 = 2 with the target columns omitted: the 0.9/1.1 the pti layer substituted is a
+    # voltage default, so the MVAr band stays absent rather than carrying it (B1).
+    q_omitted = _control_test_circuit(
+        Dict{String, Any}(
+            "COD1" => 2, "RMI1" => 0.9, "RMA1" => 1.1, "VMI1" => 0.9, "VMA1" => 1.1,
+            "RM_PRESENT1" => false, "VM_PRESENT1" => false,
+        ),
+    )
+    @test _matches_nt(PFP.get_value(q_omitted, :tap_ratio_limits), (min = 0.9, max = 1.1))
+    @test :controlled_reactive_power_flow_limits in _absent_bands(q_omitted)
+
+    # COD1 = 1 with the target columns omitted: 0.9/1.1 is the right voltage default.
+    v_omitted = _control_test_circuit(
+        Dict{String, Any}(
+            "COD1" => 1, "RMI1" => 0.9, "RMA1" => 1.1, "VMI1" => 0.9, "VMA1" => 1.1,
+            "RM_PRESENT1" => false, "VM_PRESENT1" => false,
+        ),
+    )
+    @test _matches_nt(
+        PFP.get_value(v_omitted, :controlled_voltage_limits),
+        (min = 0.9, max = 1.1),
+    )
+    @test _matches_nt(PFP.get_value(v_omitted, :tap_ratio_limits), (min = 0.9, max = 1.1))
+
+    # COD1 = 3 with the actuator columns omitted: 0.9/1.1 degrees is not an angle band.
+    angle_omitted = _control_test_circuit(
+        Dict{String, Any}(
+            "COD1" => 3, "RMI1" => 0.9, "RMA1" => 1.1, "VMI1" => -20.0, "VMA1" => 20.0,
+            "RM_PRESENT1" => false, "VM_PRESENT1" => true,
+        ),
+    )
+    @test :phase_angle_limits in _absent_bands(angle_omitted)
+    @test PFP.get_value(angle_omitted, :controlled_active_power_flow_limits).max == 0.4
+
+    # A stated band under COD1 = 2 is written in MVAr and converts on the circuit base.
+    q_stated = _control_test_circuit(
+        Dict{String, Any}(
+            "COD1" => 2, "RMI1" => 0.95, "RMA1" => 1.05, "VMI1" => -25.0, "VMA1" =>
+                25.0,
+        ),
+    )
+    @test _matches_nt(
+        PFP.get_value(q_stated, :controlled_reactive_power_flow_limits),
+        (min = -0.5, max = 0.5),
+    )
+    @test _absent_bands(q_stated) ==
+          (
+        :phase_angle_limits,
+        :controlled_voltage_limits,
+        :controlled_active_power_flow_limits,
+    )
 end

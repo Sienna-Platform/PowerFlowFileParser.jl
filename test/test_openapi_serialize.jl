@@ -103,7 +103,7 @@ end
 @testset "to_json refuses to overwrite without force" begin
     path = joinpath(mktempdir(), "case.json")
     PFP.to_json(_serialize_test_system(), path)
-    # PD.write_document owns the "already exists" check for the JSON path now.
+    # PC.write_document owns the "already exists" check for the JSON path now.
     @test_throws PFP.IC.DocumentFormatError PFP.to_json(_serialize_test_system(), path)
     @test PFP.to_json(_serialize_test_system(), path; force = true) == path
 end
@@ -145,13 +145,13 @@ end
     end
 end
 
-@testset "a written document reads back through PD.read_document" begin
+@testset "a written document reads back through PC.read_document" begin
     sys = _serialize_test_system()
     path = joinpath(mktempdir(), "case.json")
     PFP.to_json(sys, path)
-    doc = PFP.PD.read_document(path)
-    area = only(PFP.PD.get_components(doc, "Area"))
+    doc = PFP.PC.read_document(path)
+    area = only(PFP.PC.get_components(doc, "Area"))
     @test PFP.get_value(area, :base_power) == 100.0
-    @test length(PFP.PD.get_components(doc, "ACBus")) == 1
-    @test length(PFP.PD.get_components(doc, "Area")) == 1
+    @test length(PFP.PC.get_components(doc, "ACBus")) == 1
+    @test length(PFP.PC.get_components(doc, "Area")) == 1
 end

@@ -1,5 +1,5 @@
 """
-The document PowerFlowFileParser emits, a thin wrapper over `PD.SystemDocument`.
+The document PowerFlowFileParser emits, a thin wrapper over `PC.SystemDocument`.
 
 `document` carries the components, the association tables, and `ext`. `base_power`
 is the system MVA base pm dict readers scale against; it is not part of the
@@ -14,7 +14,7 @@ name, bus number, arc) the document has no use for once built.
 Matpower carry no time series.
 """
 struct OpenAPISystem
-    document::PD.SystemDocument
+    document::PC.SystemDocument
     registry::IdRegistry
     time_series::Vector{IS.TimeSeriesData}
     base_power::Float64
@@ -41,7 +41,7 @@ function OpenAPISystem(
             ),
         )
     end
-    document = PD.SystemDocument()
+    document = PC.SystemDocument()
     return OpenAPISystem(
         document,
         IdRegistry(document),
@@ -60,7 +60,7 @@ Kept beside the components rather than inside them: the schemas describe what a
 component is, and this is whatever else the source data happened to state.
 """
 function set_ext!(sys::OpenAPISystem, component_id::Int, extras::Dict{String, Any})
-    PD.set_ext!(get_document(sys), component_id, extras)
+    PC.set_ext!(get_document(sys), component_id, extras)
     return
 end
 
@@ -75,7 +75,7 @@ function set_component_ext!(sys::OpenAPISystem, component, extras::Dict{String, 
     return
 end
 
-get_ext(sys::OpenAPISystem, component_id::Int) = PD.get_ext(get_document(sys), component_id)
+get_ext(sys::OpenAPISystem, component_id::Int) = PC.get_ext(get_document(sys), component_id)
 
 get_base_power(sys::OpenAPISystem) = sys.base_power
 get_registry(sys::OpenAPISystem) = sys.registry
@@ -102,7 +102,7 @@ function add_component!(sys::OpenAPISystem, staged::Staged{T}) where {T <: IC.AP
     if hasfield(T, :power_units)
         set_value!(staged, :power_units, sys.power_units)
     end
-    PD.add_component!(get_document(sys), materialize(staged))
+    PC.add_component!(get_document(sys), materialize(staged))
     return
 end
 
@@ -119,7 +119,7 @@ function add_supplemental_attribute!(
     attribute::Staged,
     component_id::Int,
 )
-    PD.add_supplemental_attribute!(get_document(sys), materialize(attribute), component_id)
+    PC.add_supplemental_attribute!(get_document(sys), materialize(attribute), component_id)
     return
 end
 
@@ -190,12 +190,12 @@ end
 
 """Attributes of one type, in the order they were added."""
 function get_supplemental_attributes(sys::OpenAPISystem, type_name::AbstractString)
-    return PD.get_supplemental_attributes(get_document(sys), type_name)
+    return PC.get_supplemental_attributes(get_document(sys), type_name)
 end
 
 function get_components(sys::OpenAPISystem, type_name::AbstractString)
-    return PD.get_components(get_document(sys), type_name)
+    return PC.get_components(get_document(sys), type_name)
 end
 
 """Type names in sorted order, so serialized output is deterministic."""
-component_type_names(sys::OpenAPISystem) = PD.component_type_names(get_document(sys))
+component_type_names(sys::OpenAPISystem) = PC.component_type_names(get_document(sys))

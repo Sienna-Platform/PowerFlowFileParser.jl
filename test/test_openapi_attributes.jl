@@ -85,11 +85,14 @@ end
         PFP.get_value(ict, :transformer_winding) == "TR2W_WINDING"
     )
     @test PFP.get_value(ict, :transformer_control_mode) == "PHASE_SHIFT_ANGLE"
-    curve = PFP.get_value(ict, :impedance_correction_curve)
+    # A phase-shift table lands on phase_angle_correction_curve, its x axis converted
+    # from PSS/E's degrees to the schema's radians; the tap-ratio curve stays absent.
+    @test PFP.get_value(ict, :tap_ratio_correction_curve) === PFP.ABSENT
+    curve = PFP.get_value(ict, :phase_angle_correction_curve)
     points = PFP.get_value(curve, :points)
     @test length(points) == length(x)
     for (i, point) in enumerate(points)
-        @test PFP.get_value(point, :x) == x[i]
+        @test PFP.get_value(point, :x) ≈ deg2rad(x[i])
         @test PFP.get_value(point, :y) == y[i]
     end
 
@@ -143,8 +146,8 @@ end
     sys = PFP.build_openapi_system(fourteen_bus_pm_data())
     path = joinpath(mktempdir(), "fourteen_bus_attributes.json")
     PFP.to_json(sys, path)
-    doc = PFP.PD.read_document(path)
-    icts = PFP.PD.get_supplemental_attributes(doc, "ImpedanceCorrectionData")
+    doc = PFP.PC.read_document(path)
+    icts = PFP.PC.get_supplemental_attributes(doc, "ImpedanceCorrectionData")
     @test length(icts) == 8
-    PFP.PD.validate_document(doc)
+    PFP.PC.validate_document(doc)
 end

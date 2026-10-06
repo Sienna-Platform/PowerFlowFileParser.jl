@@ -394,30 +394,18 @@ end
 end
 
 @testset "COMPONENT_BASE conversion errors loudly on an unregistered instance-dispatched field" begin
-    # Pins the structural guarantee: an
-    # instance-level-discriminated field with no verdict in
+    # Pins the structural guarantee: an instance-level-discriminated field with no verdict in
     # `_DEVICEBASE_INSTANCE_DISPATCHED` must error, not silently fall through unconverted.
-    # `TwoTerminalVSCLine.dc_setpoint_from` (governed by `dc_control_from`) is real and
-    # instance-dispatched today but deliberately not registered -- this package's readers
-    # never reach a document containing it without first hitting the recorded VSC
-    # voltage-control gap (`_vsc_voltage_control_unsupported`), so it is exactly the kind
-    # of "not yet classified" field the guard exists for.
-    vsc = PFP.stage(PFP.PO.TwoTerminalVSCLine)
-    PFP.set_value!(vsc, :id, 1)
-    PFP.set_value!(vsc, :name, "vsc")
-    PFP.set_value!(vsc, :available, true)
-    PFP.set_value!(vsc, :arc, 0)
-    PFP.set_value!(vsc, :power_units, "NATURAL_UNITS")
-    PFP.set_value!(vsc, :active_power_flow, 0.0, "MW")
-    PFP.set_value!(vsc, :active_power_limits_from, (min = 0.0, max = 0.0), "MW")
-    PFP.set_value!(vsc, :active_power_limits_to, (min = 0.0, max = 0.0), "MW")
-    PFP.set_value!(vsc, :rating, 0.0, "MVA")
-    PFP.set_value!(vsc, :base_power, 100.0, "MVA")
-    @test_throws ErrorException PFP._devicebase_classification(
-        PFP.materialize(vsc),
-        "TwoTerminalVSCLine",
-        :dc_setpoint_from,
+    # Every unit selector in the 0.2 schemas has a default, so `power_units` alone resolves
+    # each discriminated field and no component reaches this guard through
+    # `_devicebase_classification` today. The guard is checked directly, for the schema
+    # that adds a selector without a default.
+    @test_throws ErrorException PFP._devicebase_instance_dispatched(
+        "GenericArcImpedance",
+        :r,
     )
+    @test PFP._devicebase_instance_dispatched("FACTSControlDevice", :voltage_setpoint) ==
+          :skip
 end
 
 @testset "read_generation! on case5_strg.m builds real EnergyReservoirStorage entries" begin
@@ -539,10 +527,10 @@ end
 
 @testset "a fresh 14-bus document with loads and generators round-trips through PC" begin
     sys = PFP.build_openapi_system(fourteen_bus_pm_data())
-    PFP.PD.validate_document(PFP.get_document(sys))
+    PFP.PC.validate_document(PFP.get_document(sys))
     path = joinpath(mktempdir(), "fourteen_bus_gen.json")
     PFP.to_json(sys, path)
-    doc = PFP.PD.read_document(path)
-    @test length(PFP.PD.get_components(doc, "StandardLoad")) == 13
-    @test length(PFP.PD.get_components(doc, "ThermalStandard")) == 7
+    doc = PFP.PC.read_document(path)
+    @test length(PFP.PC.get_components(doc, "StandardLoad")) == 13
+    @test length(PFP.PC.get_components(doc, "ThermalStandard")) == 7
 end
