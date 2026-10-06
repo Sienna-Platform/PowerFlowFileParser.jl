@@ -86,7 +86,7 @@ _transformer_discriminator_pm_data() =
     @test PFP.get_value(circuit, :rating) ≈ d["rate_a"] * d["base_power"]
     @test PFP.get_value(circuit, :rating) ≈ 20.0
     @test _matches_nt(
-        PFP.get_value(circuit, :control_limits),
+        PFP.get_value(circuit, :tap_ratio_limits),
         (min = d["RMI1"], max = d["RMA1"]),
     )
 end
@@ -161,7 +161,7 @@ end
     @test PFP.get_value(circuit, :rating) ≈ 51.2
 end
 
-@testset "two-terminal DC line MDC=2 (current-controlled): power_mode=false, hand-derived power_demand" begin
+@testset "two-terminal DC line MDC=2 (current-controlled): control_mode=CURRENT, hand-derived power_demand" begin
     pm = _transformer_discriminator_pm_data()
     data = pm.data
     sys_mbase = data["baseMVA"]
@@ -174,14 +174,16 @@ end
     @test power_demand == 80.0
     @test d["pf"] ≈ power_demand / sys_mbase  # PowerModels' generic per-unit correction
     @test d["pf"] ≈ 0.8
-    @test !d["power_mode"]  # MDC != 1
+    @test d["control_mode"] == "CURRENT"  # MDC=2
     @test d["transfer_setpoint"] == 200.0  # raw SETVL, passed through regardless of MDC
     @test d["scheduled_dc_voltage"] == 400.0
 
     sys = PFP.build_openapi_system(pm)
     line = only(PFP.get_components(sys, "TwoTerminalLCCLine"))
-    @test !PFP.get_value(line, :power_mode)
-    @test PFP.get_value(line, :transfer_setpoint) == d["transfer_setpoint"]
+    # MDC=2: CURRENT holds the amperes schedule; the MW schedule stays absent.
+    @test PFP.get_value(line, :control_mode) == "CURRENT"
+    @test PFP.get_value(line, :current_transfer_setpoint) == d["transfer_setpoint"]
+    @test PFP.get_value(line, :power_transfer_setpoint) === PFP.ABSENT
     # Emit-layer scaling is uniform regardless of MDC (dc_branch.jl multiplies `pf` by
     # sys_mbase either way): 0.8 * 100.0 = 80.0 MW, matching the hand-derived power_demand
     # above — confirms MDC=2's current-based power_demand survives the full pipeline.

@@ -129,37 +129,37 @@ const TRANSFORMER_CONTROL_OBJECTIVE_NAMES = Dict(
     5 => "ASYMMETRIC_ACTIVE_POWER_FLOW",
 )
 
-"""COD values whose control objective is a phase-shift (angle) control rather than a tap
-(voltage/reactive) control."""
-const _PHASE_SHIFT_OBJECTIVES = (
-    "ACTIVE_POWER_FLOW",
-    "ACTIVE_POWER_FLOW_DISABLED",
-    "ASYMMETRIC_ACTIVE_POWER_FLOW",
-    "ASYMMETRIC_ACTIVE_POWER_FLOW_DISABLED",
+"""Objective → `(actuator, target)` band fields, one field per physical quantity; the same
+pairing PowerSystems validates against. `UNDEFINED` has no control block and no bands."""
+const _CONTROL_BAND_FIELDS = Dict{String, Union{Nothing, NTuple{2, Symbol}}}(
+    "UNDEFINED" => nothing,
+    "FIXED" => (:tap_ratio_limits, :controlled_voltage_limits),
+    "VOLTAGE" => (:tap_ratio_limits, :controlled_voltage_limits),
+    "VOLTAGE_DISABLED" => (:tap_ratio_limits, :controlled_voltage_limits),
+    "REACTIVE_POWER_FLOW" =>
+        (:tap_ratio_limits, :controlled_reactive_power_flow_limits),
+    "REACTIVE_POWER_FLOW_DISABLED" =>
+        (:tap_ratio_limits, :controlled_reactive_power_flow_limits),
+    "CONTROL_OF_DC_LINE" => (:tap_ratio_limits, :controlled_active_power_flow_limits),
+    "CONTROL_OF_DC_LINE_DISABLED" =>
+        (:tap_ratio_limits, :controlled_active_power_flow_limits),
+    "ACTIVE_POWER_FLOW" => (:phase_angle_limits, :controlled_active_power_flow_limits),
+    "ACTIVE_POWER_FLOW_DISABLED" =>
+        (:phase_angle_limits, :controlled_active_power_flow_limits),
+    "ASYMMETRIC_ACTIVE_POWER_FLOW" =>
+        (:phase_angle_limits, :controlled_active_power_flow_limits),
+    "ASYMMETRIC_ACTIVE_POWER_FLOW_DISABLED" =>
+        (:phase_angle_limits, :controlled_active_power_flow_limits),
 )
+@assert Set(keys(_CONTROL_BAND_FIELDS)) == Set(values(TRANSFORMER_CONTROL_OBJECTIVE_NAMES))
 
-"""`TransformerCircuit.control_limits`' unit per `control_objective`, read directly off
-the schema's `x-units` table (`TransformerCircuit.json`)."""
-const _CONTROL_LIMITS_UNIT = Dict(
-    "UNDEFINED" => "1", "VOLTAGE_DISABLED" => "1",
-    "REACTIVE_POWER_FLOW_DISABLED" => "1",
-    "ACTIVE_POWER_FLOW_DISABLED" => "rad", "CONTROL_OF_DC_LINE_DISABLED" => "1",
-    "ASYMMETRIC_ACTIVE_POWER_FLOW_DISABLED" => "rad", "FIXED" => "1", "VOLTAGE" => "1",
-    "REACTIVE_POWER_FLOW" => "1", "ACTIVE_POWER_FLOW" => "rad",
-    "CONTROL_OF_DC_LINE" => "1",
-    "ASYMMETRIC_ACTIVE_POWER_FLOW" => "rad",
-)
-
-"""`TransformerCircuit.controlled_quantity_limits`' unit per `control_objective`, read
-directly off the schema's `x-units` table."""
-const _CONTROLLED_QUANTITY_LIMITS_UNIT = Dict(
-    "UNDEFINED" => "pu", "VOLTAGE_DISABLED" => "pu",
-    "REACTIVE_POWER_FLOW_DISABLED" => "MVAr",
-    "ACTIVE_POWER_FLOW_DISABLED" => "MW", "CONTROL_OF_DC_LINE_DISABLED" => "MW",
-    "ASYMMETRIC_ACTIVE_POWER_FLOW_DISABLED" => "MW", "FIXED" => "pu", "VOLTAGE" => "pu",
-    "REACTIVE_POWER_FLOW" => "MVAr", "ACTIVE_POWER_FLOW" => "MW",
-    "CONTROL_OF_DC_LINE" => "MW",
-    "ASYMMETRIC_ACTIVE_POWER_FLOW" => "MW",
+"""The wire unit of each band, matching `TransformerCircuit.json`'s `x-unit`."""
+const _CONTROL_BAND_UNITS = Dict(
+    :tap_ratio_limits => "1",
+    :phase_angle_limits => "rad",
+    :controlled_voltage_limits => "pu",
+    :controlled_reactive_power_flow_limits => "MVAr",
+    :controlled_active_power_flow_limits => "MW",
 )
 
 function _transformer_control_objective(cod::Real)
@@ -170,13 +170,27 @@ function _transformer_control_objective(cod::Real)
     return TRANSFORMER_CONTROL_OBJECTIVE_NAMES[code]
 end
 
+"""Warn and swap an inverted `(lo, hi)` band, naming the PSS/E columns it came from."""
+function _ordered_band(lo, hi, lo_col, hi_col, record, suffix)
+    if lo > hi
+        @warn "Transformer $record winding $suffix has inverted $lo_col$suffix = $lo > $hi_col$suffix = $hi; normalizing to (min = $hi, max = $lo)."
+        return hi, lo
+    end
+    return lo, hi
+end
+
 """
 Assign a `TransformerCircuit`'s flat control block from a pm transformer dict `d` for
-winding `suffix` (1/2/3). Ported from PSCB's `_transformer_control_fields`: PSS/E's
-`RMI`/`RMA`/`VMI`/`VMA` are already expressed in the unit `control_objective` implies, so
-every value is a direct passthrough once `_CONTROL_LIMITS_UNIT`/
-`_CONTROLLED_QUANTITY_LIMITS_UNIT` supply that unit. `record` names the site in the
-inverted-limits warnings.
+winding `suffix` (1/2/3). The objective selects one actuator band and one target band
+(`_CONTROL_BAND_FIELDS`); every other band stays absent, and so does every band under
+`UNDEFINED`, so a circuit with no control block carries no invented limits.
+
+PSS/E's `RMI`/`RMA` and `VMI`/`VMA` arrive already in the unit the objective implies, but
+`pti.jl` substitutes 0.9/1.1 for a column the file omitted. That substitute is a voltage or
+tap-ratio default and nothing else, so `VM_PRESENT`/`RM_PRESENT` decide what may be written:
+`controlled_voltage_limits` and `tap_ratio_limits` take the default when the file omitted
+them, while an omitted power band or angle band stays absent rather than carrying a
+fabricated value. `record` names the site in the inverted-limits warnings.
 """
 function _set_transformer_control_fields!(
     circuit,
@@ -184,40 +198,40 @@ function _set_transformer_control_fields!(
     suffix::Int,
     record::AbstractString,
 )
-    cod = get(d, "COD$suffix", -99)
-    objective = _transformer_control_objective(cod)
-    phase_shifting = objective in _PHASE_SHIFT_OBJECTIVES
-    if phase_shifting
-        rmi_default, rma_default = -180.0, 180.0
-    else
-        rmi_default, rma_default = 0.9, 1.1
-    end
-    rmi = get(d, "RMI$suffix", rmi_default)
-    rma = get(d, "RMA$suffix", rma_default)
-    if rmi > rma
-        @warn "Transformer $record winding $suffix has inverted control limits RMI$suffix = $rmi > RMA$suffix = $rma; normalizing to (min = $rma, max = $rmi)."
-        rmi, rma = rma, rmi
-    end
-    if phase_shifting
-        rmi, rma = deg2rad(rmi), deg2rad(rma)
-    end
-    vmi = get(d, "VMI$suffix", 0.9)
-    vma = get(d, "VMA$suffix", 1.1)
-    if vmi > vma
-        @warn "Transformer $record winding $suffix has inverted controlled-quantity limits VMI$suffix = $vmi > VMA$suffix = $vma; normalizing to (min = $vma, max = $vmi)."
-        vmi, vma = vma, vmi
-    end
+    objective = _transformer_control_objective(get(d, "COD$suffix", -99))
     set_value!(circuit, :control_objective, objective)
     set_value!(circuit, :regulated_bus_number, Int(get(d, "CONT$suffix", 0)))
-    set_value!(
-        circuit,
-        :control_limits,
-        (min = rmi, max = rma),
-        _CONTROL_LIMITS_UNIT[objective],
-    )
-    set_value!(circuit, :controlled_quantity_limits, (min = vmi, max = vma),
-        _CONTROLLED_QUANTITY_LIMITS_UNIT[objective])
     set_value!(circuit, :number_of_tap_positions, Int(get(d, "NTP$suffix", 33)))
+    bands = _CONTROL_BAND_FIELDS[objective]
+    isnothing(bands) && return
+    actuator, target = bands
+
+    # A hand-built dict without the flag states its values explicitly.
+    rm_present = get(d, "RM_PRESENT$suffix", true)
+    vm_present = get(d, "VM_PRESENT$suffix", true)
+
+    if actuator == :tap_ratio_limits || rm_present
+        rmi, rma = _ordered_band(
+            get(d, "RMI$suffix", 0.9), get(d, "RMA$suffix", 1.1), "RMI", "RMA", record,
+            suffix,
+        )
+        if actuator == :phase_angle_limits
+            rmi, rma = deg2rad(rmi), deg2rad(rma)
+        end
+        set_value!(circuit, actuator, (min = rmi, max = rma), _CONTROL_BAND_UNITS[actuator])
+    end
+
+    if target == :controlled_voltage_limits
+        vmi, vma =
+            vm_present ? (get(d, "VMI$suffix", 0.9), get(d, "VMA$suffix", 1.1)) :
+            (0.9, 1.1)
+        vmi, vma = _ordered_band(vmi, vma, "VMI", "VMA", record, suffix)
+        set_value!(circuit, target, (min = vmi, max = vma), _CONTROL_BAND_UNITS[target])
+    elseif vm_present
+        vmi, vma =
+            _ordered_band(d["VMI$suffix"], d["VMA$suffix"], "VMI", "VMA", record, suffix)
+        set_value!(circuit, target, (min = vmi, max = vma), _CONTROL_BAND_UNITS[target])
+    end
     return
 end
 
