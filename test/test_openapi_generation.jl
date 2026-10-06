@@ -541,10 +541,10 @@ end
 
 @testset "a fresh 14-bus document with loads and generators round-trips through PC" begin
     sys = PFP.build_openapi_system(fourteen_bus_pm_data())
-    PFP.PD.validate_document(PFP.get_document(sys))
+    PFP.PC.validate_document(PFP.get_document(sys))
     path = joinpath(mktempdir(), "fourteen_bus_gen.json")
     PFP.to_json(sys, path)
-    doc = PFP.PD.read_document(path)
-    @test length(PFP.PD.get_components(doc, "StandardLoad")) == 13
-    @test length(PFP.PD.get_components(doc, "ThermalStandard")) == 7
+    doc = PFP.PC.read_document(path)
+    @test length(PFP.PC.get_components(doc, "StandardLoad")) == 13
+    @test length(PFP.PC.get_components(doc, "ThermalStandard")) == 7
 end

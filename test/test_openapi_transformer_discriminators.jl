@@ -195,13 +195,13 @@ end
     sys = PFP.build_openapi_system(_transformer_discriminator_pm_data())
     path = joinpath(mktempdir(), "transformer_discriminators.json")
     PFP.to_json(sys, path)
-    doc = PFP.PD.read_document(path)
+    doc = PFP.PC.read_document(path)
     # 3, not 2: bus 2 (200 kV) -> bus 3 (138 kV) is a plain `Line` record in the raw file,
     # but PFFP's own >1%-voltage-mismatch detection (`power_models_data.jl`) reclassifies
     # it as a third (CZ=1/CW=1/CM=1, unremarkable) transformer — incidental to this
     # fixture's DC-line buses, borrowed from `synthetic_v35_two_terminal_dc.raw`'s
     # template, not one of T1/T2.
-    @test length(PFP.PD.get_components(doc, "TwoWindingTransformer")) == 3
-    @test length(PFP.PD.get_components(doc, "TwoTerminalLCCLine")) == 1
-    PFP.PD.validate_document(doc)
+    @test length(PFP.PC.get_components(doc, "TwoWindingTransformer")) == 3
+    @test length(PFP.PC.get_components(doc, "TwoTerminalLCCLine")) == 1
+    PFP.PC.validate_document(doc)
 end
