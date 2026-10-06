@@ -200,12 +200,12 @@ end
 end
 
 @testset "discriminated units are read off the instance" begin
-    line = PFP.stage(PFP.PO.TwoTerminalLCCLine)
+    line = PFP.stage(PFP.PO.Line)
     PFP.set_value!(line, :parameter_units, "NATURAL_UNITS")
     PFP.set_value!(line, :r, 5.0, "ohm")
     @test PFP.get_value(line, :r) == 5.0
 
-    other = PFP.stage(PFP.PO.TwoTerminalLCCLine)
+    other = PFP.stage(PFP.PO.Line)
     PFP.set_value!(other, :parameter_units, "COMPONENT_BASE")
     @test_throws IS.DataFormatError PFP.set_value!(other, :r, 5.0, "ohm")
     PFP.set_value!(other, :r, 0.01, "pu")

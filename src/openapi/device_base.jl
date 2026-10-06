@@ -112,8 +112,8 @@ const _DEVICEBASE_INSTANCE_DISPATCHED = Dict{Tuple{String, Symbol}, Symbol}(
     ("TwoWindingTransformer", :magnetizing_shunt) => :skip,
     ("ThreeWindingTransformer", :magnetizing_shunt) => :skip,
     ("FACTSControlDevice", :voltage_setpoint) => :skip,
-    # setpoint_voltage_units always "COMPONENT_BASE" (dc_branch.jl): the voltage setpoints
-    # are pu of the converter's own rated voltage in both document conventions.
+    # The VSC voltage setpoints are voltages in kV (dc_branch.jl), not powers, so neither
+    # document convention scales them.
     # `TransformerCircuit`'s five control bands each carry a fixed unit and take the
     # fixed-unit path: the tap, angle and voltage bands are non-power and skip, the MW and
     # MVAr bands convert on the circuit's own base like `active_power_flow`.

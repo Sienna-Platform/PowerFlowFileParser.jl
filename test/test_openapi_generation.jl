@@ -394,32 +394,18 @@ end
 end
 
 @testset "COMPONENT_BASE conversion errors loudly on an unregistered instance-dispatched field" begin
-    # Pins the structural guarantee: an
-    # instance-level-discriminated field with no verdict in
+    # Pins the structural guarantee: an instance-level-discriminated field with no verdict in
     # `_DEVICEBASE_INSTANCE_DISPATCHED` must error, not silently fall through unconverted.
-    # `InterconnectingConverter.dc_voltage_setpoint` (governed by
-    # `voltage_setpoint_units`) is real and instance-dispatched but deliberately not
-    # registered: no PSS/E record produces an InterconnectingConverter, so this package's
-    # readers never emit one, and it is exactly the kind of "not yet classified" field the
-    # guard exists for.
-    ic = PFP.stage(PFP.PO.InterconnectingConverter)
-    PFP.set_value!(ic, :id, 1)
-    PFP.set_value!(ic, :name, "ic")
-    PFP.set_value!(ic, :available, true)
-    PFP.set_value!(ic, :bus, 0)
-    PFP.set_value!(ic, :dc_bus, 0)
-    PFP.set_value!(ic, :power_units, "NATURAL_UNITS")
-    PFP.set_value!(ic, :active_power, 0.0, "MW")
-    PFP.set_value!(ic, :active_power_limits, (min = 0.0, max = 0.0), "MW")
-    PFP.set_value!(ic, :rating, 0.0, "MVA")
-    PFP.set_value!(ic, :base_power, 100.0, "MVA")
-    PFP.set_value!(ic, :dc_control, "DC_VOLTAGE")
-    PFP.set_value!(ic, :ac_control, "AC_REACTIVE_POWER")
-    @test_throws ErrorException PFP._devicebase_classification(
-        PFP.materialize(ic),
-        "InterconnectingConverter",
-        :dc_voltage_setpoint,
+    # Every unit selector in the 0.2 schemas has a default, so `power_units` alone resolves
+    # each discriminated field and no component reaches this guard through
+    # `_devicebase_classification` today. The guard is checked directly, for the schema
+    # that adds a selector without a default.
+    @test_throws ErrorException PFP._devicebase_instance_dispatched(
+        "GenericArcImpedance",
+        :r,
     )
+    @test PFP._devicebase_instance_dispatched("FACTSControlDevice", :voltage_setpoint) ==
+          :skip
 end
 
 @testset "read_generation! on case5_strg.m builds real EnergyReservoirStorage entries" begin

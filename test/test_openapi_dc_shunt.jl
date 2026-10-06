@@ -6,8 +6,8 @@
 
     @test PFP.get_value(line, :available) == d["available"]
     @test PFP.get_value(line, :active_power_flow) ≈ d["pf"] * 100.0
-    @test PFP.get_value(line, :parameter_units) == "NATURAL_UNITS"
     @test PFP.get_value(line, :r) == d["r"]
+    @test PFP.get_value(line, :rating) == abs(d["transfer_setpoint"])
     # MDC=1: POWER holds the MW schedule; the current schedule stays absent.
     @test d["control_mode"] == "POWER"
     @test PFP.get_value(line, :control_mode) == "POWER"
@@ -19,10 +19,8 @@
         PFP.get_value(line, :rectifier_delay_angle_limits),
         d["rectifier_delay_angle_limits"],
     )
-    @test PFP.get_value(line, :rectifier_rc) ≈
-          d["rectifier_rc"] * d["rectifier_base_voltage"]^2 / 100.0
-    @test PFP.get_value(line, :inverter_xc) ≈
-          d["inverter_xc"] * d["inverter_base_voltage"]^2 / 100.0
+    @test PFP.get_value(line, :rectifier_rc) == d["rectifier_rc"]
+    @test PFP.get_value(line, :inverter_xc) == d["inverter_xc"]
     @test PFP.get_value(line, :rectifier_base_voltage) == d["rectifier_base_voltage"]
     @test _matches_nt(
         PFP.get_value(line, :inverter_extinction_angle_limits),
@@ -70,14 +68,13 @@ end
 
     @test PFP.get_value(line, :available) == (d["br_status"] == 1)
     @test PFP.get_value(line, :active_power_flow) ≈ d["pf"] * base
-    @test _matches_nt(
-        PFP.get_value(line, :active_power_limits_from),
-        (min = d["pminf"] * base, max = d["pmaxf"] * base),
-    )
-    @test _matches_nt(
-        PFP.get_value(line, :active_power_limits_to),
-        (min = d["pmint"] * base, max = d["pmaxt"] * base),
-    )
+    @test PFP.get_value(line, :rating) ≈
+          maximum(abs, (d["pminf"], d["pmaxf"], d["pmint"], d["pmaxt"])) * base
+    limit = PFP.get_value(line, :operational_flow_limit)
+    @test limit.from_to_min ≈ max(d["pminf"], 0.0) * base
+    @test limit.from_to_max ≈ max(d["pmaxf"], 0.0) * base
+    @test limit.to_from_min ≈ max(-d["pmaxf"], 0.0) * base
+    @test limit.to_from_max ≈ max(-d["pminf"], 0.0) * base
     @test _matches_nt(
         PFP.get_value(line, :reactive_power_limits_from),
         (min = d["qminf"] * base, max = d["qmaxf"] * base),
@@ -366,8 +363,8 @@ end
     @test PFP.get_value(vsc, :power_factor_setpoint_from) == 1.0
     @test PFP.get_value(vsc, :ac_voltage_setpoint_from) === PFP.ABSENT
     @test PFP.get_value(vsc, :dc_current) == 10.0
-    # r = 0.5 pu on rated_dc_voltage^2 / baseMVA = 100 ohm, so RDC = 50 ohm.
-    @test PFP.get_value(vsc, :g) ≈ 1.0 / 50.0
+    # The pm dict keeps the RAW's RDC in ohms: r = 0.5 ohm, so g = 2 S.
+    @test PFP.get_value(vsc, :g) ≈ 1.0 / 0.5
     @test PFP.get_value(vsc, :max_dc_current_from) == 100.0
     @test PFP.get_value(vsc, :rated_dc_voltage) == 100.0
     @test PFP.get_value(vsc, :rated_ac_voltage_from) == 138.0
@@ -386,13 +383,10 @@ end
     @test PFP.get_value(vsc, :rated_ac_voltage_to) == 138.0
 end
 
-@testset "TwoTerminalVSCLine: make_vscline! stores DC_VOLTAGE/AC_VOLTAGE setpoints as COMPONENT_BASE pu" begin
-    # SiennaSchemas decouples setpoint_voltage_units (dc_voltage_setpoint_from/to,
-    # ac_voltage_setpoint_from/to) from voltage_units (voltage_limits_from/to only), so tagging a
-    # voltage-controlling setpoint COMPONENT_BASE no longer relabels the untouched
-    # voltage_limits_from/to defaults. make_vscline! sets setpoint_voltage_units =
-    # "COMPONENT_BASE" unconditionally and stores the already-p.u. PSS/E value with unit "pu" —
-    # an identity conversion, so the stored value equals the input.
+@testset "TwoTerminalVSCLine: make_vscline! writes DC_VOLTAGE/AC_VOLTAGE setpoints in kV" begin
+    # The schema keeps HVDC voltages in kV only. PSS/E reports a voltage-controlling DC
+    # setpoint as p.u. of rated_dc_voltage and an AC setpoint as p.u. of the converter's AC
+    # bus base, so make_vscline! multiplies each by its base: 1.03 * 100 kV and 1.02 * 138 kV.
     data = Dict{String, Any}(
         "baseMVA" => 100.0, "source_type" => "pti",
         "bus" => Dict{String, Any}(
@@ -427,14 +421,11 @@ end
         ),
     )
     @test PFP.get_value(vsc_dc, :dc_control_from) == "DC_VOLTAGE"
-    @test PFP.get_value(vsc_dc, :setpoint_voltage_units) == "COMPONENT_BASE"
-    @test PFP.get_value(vsc_dc, :dc_voltage_setpoint_from) == 1.03
+    @test PFP.get_value(vsc_dc, :dc_voltage_setpoint_from) ≈ 103.0
     @test PFP.get_value(vsc_dc, :dc_power_setpoint_from) === PFP.ABSENT
-    # make_vscline! has no pm dict source for voltage_units/voltage_limits_from — PSS/E's
-    # VSC record carries no DC-bus voltage bound — so both stay genuinely unset rather than
-    # defaulting to some placeholder range (see "unset properties are absent, not null" in
-    # test_openapi_serialize.jl).
-    @test PFP.get_value(vsc_dc, :voltage_units) === PFP.ABSENT
+    # make_vscline! has no pm dict source for voltage_limits_from — PSS/E's VSC record carries
+    # no DC-bus voltage bound — so it stays unset rather than defaulting to a placeholder
+    # range (see "unset properties are absent, not null" in test_openapi_serialize.jl).
     @test PFP.get_value(vsc_dc, :voltage_limits_from) === PFP.ABSENT
 
     d_ac = _synthetic_vscline_dict()
@@ -448,66 +439,36 @@ end
         ),
     )
     @test PFP.get_value(vsc_ac, :ac_control_from) == "AC_VOLTAGE"
-    @test PFP.get_value(vsc_ac, :setpoint_voltage_units) == "COMPONENT_BASE"
-    @test PFP.get_value(vsc_ac, :ac_voltage_setpoint_from) == 1.02
+    @test PFP.get_value(vsc_ac, :ac_voltage_setpoint_from) ≈ 140.76
     @test PFP.get_value(vsc_ac, :power_factor_setpoint_from) === PFP.ABSENT
-    # See the vsc_dc case above: voltage_units/voltage_limits_to have no pm dict source.
-    @test PFP.get_value(vsc_ac, :voltage_units) === PFP.ABSENT
+    # See the vsc_dc case above: voltage_limits_to has no pm dict source.
     @test PFP.get_value(vsc_ac, :voltage_limits_to) === PFP.ABSENT
 end
 
-@testset "TwoTerminalVSCLine: dc_voltage_setpoint_from/to follow setpoint_voltage_units" begin
-    # psse.jl documents the DC-voltage-controlling side's setpoint as p.u. of
-    # rated_dc_voltage, computed as `DCSET / base_voltage`: 515.0 / 500.0 = 1.03 p.u.
-    # Under COMPONENT_BASE that number is already in the declared unit, so "pu" is an
-    # identity; under NATURAL_UNITS the field is a literal kV magnitude. The mode is
-    # carried separately and no longer changes the field's unit.
+@testset "TwoTerminalVSCLine: voltage setpoints take kV, power setpoints MW" begin
+    # No unit basis selects the voltage setpoints any more: each is a kV magnitude, whatever
+    # the control mode, and the power and power-factor setpoints keep their own units.
     vsc = PFP.stage(PFP.PO.TwoTerminalVSCLine)
     PFP.set_value!(vsc, :power_units, "NATURAL_UNITS")
     PFP.set_value!(vsc, :dc_control_from, "DC_VOLTAGE")
-    PFP.set_value!(vsc, :setpoint_voltage_units, "COMPONENT_BASE")
-    PFP.set_value!(vsc, :dc_voltage_setpoint_from, 515.0 / 500.0, "pu")
-    @test PFP.get_value(vsc, :dc_voltage_setpoint_from) == 1.03
-
-    PFP.set_value!(vsc, :setpoint_voltage_units, "NATURAL_UNITS")
     PFP.set_value!(vsc, :dc_voltage_setpoint_from, 515.0, "kV")
     @test PFP.get_value(vsc, :dc_voltage_setpoint_from) == 515.0
 
     # DC_VOLTAGE_DROOP selects the same field.
     PFP.set_value!(vsc, :dc_control_from, "DC_VOLTAGE_DROOP")
-    PFP.set_value!(vsc, :setpoint_voltage_units, "COMPONENT_BASE")
-    PFP.set_value!(vsc, :dc_voltage_setpoint_from, 1.03, "pu")
-    @test PFP.get_value(vsc, :dc_voltage_setpoint_from) == 1.03
+    PFP.set_value!(vsc, :dc_voltage_setpoint_from, 515.0, "kV")
+    @test PFP.get_value(vsc, :dc_voltage_setpoint_from) == 515.0
 
-    # The `to` side shares the one setpoint_voltage_units field.
     PFP.set_value!(vsc, :dc_control_to, "DC_VOLTAGE")
-    PFP.set_value!(vsc, :dc_voltage_setpoint_to, 1.03, "pu")
-    @test PFP.get_value(vsc, :dc_voltage_setpoint_to) == 1.03
+    PFP.set_value!(vsc, :dc_voltage_setpoint_to, 515.0, "kV")
+    @test PFP.get_value(vsc, :dc_voltage_setpoint_to) == 515.0
 
-    # The power setpoint has its own fixed unit, untouched by the basis tag.
-    PFP.set_value!(vsc, :dc_power_setpoint_to, 40.0, "MW")
-    @test PFP.get_value(vsc, :dc_power_setpoint_to) == 40.0
-end
-
-@testset "TwoTerminalVSCLine: ac_voltage_setpoint_from/to follow setpoint_voltage_units" begin
-    # PSS/E's ACSET for a VSC converter bus is already per-unit of the AC bus's own base
-    # voltage, so "pu" under COMPONENT_BASE is an identity; NATURAL_UNITS is a kV magnitude.
-    vsc = PFP.stage(PFP.PO.TwoTerminalVSCLine)
-    PFP.set_value!(vsc, :power_units, "NATURAL_UNITS")
     PFP.set_value!(vsc, :ac_control_from, "AC_VOLTAGE")
-    PFP.set_value!(vsc, :setpoint_voltage_units, "COMPONENT_BASE")
-    PFP.set_value!(vsc, :ac_voltage_setpoint_from, 1.02, "pu")
-    @test PFP.get_value(vsc, :ac_voltage_setpoint_from) == 1.02
-
-    PFP.set_value!(vsc, :setpoint_voltage_units, "NATURAL_UNITS")
     PFP.set_value!(vsc, :ac_voltage_setpoint_from, 1.02 * 138.0, "kV")
     @test PFP.get_value(vsc, :ac_voltage_setpoint_from) == 140.76
 
-    PFP.set_value!(vsc, :ac_control_to, "AC_VOLTAGE")
-    PFP.set_value!(vsc, :ac_voltage_setpoint_to, 1.02 * 138.0, "kV")
-    @test PFP.get_value(vsc, :ac_voltage_setpoint_to) == 140.76
-
-    # The power factor has its own fixed unit, untouched by the basis tag.
+    PFP.set_value!(vsc, :dc_power_setpoint_to, 40.0, "MW")
+    @test PFP.get_value(vsc, :dc_power_setpoint_to) == 40.0
     PFP.set_value!(vsc, :power_factor_setpoint_to, 0.95, "1")
     @test PFP.get_value(vsc, :power_factor_setpoint_to) == 0.95
 end

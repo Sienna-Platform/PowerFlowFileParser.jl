@@ -39,6 +39,21 @@ function _two_terminal_loss(d::Dict)
     return _loss_curve(d["loss1"], d["loss0"])
 end
 
+"""
+Transfer rating (MW) of an LCC line from its PSS/E schedule: SETVL under `POWER`, the
+scheduled DC power `VSCHD * SETVL / 1000` (kV times A) under `CURRENT`, and 0 for a `BLOCKED`
+line, which holds no schedule.
+"""
+function _lcc_rating(d::Dict)
+    control_mode = d["control_mode"]
+    if control_mode == "POWER"
+        return abs(d["transfer_setpoint"])
+    elseif control_mode == "CURRENT"
+        return d["scheduled_dc_voltage"] * abs(d["transfer_setpoint"]) / 1000.0
+    end
+    return 0.0
+end
+
 """Two-terminal LCC HVDC line (PSS/E). `psse.jl` keeps `r` and the rectifier/inverter
 impedances in the RAW's ohms, which the document carries unchanged."""
 function make_lcc_line!(
@@ -57,7 +72,6 @@ function make_lcc_line!(
     set_value!(component, :available, Bool(d["available"]))
     set_value!(component, :arc, arc_id)
     set_value!(component, :active_power_flow, get(d, "pf", 0.0) * sys_mbase, "MW")
-    set_value!(component, :parameter_units, "NATURAL_UNITS")
     set_value!(component, :r, d["r"], "ohm")
     # `control_mode` (PSS/E MDC) selects which schedule the raw SETVL is: a power in MW
     # under POWER, a current in amperes under CURRENT, and nothing under BLOCKED, where the
@@ -71,7 +85,7 @@ function make_lcc_line!(
     elseif control_mode != "BLOCKED"
         throw(IS.DataFormatError("DC line $name: unknown LCC control_mode $control_mode"))
     end
-    set_value!(component, :dc_voltage_units, "NATURAL_UNITS")
+    set_value!(component, :rating, _lcc_rating(d), "MVA")
     set_value!(component, :scheduled_dc_voltage, d["scheduled_dc_voltage"], "kV")
     set_value!(component, :rectifier_bridges, Int(d["rectifier_bridges"]))
     set_value!(component, :rectifier_delay_angle_limits, d["rectifier_delay_angle_limits"],
@@ -112,6 +126,29 @@ function make_lcc_line!(
     return
 end
 
+"""
+Transfer rating of a MATPOWER DC line: the largest active power magnitude either end allows,
+system per unit.
+"""
+function _generic_hvdc_rating(d::Dict)
+    return maximum(abs, (d["pminf"], d["pmaxf"], d["pmint"], d["pmaxt"]))
+end
+
+"""
+Directional flow limits (MW) of a MATPOWER DC line. `pminf`/`pmaxf` bound the flow leaving
+the `from` bus, where a negative value is flow in the reverse direction, so the positive part
+of each bound limits `from_to` and the negated negative part limits `to_from`.
+"""
+function _generic_hvdc_flow_limit(d::Dict, sys_mbase::Float64)
+    pmin, pmax = d["pminf"] * sys_mbase, d["pmaxf"] * sys_mbase
+    return (
+        from_to_min = max(pmin, 0.0),
+        from_to_max = max(pmax, 0.0),
+        to_from_min = max(-pmax, 0.0),
+        to_from_max = max(-pmin, 0.0),
+    )
+end
+
 """Two-terminal generic HVDC line (MATPOWER)."""
 function make_generic_hvdc_line!(
     sys::OpenAPISystem,
@@ -129,10 +166,9 @@ function make_generic_hvdc_line!(
     set_value!(component, :available, d["br_status"] == 1)
     set_value!(component, :active_power_flow, get(d, "pf", 0.0) * sys_mbase, "MW")
     set_value!(component, :arc, arc_id)
-    set_value!(component, :active_power_limits_from,
-        (min = d["pminf"] * sys_mbase, max = d["pmaxf"] * sys_mbase), "MW")
-    set_value!(component, :active_power_limits_to,
-        (min = d["pmint"] * sys_mbase, max = d["pmaxt"] * sys_mbase), "MW")
+    set_value!(component, :rating, _generic_hvdc_rating(d) * sys_mbase, "MVA")
+    set_value!(component, :operational_flow_limit,
+        _generic_hvdc_flow_limit(d, sys_mbase), "MW")
     set_value!(component, :reactive_power_limits_from,
         (min = d["qminf"] * sys_mbase, max = d["qmaxf"] * sys_mbase), "MVAr")
     set_value!(component, :reactive_power_limits_to,
@@ -182,8 +218,7 @@ Voltage-source-converter HVDC line (PSS/E `VOLTAGE SOURCE CONVERTER`). Ported fr
 PSCB's `make_vscline`.
 
 Every numeric field `psse.jl` derives from a per-bridge PSS/E record (`rating`/
-`rating_from`/`rating_to`, `active_power_limits_from`/`to`, `reactive_power_limits_from`/
-`to`, `active_power_flow`) is pre-divided by `baseMVA` at parse time, the same system-pu
+`rating_from`/`rating_to`, `reactive_power_limits_from`/`to`, `active_power_flow`) is pre-divided by `baseMVA` at parse time, the same system-pu
 convention as `data["dcline"]`'s native fields, so this maker multiplies them back by
 `sys_mbase` — `TwoTerminalVSCLine.base_power` is the system base.
 
@@ -191,16 +226,11 @@ convention as `data["dcline"]`'s native fields, so this maker multiplies them ba
 are already natural (Amperes / a bare fraction) and pass through unscaled.
 The pm dict's `dc_setpoint_from`/`to` is per-unit on `rated_dc_voltage` when the converter
 controls DC voltage, or on `sys_mbase` when it controls DC power; each lands on the one wire
-field its mode selects, `dc_voltage_setpoint_*` (pu) or `dc_power_setpoint_*` (MW), and the
-other stays absent. Likewise `ac_setpoint_from`/`to` lands on `ac_voltage_setpoint_*` (pu)
-under AC voltage control or `power_factor_setpoint_*` otherwise.
-
-`setpoint_voltage_units` (decoupled from `voltage_units`, which tags only
-`voltage_limits_from`/`to`) is set unconditionally to `COMPONENT_BASE`: PSS/E always reports a
-voltage-controlling side's DC setpoint as p.u. of `rated_dc_voltage` (`psse.jl` pre-divides
-`DCSET` by `base_voltage`) and a voltage-controlling AC setpoint (`ACSET`) as p.u. of the AC
-bus's own base voltage — never kV. It governs only `dc_voltage_setpoint_*` and
-`ac_voltage_setpoint_*`; the power and power-factor setpoints carry their own fixed units.
+field its mode selects, `dc_voltage_setpoint_*` (kV) or `dc_power_setpoint_*` (MW), and the
+other stays absent. Likewise `ac_setpoint_from`/`to` lands on `ac_voltage_setpoint_*` under AC
+voltage control or `power_factor_setpoint_*` otherwise. The schema keeps HVDC voltages in kV
+only, so a DC voltage setpoint is multiplied by `rated_dc_voltage` and an AC voltage setpoint
+by the converter's AC bus base kV (`base_voltage_from`/`to`).
 
 `psse.jl` also captures each converter's own AC bus base kV as `base_voltage_from`/
 `base_voltage_to`, threaded onto the document as `rated_ac_voltage_from`/
@@ -223,19 +253,17 @@ function make_vscline!(
     set_value!(component, :arc, arc_id)
     set_value!(component, :active_power_flow, get(d, "pf", 0.0) * sys_mbase, "MW")
     set_value!(component, :rating, d["rating"] * sys_mbase, "MVA")
-    set_value!(component, :active_power_limits_from,
-        (min = d["pminf"] * sys_mbase, max = d["pmaxf"] * sys_mbase), "MW")
-    set_value!(component, :active_power_limits_to,
-        (min = d["pmint"] * sys_mbase, max = d["pmaxt"] * sys_mbase), "MW")
-    set_value!(component, :admittance_units, "NATURAL_UNITS")
     set_value!(component, :g, _vsc_conductance_siemens(d), "S")
     set_value!(component, :dc_current, get(d, "if", 0.0), "A")
     set_value!(component, :reactive_power_from, get(d, "qf", 0.0) * sys_mbase, "MVAr")
-    # See the docstring: PSS/E's voltage-controlling setpoints are always already p.u.
-    set_value!(component, :setpoint_voltage_units, "COMPONENT_BASE")
     if d["dc_voltage_control_from"]
         set_value!(component, :dc_control_from, "DC_VOLTAGE")
-        set_value!(component, :dc_voltage_setpoint_from, d["dc_setpoint_from"], "pu")
+        set_value!(
+            component,
+            :dc_voltage_setpoint_from,
+            d["dc_setpoint_from"] * d["rated_dc_voltage"],
+            "kV",
+        )
     else
         set_value!(component, :dc_control_from, "DC_POWER")
         set_value!(
@@ -244,7 +272,12 @@ function make_vscline!(
     end
     if d["ac_voltage_control_from"]
         set_value!(component, :ac_control_from, "AC_VOLTAGE")
-        set_value!(component, :ac_voltage_setpoint_from, d["ac_setpoint_from"], "pu")
+        set_value!(
+            component,
+            :ac_voltage_setpoint_from,
+            d["ac_setpoint_from"] * d["base_voltage_from"],
+            "kV",
+        )
     else
         set_value!(component, :ac_control_from, "AC_REACTIVE_POWER")
         set_value!(component, :power_factor_setpoint_from, d["ac_setpoint_from"], "1")
@@ -265,11 +298,15 @@ function make_vscline!(
     set_value!(component, :power_factor_weighting_fraction_from,
         d["power_factor_weighting_fraction_from"], "1")
     _set_nullable!(component, :remote_bus_control_from, _psse_remote_bus(d, "REMOT_FROM"))
-    set_value!(component, :rmpct_from, get(get(d, "ext", Dict()), "RMPCT_FROM", 100.0), "1")
     set_value!(component, :reactive_power_to, get(d, "qt", 0.0) * sys_mbase, "MVAr")
     if d["dc_voltage_control_to"]
         set_value!(component, :dc_control_to, "DC_VOLTAGE")
-        set_value!(component, :dc_voltage_setpoint_to, d["dc_setpoint_to"], "pu")
+        set_value!(
+            component,
+            :dc_voltage_setpoint_to,
+            d["dc_setpoint_to"] * d["rated_dc_voltage"],
+            "kV",
+        )
     else
         set_value!(component, :dc_control_to, "DC_POWER")
         set_value!(
@@ -278,7 +315,12 @@ function make_vscline!(
     end
     if d["ac_voltage_control_to"]
         set_value!(component, :ac_control_to, "AC_VOLTAGE")
-        set_value!(component, :ac_voltage_setpoint_to, d["ac_setpoint_to"], "pu")
+        set_value!(
+            component,
+            :ac_voltage_setpoint_to,
+            d["ac_setpoint_to"] * d["base_voltage_to"],
+            "kV",
+        )
     else
         set_value!(component, :ac_control_to, "AC_REACTIVE_POWER")
         set_value!(component, :power_factor_setpoint_to, d["ac_setpoint_to"], "1")
@@ -299,7 +341,6 @@ function make_vscline!(
     set_value!(component, :power_factor_weighting_fraction_to,
         d["power_factor_weighting_fraction_to"], "1")
     _set_nullable!(component, :remote_bus_control_to, _psse_remote_bus(d, "REMOT_TO"))
-    set_value!(component, :rmpct_to, get(get(d, "ext", Dict()), "RMPCT_TO", 100.0), "1")
     set_value!(component, :rated_dc_voltage, d["rated_dc_voltage"], "kV")
     set_value!(component, :base_power, sys_mbase, "MVA")
     add_component!(sys, component)
