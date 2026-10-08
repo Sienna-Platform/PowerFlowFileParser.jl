@@ -11,7 +11,7 @@ const _CONSUMED_PM_SECTIONS = (
     "branch", "3w_transformer", "dcline", "vscline", "interarea_transfer",
     "shunt", "switched_shunt", "facts",
     "switch", "breaker", "generic_connector", "impedance_correction",
-    "area_interchange", "substation",
+    "area_interchange", "substation", "contingency", "monitor",
 )
 
 """
@@ -30,6 +30,10 @@ const KNOWN_UNCONSUMED_PM_SECTIONS = Dict(
         "PSS/E ZONE name records; PSCB's oracle only cross-checks it for an empty-zone " *
         "warning (`read_loadzones!`) — LoadZone identity and peaks come from each bus's own " *
         "`zone` number, never from this section's `zone_name`.",
+    "multisection_line" =>
+        "PSS/E MULTI-SECTION LINE groupings (segment lists for contingency resolution); every " *
+        "segment is already emitted as its own branch or switching device and the schemas " *
+        "have no grouping type.",
 )
 
 """
@@ -99,6 +103,7 @@ function build_openapi_system(
     read_dc_branches!(sys, data; kwargs...)
     read_shunts!(sys, data; kwargs...)
     read_attributes!(sys, data; kwargs...)
+    read_contingencies!(sys, data; kwargs...)
     apply_device_base_conversion!(sys)
 
     _check_unconsumed_sections(data)

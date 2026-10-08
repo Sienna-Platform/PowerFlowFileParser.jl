@@ -398,6 +398,7 @@ function read_dc_lines!(sys::OpenAPISystem, data::Dict; kwargs...)
         to_id = get_bus_id(reg, to_number)
         name = String(_get_name(d, bus_lookup[from_number][1], bus_lookup[to_number][1]))
         make_dcline!(sys, reg, name, d, from_id, to_id, source_type, sys_mbase)
+        record_source!(reg, "dcline", d_key)
     end
     return
 end
@@ -427,6 +428,7 @@ function read_vsc_lines!(sys::OpenAPISystem, data::Dict; kwargs...)
         to_id = get_bus_id(reg, to_number)
         name = String(_get_name(d, bus_lookup[from_number][1], bus_lookup[to_number][1]))
         make_vscline!(sys, reg, name, d, from_id, to_id, sys_mbase)
+        record_source!(reg, "vscline", d_key)
     end
     return
 end

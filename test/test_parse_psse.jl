@@ -519,3 +519,122 @@ end
     @test other["ext"]["psse_name"] == "XFMR_C      "
     @test other["br_x"] == 0.05
 end
+
+const MULTISECTION_RAW = """
+@!IC,SBASE,REV,XFRRAT,NXFRAT,BASFRQ
+0,  100.00, 35,     0,     1, 60.00
+Synthetic v35 case: multi-section lines over branches and a system switching device
+Lines &1 and &2 run 1-2-3-4 with a switch as the middle section
+0 / END OF SYSTEM-WIDE DATA, BEGIN BUS DATA
+     1,'BUSONE      ', 138.0000,3,   1,   1,   1,1.00000,   0.0000,1.10000,0.90000,1.10000,0.90000
+     2,'BUSTWO      ', 138.0000,1,   1,   1,   1,1.00000,   0.0000,1.10000,0.90000,1.10000,0.90000
+     3,'BUSTHREE    ', 138.0000,1,   1,   1,   1,1.00000,   0.0000,1.10000,0.90000,1.10000,0.90000
+     4,'BUSFOUR     ', 138.0000,1,   1,   1,   1,1.00000,   0.0000,1.10000,0.90000,1.10000,0.90000
+0 / END OF BUS DATA, BEGIN LOAD DATA
+0 / END OF LOAD DATA, BEGIN FIXED SHUNT DATA
+0 / END OF FIXED SHUNT DATA, BEGIN GENERATOR DATA
+0 / END OF GENERATOR DATA, BEGIN BRANCH DATA
+     1,     2,'1 ', 1.00000E-02, 1.00000E-01,0.02000,'PARALLEL_1_2                            ', 500.00, 500.00, 500.00,   0.00,   0.00,   0.00,   0.00,   0.00,   0.00,   0.00,   0.00,   0.00, 0.00000, 0.00000, 0.00000, 0.00000,1,1,  1.00,   1,1.0000
+     1,     2,'&1', 1.00000E-02, 1.00000E-01,0.02000,'SEC_1_2                                 ', 500.00, 500.00, 500.00,   0.00,   0.00,   0.00,   0.00,   0.00,   0.00,   0.00,   0.00,   0.00, 0.00000, 0.00000, 0.00000, 0.00000,1,1,  1.00,   1,1.0000
+     4,     3,'&1', 1.00000E-02, 1.00000E-01,0.02000,'SEC_4_3                                 ', 500.00, 500.00, 500.00,   0.00,   0.00,   0.00,   0.00,   0.00,   0.00,   0.00,   0.00,   0.00, 0.00000, 0.00000, 0.00000, 0.00000,1,1,  1.00,   1,1.0000
+0 / END OF BRANCH DATA, BEGIN SYSTEM SWITCHING DEVICE DATA
+     2,     3,'&1', 0.00010, 100.00, 110.00, 120.00,   0.00,   0.00,   0.00,   0.00,   0.00,   0.00,   0.00,   0.00,   0.00,     1,     1,     1,     3,'SW_2_3                                  '
+0 / END OF SYSTEM SWITCHING DEVICE DATA, BEGIN TRANSFORMER DATA
+0 / END OF TRANSFORMER DATA, BEGIN AREA DATA
+0 / END OF AREA DATA, BEGIN TWO-TERMINAL DC DATA
+0 / END OF TWO-TERMINAL DC DATA, BEGIN VSC DC LINE DATA
+0 / END OF VSC DC LINE DATA, BEGIN IMPEDANCE CORRECTION DATA
+0 / END OF IMPEDANCE CORRECTION DATA, BEGIN MULTI-TERMINAL DC DATA
+0 / END OF MULTI-TERMINAL DC DATA, BEGIN MULTI-SECTION LINE DATA
+     1,     4,'&1',   1,     2,     3
+     1,     4,'&2',   1,     2,     3
+0 / END OF MULTI-SECTION LINE DATA, BEGIN ZONE DATA
+0 / END OF ZONE DATA, BEGIN INTER-AREA TRANSFER DATA
+0 / END OF INTER-AREA TRANSFER DATA, BEGIN OWNER DATA
+0 / END OF OWNER DATA, BEGIN FACTS DEVICE DATA
+0 / END OF FACTS DEVICE DATA, BEGIN SWITCHED SHUNT DATA
+0 / END OF SWITCHED SHUNT DATA, BEGIN GNE DATA
+0 / END OF GNE DATA, BEGIN INDUCTION MACHINE DATA
+0 / END OF INDUCTION MACHINE DATA, BEGIN SUBSTATION DATA
+0 / END OF SUBSTATION DATA
+Q
+"""
+
+function multisection_clean_raw()
+    lines = filter(l -> !occursin("PARALLEL_1_2", l), split(MULTISECTION_RAW, "\n"))
+    raw = join(lines, "\n")
+    raw = replace(raw, ",'&1', 1.00000E-02" => ",'83', 1.00000E-02")
+    return replace(raw, "     2,     3,'&1'," => "     2,     3,'83',")
+end
+
+@testset "PSSE multi-section line over parallel circuits is ambiguous and omitted" begin
+    logger = Test.TestLogger(; min_level = Logging.Warn)
+    pm_data = Logging.with_logger(logger) do
+        PFP.parse_file(IOBuffer(MULTISECTION_RAW); filetype = "raw")
+    end
+    @test isempty(pm_data["multisection_line"])
+    msgs = [r.message for r in logger.logs if occursin("Multi-section line", r.message)]
+    @test length(msgs) == 2
+    @test occursin("Multi-section line 1-4 '&1'", msgs[1])
+    @test occursin("Multi-section line 1-4 '&2'", msgs[2])
+    @test all(m -> occursin("buses 1-2", m) && occursin("ambiguous", m), msgs)
+    for b in values(pm_data["branch"])
+        if b["source_id"][2:3] == [1, 2]
+            @test !haskey(get(b, "ext", Dict()), "from_multisection")
+        end
+    end
+end
+
+@testset "PSSE multi-section line resolves on the bus pair, not the circuit id" begin
+    logger = Test.TestLogger(; min_level = Logging.Warn)
+    pm_data = Logging.with_logger(logger) do
+        PFP.parse_file(IOBuffer(multisection_clean_raw()); filetype = "raw")
+    end
+    # &2 names the same buses, so it gives the same segments.
+    @test !any(r -> occursin("Multi-section line", r.message), logger.logs)
+    ms = sort(collect(values(pm_data["multisection_line"])); by = m -> m["index"])
+    @test [m["source_id"] for m in ms] ==
+          [["multisection_line", 1, 4, "&1"], ["multisection_line", 1, 4, "&2"]]
+    for line in ms
+        segments = line["segments"]
+        @test [s[1] for s in segments] == ["branch", "switch", "branch"]
+        seg_ids = [pm_data[s[1]][s[2]]["source_id"] for s in segments]
+        @test seg_ids[1] == ["branch", 1, 2, "83"]
+        @test seg_ids[2] == ["switch", 2, 3, "83"]
+        @test seg_ids[3] == ["branch", 4, 3, "83"]
+    end
+    for s in first(ms)["segments"]
+        @test pm_data[s[1]][s[2]]["ext"]["from_multisection"] == true
+    end
+end
+
+@testset "PSSE multi-section line with a missing segment warns and is omitted" begin
+    raw = replace(
+        multisection_clean_raw(),
+        r"     4,     3,'83'[^\n]*\n" => "",
+    )
+    logger = Test.TestLogger(; min_level = Logging.Warn)
+    pm_data = Logging.with_logger(logger) do
+        PFP.parse_file(IOBuffer(raw); filetype = "raw")
+    end
+    @test isempty(pm_data["multisection_line"])
+    @test count(
+        r -> occursin("no branch or switching device between buses 3 and 4", r.message),
+        logger.logs,
+    ) == 2
+end
+
+@testset "PSSE multi-section line resolves breaker and generic connector segments" begin
+    for (stype, section) in ((2, "breaker"), (1, "generic_connector"))
+        raw = replace(multisection_clean_raw(), ",     3,'SW_2_3" => ",     $stype,'SW_2_3")
+        logger = Test.TestLogger(; min_level = Logging.Warn)
+        pm_data = Logging.with_logger(logger) do
+            PFP.parse_file(IOBuffer(raw); filetype = "raw")
+        end
+        @test !any(r -> occursin("Multi-section line", r.message), logger.logs)
+        @test length(pm_data["multisection_line"]) == 2
+        for line in values(pm_data["multisection_line"])
+            @test [s[1] for s in line["segments"]] == ["branch", section, "branch"]
+        end
+    end
+end

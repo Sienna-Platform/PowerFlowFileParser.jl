@@ -674,7 +674,7 @@ function read_generation!(sys::OpenAPISystem, data::Dict; kwargs...)
     sys_mbase = get_base_power(sys)
     _get_name = get(kwargs, :gen_name_formatter, _get_pm_dict_name)
 
-    for (_, pm_gen) in _sorted_pm_entries(data["gen"])
+    for (gen_key, pm_gen) in _sorted_pm_entries(data["gen"])
         gen_name = String(_get_name(pm_gen))
         bus_id = get_bus_id(reg, Int(pm_gen["gen_bus"]))
         fuel = get(pm_gen, "fuel", "OTHER")
@@ -682,6 +682,7 @@ function read_generation!(sys::OpenAPISystem, data::Dict; kwargs...)
         type_name = get_generator_type(fuel, unit_type, GENERATOR_MAPPING_PM)
         _make_generator!(Val(Symbol(type_name)), sys, reg, bus_id, pm_gen, gen_name,
             sys_mbase)
+        record_source!(reg, "gen", gen_key)
     end
 
     for (_, pm_storage) in _sorted_pm_entries(get(data, "storage", Dict{String, Any}()))
