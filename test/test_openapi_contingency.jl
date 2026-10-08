@@ -221,10 +221,10 @@ end
 @testset "contingencies survive a JSON round trip" begin
     sys = oc_build(oc_pm(OC_MIXED, OC_ALL, OC_BUS_ONLY))
     _, path = oc_json(sys)
-    doc = PFP.PD.read_document(path)
+    doc = PFP.PC.read_document(path)
     outages = Dict(
         PFP.get_value(o, :identifier) => o for
-        o in PFP.PD.get_supplemental_attributes(doc, "FixedForcedOutage")
+        o in PFP.PC.get_supplemental_attributes(doc, "FixedForcedOutage")
     )
     @test sort(collect(keys(outages))) == ["ALLKINDS", "BUSONLY", "MIXED"]
     rows(name) = [
@@ -279,8 +279,8 @@ end
     @test isdisjoint(expected, bus_ids)
 
     _, path = oc_json(sys)
-    doc = PFP.PD.read_document(path)
-    for o in PFP.PD.get_supplemental_attributes(doc, "FixedForcedOutage")
+    doc = PFP.PC.read_document(path)
+    for o in PFP.PC.get_supplemental_attributes(doc, "FixedForcedOutage")
         @test PFP.get_value(o, :monitored_components) == expected
     end
 
