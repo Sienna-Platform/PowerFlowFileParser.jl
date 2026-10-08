@@ -50,10 +50,6 @@ old mutable `setproperty!` path did.
 _coerce(::Type{T}, value::T) where {T} = value
 _coerce(::Type{T}, value) where {T} = T(value)
 
-"""Whether `Absent` is one of `u`'s member types."""
-_has_absent(u::Union) = Absent in Base.uniontypes(u)
-_has_absent(::Type) = false
-
 """The member types of `t`; a non-`Union` type is its own sole member."""
 _concrete_types(u::Union) = Base.uniontypes(u)
 _concrete_types(t::Type) = (t,)
@@ -76,85 +72,6 @@ function _concrete_field_type(::Type{T}, prop::Symbol) where {T}
         )
     end
     return only(concrete)
-end
-
-"""A placeholder value for a required field this object has not staged yet.
-
-Only used to complete a [`_shadow`](@ref) instance so the generated per-instance
-`declared_unit`/`declared_quantity` methods have something to dispatch on; the discriminated
-field they actually read is always staged first (by convention, before its dependent
-fields), so a placeholder is never the value such a method consults.
-"""
-_placeholder(::Type{T}) where {T <: Integer} = zero(T)
-_placeholder(::Type{T}) where {T <: AbstractFloat} = zero(T)
-_placeholder(::Type{Bool}) = false
-_placeholder(::Type{String}) = ""
-_placeholder(::Type{Dict{K, V}}) where {K, V} = Dict{K, V}()
-_placeholder(::Type{Vector{T}}) where {T} = T[]
-
-"""
-A placeholder for a required oneOf-wrapper field (`FunctionData`, `*OperationCost`, ...):
-the first declared variant, itself placeholder-built recursively.
-
-A shadow only needs *some* valid instance to satisfy the outer struct's required kwarg —
-the generated `declared_unit`/`declared_quantity` methods it stands in for never read a
-oneOf field's own contents, only a plain sibling discriminator's — so which variant is
-picked is immaterial. `EnumAPIModel` gets no such case: unlike a oneOf member, an enum's
-inner constructor validates against a fixed string whitelist this package cannot enumerate,
-so a required enum field still falls through to the generic fallback below.
-"""
-function _placeholder(::Type{T}) where {T <: IC.OneOfAPIModel}
-    variant = first(Base.uniontypes(fieldtype(T, :value)))
-    return T(_placeholder(variant))
-end
-
-"""
-Recursive fallback: a required compound "shape" type (`MinMax`, `UpDown`, `FromTo`, ...) is
-plain numbers with no validation, so a zeroed instance is always constructible. A field
-named for one of the [`_DEFAULT_BASIS`](@ref) discriminators (`power_units`, ...) uses that
-same default, whatever struct it turns up nested in — a oneOf variant's own basis field
-(`CostCurve.power_units`, say) is exactly as placeholder-able as the top-level one
-`_default_bases!` defaults. A required field with no such shape and no case above (an enum
-wrapper outside that known set) means a caller staged a discriminated numeric field before
-the enum field its shadow needs — a genuine ordering bug, so this fails loudly rather than
-guessing a value.
-"""
-function _placeholder(::Type{T}) where {T}
-    kwargs = Dict{Symbol, Any}()
-    for name in fieldnames(T)
-        name === :additional_properties && continue
-        ftype = fieldtype(T, name)
-        _has_absent(ftype) && continue
-        concrete = _concrete_field_type(T, name)
-        kwargs[name] = if haskey(_DEFAULT_BASIS, name)
-            _coerce(concrete, _DEFAULT_BASIS[name])
-        else
-            _placeholder(concrete)
-        end
-    end
-    return T(; kwargs...)
-end
-
-"""
-A throw-away, fully valid `T` built from this object's fields staged so far, standing in for
-the real (not-yet-complete) component so the generated per-instance `declared_unit`/
-`declared_quantity` methods — which resolve a discriminated field's unit by reading a sibling
-basis field via `getproperty` — have a real `T` to dispatch on. Every field not yet staged
-gets a [`_placeholder`](@ref).
-"""
-function _shadow(s::Staged{T}) where {T}
-    kwargs = Dict{Symbol, Any}()
-    for name in fieldnames(T)
-        name === :additional_properties && continue
-        if haskey(s.fields, name)
-            kwargs[name] = s.fields[name]
-        else
-            ftype = fieldtype(T, name)
-            _has_absent(ftype) && continue
-            kwargs[name] = _placeholder(_concrete_field_type(T, name))
-        end
-    end
-    return T(; kwargs...)
 end
 
 """
@@ -191,59 +108,26 @@ Constructor for a compound property, e.g. `MinMax` for `ACBus.voltage_limits`.
 _compound_type(::Type{T}, prop::Symbol) where {T} = _concrete_field_type(T, prop)
 
 """
-Whether `T.prop`'s declared unit needs a real instance to resolve.
-
-The generator never emits a type-level `declared_unit`/`declared_quantity` method for a
-discriminated property (`Line.r` on `parameter_units`, every power-family field on
-`power_units`, ...) — only an instance-level one that reads the sibling discriminator via
-`getproperty`. Calling the type-level form for one of these therefore raises `MethodError`,
-not the schema's own `error()` call (`ErrorException`, raised by a genuinely fixed
-property's instance-level method when an unexpected discriminator value reaches it). Both
-mean "needs a shadow" here; PFFP's own `device_base.jl` (`_has_fixed_declared_unit`, unchanged
-by this migration) already draws this same distinction for the same reason.
+`T.prop`'s declared unit and quantity, resolved by dispatch on the type plus the staged
+values of whatever discriminator fields select it (`power_units`, `parameter_units`, ...;
+see `IC.unit_discriminator`). A fixed unit reads no field at all. A discriminated one
+first fills in any unstaged [`_DEFAULT_BASIS`](@ref) discriminator.
 """
 function _declared(s::Staged{T}, prop::Symbol) where {T}
-    if !IC.has_declared_unit(T, Val(prop))
+    p = Val(prop)
+    if !IC.has_declared_unit(T, p)
         throw(
             IS.DataFormatError(
                 "$(nameof(T)).$prop declares no unit; use the 3-argument set_value!",
             ),
         )
     end
-    key = (T, prop)
-    fixed = get(_FIXED_UNITS, key, nothing)
-    fixed === nothing || return fixed
-    if !(key in _DISCRIMINATED)
-        try
-            return _FIXED_UNITS[key] =
-                (IC.declared_unit(T, Val(prop)), IC.declared_quantity(T, Val(prop)))
-        catch e
-            (e isa ErrorException || e isa MethodError) || rethrow()
-        end
-        push!(_DISCRIMINATED, key)
+    if IC.unit_discriminator(T, p) !== nothing
+        _default_bases!(s)
     end
-    _default_bases!(s)
-    return get!(_DISCRIMINATED_UNITS, (key, _discriminators(s))) do
-        shadow = _shadow(s)
-        (IC.declared_unit(shadow, Val(prop)), IC.declared_quantity(shadow, Val(prop)))
-    end
+    keys = IC.unit_keys(d -> _unwrap(get(s.fields, d, nothing)), T, p)
+    return IC.declared_unit(T, p, keys...), IC.declared_quantity(T, p, keys...)
 end
-
-"""
-Memo tables for [`_declared`](@ref). Resolving a discriminated property means a thrown and
-caught `MethodError` plus a whole [`_shadow`](@ref) instance, which dominated build time on
-large cases. The generated instance-level methods only ever read enum-valued sibling fields
-(`power_units`, `parameter_units`, `ac_control`, ...), so the answer is a function of `T`,
-`prop` and the staged enum values alone — see [`_discriminators`](@ref).
-"""
-const _FIXED_UNITS = Dict{Tuple{DataType, Symbol}, Tuple{String, String}}()
-const _DISCRIMINATED = Set{Tuple{DataType, Symbol}}()
-const _DISCRIMINATED_UNITS = Dict{Any, Tuple{String, String}}()
-# ponytail: unlocked global memo; builds are single-threaded. Add a lock if that changes.
-
-"""Every staged enum field as a sorted `(name, value)` list: the cache key for a shadow."""
-_discriminators(s::Staged) =
-    sort!([(k, v.value) for (k, v) in s.fields if v isa IC.EnumAPIModel])
 
 function _reject_declared(s::Staged{T}, prop::Symbol) where {T}
     if IC.has_declared_unit(T, Val(prop))
