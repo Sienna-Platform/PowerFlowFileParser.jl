@@ -1450,6 +1450,8 @@ function _psse2pm_transformer!(pm_data::Dict, pti_data::Dict, import_all::Bool, 
                     _tap_ratio_limits(transformer, 1, tap_scale)
                 sub_data["VMA1"] = transformer["VMA1"]
                 sub_data["VMI1"] = transformer["VMI1"]
+                sub_data["RM_PRESENT1"] = transformer["RM_PRESENT1"]
+                sub_data["VM_PRESENT1"] = transformer["VM_PRESENT1"]
                 sub_data["NTP1"] = transformer["NTP1"]
                 if import_all
                     _import_remaining_keys!(
@@ -1880,6 +1882,8 @@ function _psse2pm_transformer!(pm_data::Dict, pti_data::Dict, import_all::Bool, 
                         _tap_ratio_limits(transformer, i, turns_ratio_scales[i])
                     sub_data["VMA$i"] = transformer["VMA$i"]
                     sub_data["VMI$i"] = transformer["VMI$i"]
+                    sub_data["RM_PRESENT$i"] = transformer["RM_PRESENT$i"]
+                    sub_data["VM_PRESENT$i"] = transformer["VM_PRESENT$i"]
                     sub_data["NTP$i"] = transformer["NTP$i"]
                 end
 
@@ -1935,6 +1939,21 @@ function _psse2pm_transformer!(pm_data::Dict, pti_data::Dict, import_all::Bool, 
         end
     end
     return
+end
+
+"""PSS(R)E two-terminal DC `MDC` control-mode codes, in the schema's `LCCControlMode`
+spelling: 0 blocked, 1 power, 2 current. Exhaustive on purpose: an unknown code errors
+rather than landing in a default mode, the same posture as
+`_switched_admittance_control_mode` for switched shunts."""
+function _lcc_control_mode(code::Integer, name)
+    code == 0 && return "BLOCKED"
+    code == 1 && return "POWER"
+    code == 2 && return "CURRENT"
+    throw(
+        DataFormatError(
+            "DC line $name: unsupported two-terminal DC MDC control mode=$code",
+        ),
+    )
 end
 
 """
@@ -2031,6 +2050,7 @@ PSS(R)E Two-Terminal DC specification. For Voltage Source Converters, "source_id
 is given by `["IBUS1", "IBUS2", "NAME"]`, where "IBUS1" is "IBUS" of the first
 converter bus, and "IBUS2" is the "IBUS" of the second converter bus, in the
 PSS(R)E Voltage Source Converter specification.
+
 """
 function _psse2pm_dcline!(pm_data::Dict, pti_data::Dict, import_all::Bool)
     @info "Parsing PSS(R)E Two-Terminal and VSC DC line data into a PowerModels Dict..."
@@ -2071,11 +2091,10 @@ function _psse2pm_dcline!(pm_data::Dict, pti_data::Dict, import_all::Bool)
                 push!(pm_data["connected_buses"], sub_data["t_bus"])
             end
 
-            if dcline["MDC"] == 1
-                sub_data["power_mode"] = true
-            else
-                sub_data["power_mode"] = false
-            end
+            # `MDC` is three-valued; a blocked line (0) is neither power- nor
+            # current-controlled, so it is carried as its own mode rather than folded into
+            # `available = false` alone.
+            sub_data["control_mode"] = _lcc_control_mode(dcline["MDC"], sub_data["name"])
             sub_data["available"] = dcline["MDC"] != 0
             sub_data["br_status"] = sub_data["available"]
 
@@ -2088,23 +2107,16 @@ function _psse2pm_dcline!(pm_data::Dict, pti_data::Dict, import_all::Bool)
                     ),
                 )
             end
-            ZbaseR = rectifier_base_voltage^2 / baseMVA
-            dc_base_voltage = dcline["VSCHD"]
-            if iszero(dc_base_voltage)
-                if sub_data["available"]
-                    throw(
-                        ArgumentError(
-                            "DC line $(sub_data["name"]): Scheduled DC voltage VSCHD cannot be 0",
-                        ),
-                    )
-                end
-                @warn "DC line $(sub_data["name"]) is out of service (MDC=0) with a zero scheduled DC voltage VSCHD; per-unitizing RDC on the rectifier AC base instead."
+            if iszero(dcline["VSCHD"]) && sub_data["available"]
+                throw(
+                    ArgumentError(
+                        "DC line $(sub_data["name"]): Scheduled DC voltage VSCHD cannot be 0",
+                    ),
+                )
             end
-            Zbase_dc =
-                _lcc_dc_impedance_base(dc_base_voltage, rectifier_base_voltage, baseMVA)
             sub_data["rectifier_bridges"] = dcline["NBR"]
-            sub_data["rectifier_rc"] = dcline["RCR"] / ZbaseR
-            sub_data["rectifier_xc"] = dcline["XCR"] / ZbaseR
+            sub_data["rectifier_rc"] = dcline["RCR"]
+            sub_data["rectifier_xc"] = dcline["XCR"]
             sub_data["rectifier_base_voltage"] = rectifier_base_voltage
 
             inverter_base_voltage = dcline["EBASI"]
@@ -2115,10 +2127,9 @@ function _psse2pm_dcline!(pm_data::Dict, pti_data::Dict, import_all::Bool)
                     ),
                 )
             end
-            ZbaseI = inverter_base_voltage^2 / baseMVA
             sub_data["inverter_bridges"] = dcline["NBI"]
-            sub_data["inverter_rc"] = dcline["RCI"] / ZbaseI
-            sub_data["inverter_xc"] = dcline["XCI"] / ZbaseI
+            sub_data["inverter_rc"] = dcline["RCI"]
+            sub_data["inverter_xc"] = dcline["XCI"]
             sub_data["inverter_base_voltage"] = inverter_base_voltage
 
             sub_data["switch_mode_voltage"] = dcline["VCMOD"]
@@ -2184,9 +2195,11 @@ function _psse2pm_dcline!(pm_data::Dict, pti_data::Dict, import_all::Bool)
             sub_data["reactive_power_limits_to"] =
                 (min = sub_data["qmint"], max = sub_data["qmaxt"])
 
-            sub_data["rectifier_capacitor_reactance"] = dcline["XCAPR"] / ZbaseR
-            sub_data["inverter_capacitor_reactance"] = dcline["XCAPI"] / ZbaseI
-            sub_data["r"] = dcline["RDC"] / Zbase_dc
+            # Impedances stay in ohms: downstream per-unitizes RDC on VSCHD and the
+            # converter fields on EBASR/EBASI.
+            sub_data["rectifier_capacitor_reactance"] = dcline["XCAPR"]
+            sub_data["inverter_capacitor_reactance"] = dcline["XCAPI"]
+            sub_data["r"] = dcline["RDC"]
 
             if pm_data["source_version"] == "30"
                 sub_data["ext"] = Dict{String, Any}(
@@ -2331,8 +2344,7 @@ function _psse2pm_dcline!(pm_data::Dict, pti_data::Dict, import_all::Bool)
             sub_data["pminf"] = -sub_data["pmaxf"]
             sub_data["pmint"] = -sub_data["pmaxt"]
 
-            Zbase = base_voltage^2 / baseMVA
-            sub_data["r"] = dcline["RDC"] / Zbase
+            sub_data["r"] = dcline["RDC"]
             sub_data["pf"] = flow_setpoint / baseMVA
             sub_data["if"] = 1000.0 * (flow_setpoint / base_voltage)
 

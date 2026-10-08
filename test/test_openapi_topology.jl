@@ -247,24 +247,24 @@ end
     sys = PFP.build_openapi_system(fourteen_bus_pm_data())
     path = joinpath(mktempdir(), "fourteen_bus.json")
     PFP.to_json(sys, path)
-    doc = PFP.PD.read_document(path)
-    @test length(PFP.PD.get_components(doc, "ACBus")) == 22
-    @test length(PFP.PD.get_components(doc, "Area")) == 1
-    @test length(PFP.PD.get_components(doc, "LoadZone")) == 1
-    @test length(PFP.PD.get_components(doc, "StandardLoad")) == 13
-    @test length(PFP.PD.get_components(doc, "ThermalStandard")) == 7
-    @test length(PFP.PD.get_components(doc, "Line")) == 20
-    @test length(PFP.PD.get_components(doc, "TwoWindingTransformer")) == 3
-    @test length(PFP.PD.get_components(doc, "ThreeWindingTransformer")) == 2
-    @test length(PFP.PD.get_components(doc, "TwoTerminalLCCLine")) == 1
-    @test length(PFP.PD.get_components(doc, "FixedAdmittance")) == 4
-    @test length(PFP.PD.get_components(doc, "SwitchedAdmittance")) == 2
-    @test length(PFP.PD.get_components(doc, "FACTSControlDevice")) == 1
-    @test length(PFP.PD.get_components(doc, "DiscreteControlledACBranch")) == 2
-    @test length(PFP.PD.get_supplemental_attributes(doc, "ImpedanceCorrectionData")) == 8
+    doc = PFP.PC.read_document(path)
+    @test length(PFP.PC.get_components(doc, "ACBus")) == 22
+    @test length(PFP.PC.get_components(doc, "Area")) == 1
+    @test length(PFP.PC.get_components(doc, "LoadZone")) == 1
+    @test length(PFP.PC.get_components(doc, "StandardLoad")) == 13
+    @test length(PFP.PC.get_components(doc, "ThermalStandard")) == 7
+    @test length(PFP.PC.get_components(doc, "Line")) == 20
+    @test length(PFP.PC.get_components(doc, "TwoWindingTransformer")) == 3
+    @test length(PFP.PC.get_components(doc, "ThreeWindingTransformer")) == 2
+    @test length(PFP.PC.get_components(doc, "TwoTerminalLCCLine")) == 1
+    @test length(PFP.PC.get_components(doc, "FixedAdmittance")) == 4
+    @test length(PFP.PC.get_components(doc, "SwitchedAdmittance")) == 2
+    @test length(PFP.PC.get_components(doc, "FACTSControlDevice")) == 1
+    @test length(PFP.PC.get_components(doc, "DiscreteControlledACBranch")) == 2
+    @test length(PFP.PC.get_supplemental_attributes(doc, "ImpedanceCorrectionData")) == 8
     # GeographicInfo stays empty: "substation" is allow-listed
     # (`KNOWN_UNCONSUMED_PM_SECTIONS`, build.jl), not implemented.
-    @test isempty(PFP.PD.get_components(doc, "GeographicInfo"))
+    @test isempty(PFP.PC.get_components(doc, "GeographicInfo"))
 end
 
 @testset "build_openapi_system rejects a pm dict with no buses" begin

@@ -144,7 +144,7 @@ end
         # variable_operation_cost is a `ProductionVariableCostCurve` oneOf wrapper
         # (`Union{CostCurve, FuelCurve}`) now, one `.value` deep from the CostCurve itself.
         variable = cost.variable_operation_cost.value
-        @test variable.power_units.value == "COMPONENT_BASE"
+        @test variable.power_units.value == "NATURAL_UNITS"
         function_data = variable.value_curve.value.function_data.value
         @test function_data.quadratic_term == 0.0
         @test function_data.proportional_term == 1.0
@@ -172,10 +172,41 @@ end
     end
 end
 
+@testset "MATPOWER costs are the gencost values in \$/h against MW" begin
+    pm = PFP.PowerModelsData(joinpath(@__DIR__, "fixtures", "matpower_cost_units.m"))
+    # Costs are natural in either document convention, so both give the same curves.
+    for power_units in PFP.UNIT_SYSTEMS
+        sys = PFP.build_openapi_system(pm; power_units = power_units)
+        costs = Dict(
+            PFP.get_value(gen, :name) => PFP.get_value(gen, :operation_cost).value for
+            gen in PFP.get_components(sys, "ThermalStandard")
+        )
+        # gencost: 2 1500 0 3  0.02 16 200
+        quadratic = costs["gen-1"]
+        curve = quadratic.variable_operation_cost.value
+        @test curve.power_units.value == "NATURAL_UNITS"
+        fd = curve.value_curve.value.function_data.value
+        @test fd.quadratic_term ≈ 0.02
+        @test fd.proportional_term ≈ 16.0
+        @test fd.constant_term == 0.0
+        @test quadratic.fixed ≈ 200.0
+        @test quadratic.start_up.value == 1500.0
+        # gencost: 1 0 0 3  10 300  40 900  60 1600; the first segment meets x = 0 at 100.
+        piecewise = costs["gen-2"]
+        curve = piecewise.variable_operation_cost.value
+        @test curve.power_units.value == "NATURAL_UNITS"
+        fd = curve.value_curve.value.function_data.value
+        @test piecewise.fixed ≈ 100.0
+        @test [p.x for p in fd.points] ≈ [10.0, 40.0, 60.0]
+        @test [p.y for p in fd.points] ≈ [300.0, 900.0, 1600.0] .- 100.0
+    end
+end
+
 @testset "a real PIECEWISE_LINEAR cost (model=1, case5_pwlc.m) shifts points by the fixed cost" begin
     pm = PFP.PowerModelsData(joinpath(MATPOWER_DIR, "case5_pwlc.m"))
     sys = PFP.build_openapi_system(pm)
     data = pm.data
+    sys_mbase = data["baseMVA"]
     for gen in PFP.get_components(sys, "ThermalStandard")
         d = only(
             v for v in values(data["gen"]) if
@@ -194,8 +225,9 @@ end
         fd = cost.variable_operation_cost.value.value_curve.value.function_data.value
         @test fd.function_type == "PIECEWISE_LINEAR"
         @test length(fd.points) == length(points)
+        # The pm dict holds x per-unit on the system base; the document carries MW.
         for (p, (x, y)) in zip(fd.points, points)
-            @test p.x ≈ x
+            @test p.x ≈ x * sys_mbase
             @test p.y ≈ y - fixed
         end
     end
@@ -394,30 +426,18 @@ end
 end
 
 @testset "COMPONENT_BASE conversion errors loudly on an unregistered instance-dispatched field" begin
-    # Pins the structural guarantee: an
-    # instance-level-discriminated field with no verdict in
+    # Pins the structural guarantee: an instance-level-discriminated field with no verdict in
     # `_DEVICEBASE_INSTANCE_DISPATCHED` must error, not silently fall through unconverted.
-    # `TwoTerminalVSCLine.dc_setpoint_from` (governed by `dc_control_from`) is real and
-    # instance-dispatched today but deliberately not registered -- this package's readers
-    # never reach a document containing it without first hitting the recorded VSC
-    # voltage-control gap (`_vsc_voltage_control_unsupported`), so it is exactly the kind
-    # of "not yet classified" field the guard exists for.
-    vsc = PFP.stage(PFP.PO.TwoTerminalVSCLine)
-    PFP.set_value!(vsc, :id, 1)
-    PFP.set_value!(vsc, :name, "vsc")
-    PFP.set_value!(vsc, :available, true)
-    PFP.set_value!(vsc, :arc, 0)
-    PFP.set_value!(vsc, :power_units, "NATURAL_UNITS")
-    PFP.set_value!(vsc, :active_power_flow, 0.0, "MW")
-    PFP.set_value!(vsc, :active_power_limits_from, (min = 0.0, max = 0.0), "MW")
-    PFP.set_value!(vsc, :active_power_limits_to, (min = 0.0, max = 0.0), "MW")
-    PFP.set_value!(vsc, :rating, 0.0, "MVA")
-    PFP.set_value!(vsc, :base_power, 100.0, "MVA")
-    @test_throws ErrorException PFP._devicebase_classification(
-        PFP.materialize(vsc),
-        "TwoTerminalVSCLine",
-        :dc_setpoint_from,
+    # Every unit selector in the 0.2 schemas has a default, so `power_units` alone resolves
+    # each discriminated field and no component reaches this guard through
+    # `_devicebase_classification` today. The guard is checked directly, for the schema
+    # that adds a selector without a default.
+    @test_throws ErrorException PFP._devicebase_instance_dispatched(
+        "GenericArcImpedance",
+        :r,
     )
+    @test PFP._devicebase_instance_dispatched("FACTSControlDevice", :voltage_setpoint) ==
+          :skip
 end
 
 @testset "read_generation! on case5_strg.m builds real EnergyReservoirStorage entries" begin
@@ -539,10 +559,10 @@ end
 
 @testset "a fresh 14-bus document with loads and generators round-trips through PC" begin
     sys = PFP.build_openapi_system(fourteen_bus_pm_data())
-    PFP.PD.validate_document(PFP.get_document(sys))
+    PFP.PC.validate_document(PFP.get_document(sys))
     path = joinpath(mktempdir(), "fourteen_bus_gen.json")
     PFP.to_json(sys, path)
-    doc = PFP.PD.read_document(path)
-    @test length(PFP.PD.get_components(doc, "StandardLoad")) == 13
-    @test length(PFP.PD.get_components(doc, "ThermalStandard")) == 7
+    doc = PFP.PC.read_document(path)
+    @test length(PFP.PC.get_components(doc, "StandardLoad")) == 13
+    @test length(PFP.PC.get_components(doc, "ThermalStandard")) == 7
 end

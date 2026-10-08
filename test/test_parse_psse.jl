@@ -71,43 +71,71 @@ end
     @test isempty(pm_v33["distributed_generation"])
 end
 
-@testset "PSSE two-terminal DC resistance per-unit base" begin
+@testset "PSSE two-terminal DC impedances stay in ohms" begin
+    # Downstream per-unitizes each impedance on its own base (VSCHD for RDC, EBASR/EBASI
+    # for the converter fields), so the parser hands over the RAW's ohms untouched.
     file = joinpath(@__DIR__, "fixtures", "synthetic_v35_two_terminal_dc.raw")
+    raw_line = only(PowerFlowFileParser.parse_pti(file)["TWO-TERMINAL DC"])
     pm_data = PowerModelsData(file).data
     dcline = only(values(pm_data["dcline"]))
-    @test dcline["r"] ≈ 0.003125
     @test dcline["scheduled_dc_voltage"] == 400.0
-    @test !(dcline["r"] ≈ 5.0 / (200.0^2 / 100.0))
-    # The document carries RDC back in ohms, whichever base the pm dict used.
-    lcc = only(
-        PFP.get_components(PFP.build_openapi_system(PowerModelsData(file)),
-            "TwoTerminalLCCLine"),
-    )
-    @test PFP.get_value(lcc, :r) ≈ 5.0
+    @test dcline["r"] == raw_line["RDC"] == 5.0
+    @test dcline["rectifier_rc"] == raw_line["RCR"]
+    @test dcline["rectifier_xc"] == raw_line["XCR"] == 5.0
+    @test dcline["inverter_rc"] == raw_line["RCI"]
+    @test dcline["inverter_xc"] == raw_line["XCI"] == 5.0
+    @test dcline["rectifier_capacitor_reactance"] == raw_line["XCAPR"]
+    @test dcline["inverter_capacitor_reactance"] == raw_line["XCAPI"]
+    @test dcline["compounding_resistance"] == raw_line["RCOMP"]
 
-    # A zero scheduled DC voltage cannot serve as a per-unit base on a line that is
-    # in service. The check applies to every PSS(R)E version's two-terminal DC records.
+    # An in-service line needs a scheduled DC voltage. The check applies to every
+    # PSS(R)E version's two-terminal DC records.
     raw = read_fixture(file)
     bad = replace(raw, "400.00" => "0.0000"; count = 1)
     @test_throws ArgumentError parse_file(IOBuffer(bad); filetype = "raw")
 
-    # A blocked line (MDC=0) with no DC voltage schedule warns and falls back to the
-    # rectifier AC base rather than aborting the parse; the value is inert anyway.
+    # A blocked line (MDC=0) with no DC voltage schedule still parses.
     blocked = replace(bad, "\"DCTEST1     \",1," => "\"DCTEST1     \",0,")
-    pm_blocked = @test_logs(
-        (:warn, r"out of service"),
-        match_mode = :any,
-        parse_file(IOBuffer(blocked); filetype = "raw"),
-    )
+    pm_blocked = parse_file(IOBuffer(blocked); filetype = "raw")
     blocked_dcline = only(values(pm_blocked["dcline"]))
     @test blocked_dcline["available"] == false
-    @test blocked_dcline["r"] ≈ 5.0 / (200.0^2 / 100.0)
-    blocked_lcc = only(
-        PFP.get_components(
-            PFP.build_openapi_system(PowerModelsData(pm_blocked)), "TwoTerminalLCCLine",
+    @test blocked_dcline["control_mode"] == "BLOCKED"
+    @test blocked_dcline["r"] == 5.0
+end
+
+@testset "PSSE VSC line resistance stays in ohms" begin
+    file = joinpath(@__DIR__, "fixtures", "synthetic_v35_vsc_line.raw")
+    raw = replace(
+        read_fixture(file),
+        "'VSCLINE1    ', 1, 0.0000," => "'VSCLINE1    ', 1, 2.5000,",
+    )
+    vscline = only(values(parse_file(IOBuffer(raw); filetype = "raw")["vscline"]))
+    @test vscline["r"] == 2.5
+end
+
+@testset "Two-terminal DC MDC maps to the three LCCControlMode strings" begin
+    # MDC=1 (14-bus fixture) and MDC=2 (discriminator fixture) parse to their names; an
+    # unknown code is rejected rather than defaulted. MDC=0 is covered above.
+    power =
+        only(values(parse_file(joinpath(@__DIR__, "modified_14bus_system.raw"))["dcline"]))
+    @test power["control_mode"] == "POWER"
+    current = only(
+        values(
+            parse_file(
+                joinpath(
+                    @__DIR__,
+                    "fixtures",
+                    "synthetic_v35_transformer_discriminators.raw",
+                ),
+            )["dcline"],
         ),
     )
-    @test PFP.get_value(blocked_lcc, :r) ≈ 5.0
+    @test current["control_mode"] == "CURRENT"
+    @test current["available"]
+    @test_throws PowerFlowFileParser.DataFormatError PowerFlowFileParser._lcc_control_mode(
+        42,
+        "x",
+    )
 end
 
 @testset "PSSE VSC line captures each converter's own AC bus base_kv" begin
