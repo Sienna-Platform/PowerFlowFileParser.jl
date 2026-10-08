@@ -210,15 +210,40 @@ function _declared(s::Staged{T}, prop::Symbol) where {T}
             ),
         )
     end
-    try
-        return IC.declared_unit(T, Val(prop)), IC.declared_quantity(T, Val(prop))
-    catch e
-        (e isa ErrorException || e isa MethodError) || rethrow()
+    key = (T, prop)
+    fixed = get(_FIXED_UNITS, key, nothing)
+    fixed === nothing || return fixed
+    if !(key in _DISCRIMINATED)
+        try
+            return _FIXED_UNITS[key] =
+                (IC.declared_unit(T, Val(prop)), IC.declared_quantity(T, Val(prop)))
+        catch e
+            (e isa ErrorException || e isa MethodError) || rethrow()
+        end
+        push!(_DISCRIMINATED, key)
     end
     _default_bases!(s)
-    shadow = _shadow(s)
-    return IC.declared_unit(shadow, Val(prop)), IC.declared_quantity(shadow, Val(prop))
+    return get!(_DISCRIMINATED_UNITS, (key, _discriminators(s))) do
+        shadow = _shadow(s)
+        (IC.declared_unit(shadow, Val(prop)), IC.declared_quantity(shadow, Val(prop)))
+    end
 end
+
+"""
+Memo tables for [`_declared`](@ref). Resolving a discriminated property means a thrown and
+caught `MethodError` plus a whole [`_shadow`](@ref) instance, which dominated build time on
+large cases. The generated instance-level methods only ever read enum-valued sibling fields
+(`power_units`, `parameter_units`, `ac_control`, ...), so the answer is a function of `T`,
+`prop` and the staged enum values alone — see [`_discriminators`](@ref).
+"""
+const _FIXED_UNITS = Dict{Tuple{DataType, Symbol}, Tuple{String, String}}()
+const _DISCRIMINATED = Set{Tuple{DataType, Symbol}}()
+const _DISCRIMINATED_UNITS = Dict{Any, Tuple{String, String}}()
+# ponytail: unlocked global memo; builds are single-threaded. Add a lock if that changes.
+
+"""Every staged enum field as a sorted `(name, value)` list: the cache key for a shadow."""
+_discriminators(s::Staged) =
+    sort!([(k, v.value) for (k, v) in s.fields if v isa IC.EnumAPIModel])
 
 function _reject_declared(s::Staged{T}, prop::Symbol) where {T}
     if IC.has_declared_unit(T, Val(prop))
