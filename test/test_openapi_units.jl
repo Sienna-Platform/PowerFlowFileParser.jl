@@ -18,11 +18,6 @@ end
 
 @testset "set_value! converts within a quantity" begin
     storage = PFP.stage(PFP.PO.EnergyReservoirStorage)
-    # operation_cost, power_units, prime_mover_type and storage_technology_type are all
-    # required enum/oneOf fields: `_shadow` cannot placeholder an enum wrapper (it
-    # constructs positionally, not by keyword), so each must be staged before
-    # storage_capacity, whose declared unit depends on a shadow (see generation.jl's
-    # make_storage! for the same ordering requirement).
     PFP.set_value!(
         storage,
         :operation_cost,
@@ -161,10 +156,6 @@ end
     @test PFP.get_value(bus, :voltage_limits).max == 1.05
 
     gen = PFP.stage(PFP.PO.ThermalStandard)
-    # operation_cost, power_units and status are all required enum/oneOf fields:
-    # `_shadow` cannot placeholder an enum wrapper (it constructs positionally, not by
-    # keyword), so each must be staged before active_power_limits/ramp_limits below (see
-    # generation.jl's make_thermal_generator! for the same ordering requirement).
     PFP.set_value!(
         gen,
         :operation_cost,
