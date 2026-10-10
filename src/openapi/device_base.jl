@@ -18,9 +18,8 @@
 #   - that unit is not relative to a sibling field (`!IC.has_unit_base` — e.g.
 #     `ACBus.magnitude` is already pu on `base_voltage` regardless of document unit
 #     system, so it is untouched here);
-#   - its Type-level (not instance-level) `IC.declared_unit`/`IC.declared_quantity`
-#     resolve without error (`_has_fixed_declared_unit`) — see the next section for what
-#     happens when they do not;
+#   - its unit is fixed (`IC.unit_discriminator` is `nothing`) — see the next section for
+#     what happens when it is not;
 #   - that unit's quantity is power-family (`ActivePower`/`ReactivePower`/`ApparentPower`/
 #     `ActivePowerChangeRate` — a generator/storage `ramp_limits` in MW/min is scaled by
 #     device base exactly like its MW siblings in every PowerSystems converter checked).
@@ -45,7 +44,7 @@
 #
 # ── Field classification, instance-dispatched path ──────────────────────────────
 #
-# A field whose Type-level `declared_unit`/`declared_quantity` throws depends on a runtime
+# A field with an `IC.unit_discriminator` other than `power_units` depends on a runtime
 # discriminator sibling (`parameter_units`, `admittance_units`, `energy_units`,
 # `voltage_setpoint_units`, `dc_voltage_units`, `setpoint_voltage_units`, ...). That discriminator is
 # used for two semantically different things in this schema, and conflating them is a bug:
@@ -156,21 +155,6 @@ const _DEVICEBASE_INSTANCE_DISPATCHED = Dict{Tuple{String, Symbol}, Symbol}(
     ("EnergyReservoirStorage", :storage_capacity) => :convert_own,
 )
 
-"""Whether `T.prop`'s declared unit is fixed — resolvable from the Type alone, rather than
-depending on a runtime discriminator field only the instance-level method reads. A missing
-Type-level method (every power-family field: its unit now depends on the component's own
-`power_units`) raises `MethodError` rather than the schema's own `ErrorException`; both mean
-"not fixed" here."""
-function _has_fixed_declared_unit(::Type{T}, prop::Symbol) where {T}
-    try
-        IC.declared_unit(T, Val(prop))
-        return true
-    catch e
-        (e isa ErrorException || e isa MethodError) || rethrow()
-        return false
-    end
-end
-
 """
 Classification for a `key.prop` whose Type-level declared unit is NOT fixed (an
 instance-level discriminator governs it) — `_DEVICEBASE_INSTANCE_DISPATCHED` lookup, erroring
@@ -188,54 +172,6 @@ function _devicebase_instance_dispatched(key::AbstractString, prop::Symbol)
         )
     end
     return verdict
-end
-
-"""A copy of `o` with `power_units` set to `power_units` and every other field held
-exactly as-is — probes a field's instance dispatch without mutating the real component
-(see [`_power_units_only_dispatch`](@ref))."""
-function _with_power_units(
-    o::T,
-    power_units::AbstractString,
-) where {T <: IC.APIModel}
-    return T(;
-        (
-            f => (f === :power_units ? IC.UnitSystem(power_units) : getfield(o, f))
-            for f in fieldnames(T)
-        )...,
-    )
-end
-
-"""
-Whether `prop`'s instance-level dispatch resolves consistently across both of `power_units`'
-valid values, `representative`'s own fields (other than `power_units`) held exactly as the
-real reader that built it set them.
-
-Every generated component now declares `power_units` a required, enum-validated field (no
-`nothing`/`ABSENT` "unset" state), unlike the pre-1.0 runtime, so this can no longer poison
-it with an out-of-domain sentinel and read the schema's own error message naming the
-deciding field — the technique the previous runtime supported. Resolving successfully
-under BOTH valid values is the closest still-available signal: every ordinary power-family
-field across the 32 power-bearing types resolves this way today (confirmed against the
-current schema, and unaffected by this change — `power_units` staying required only
-removes the invalid-sentinel probe, not the underlying dispatch). A field genuinely gated
-by another discriminator (`setpoint_voltage_units`, `parameter_units`, ...) instead
-must go through the explicit `_DEVICEBASE_INSTANCE_DISPATCHED` registry and its loud error
-on a miss, never through this fallback — and since that registry is checked first
-(`_devicebase_classification`'s `!haskey(...) && ...`), this function is only ever reached
-for a pair already confirmed NOT to need one of those siblings, so a resolution failure
-here means a real gap the registry has not been taught about yet, not a false positive.
-"""
-function _power_units_only_dispatch(representative::T, prop::Symbol) where {T}
-    for power_units in ("NATURAL_UNITS", "COMPONENT_BASE")
-        variant = _with_power_units(representative, power_units)
-        try
-            IC.declared_quantity(variant, Val(prop))
-        catch e
-            e isa ErrorException || rethrow()
-            return false
-        end
-    end
-    return true
 end
 
 """
@@ -258,10 +194,11 @@ function _devicebase_classification(
     if !IC.has_declared_unit(T, Val(prop)) || IC.has_unit_base(T, Val(prop))
         return :skip
     end
-    if _has_fixed_declared_unit(T, prop)
+    disc = IC.unit_discriminator(T, Val(prop))
+    if disc === nothing
         quantity = IC.declared_quantity(T, Val(prop))
-    elseif !haskey(_DEVICEBASE_INSTANCE_DISPATCHED, (String(key), prop)) &&
-           _power_units_only_dispatch(representative, prop)
+    elseif disc === :power_units &&
+           !haskey(_DEVICEBASE_INSTANCE_DISPATCHED, (String(key), prop))
         quantity = IC.declared_quantity(representative, Val(prop))
     else
         return _devicebase_instance_dispatched(key, prop)
