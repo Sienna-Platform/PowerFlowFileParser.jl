@@ -550,7 +550,7 @@ function read_branches!(sys::OpenAPISystem, data::Dict; kwargs...)
     bus_lookup = _pm_bus_lookup(sys)
     _get_name = get(kwargs, :branch_name_formatter, _get_pm_branch_name)
 
-    for (_, d) in _sorted_pm_entries(data["branch"])
+    for (d_key, d) in _sorted_pm_entries(data["branch"])
         from_number, to_number = Int(d["f_bus"]), Int(d["t_bus"])
         from_name, from_isolated = bus_lookup[from_number]
         to_name, to_isolated = bus_lookup[to_number]
@@ -584,6 +584,7 @@ function read_branches!(sys::OpenAPISystem, data::Dict; kwargs...)
         else
             throw(IS.DataFormatError("unsupported branch type $branch_type for $name"))
         end
+        record_source!(reg, "branch", d_key)
     end
     return
 end
@@ -602,7 +603,7 @@ function read_3w_transformers!(sys::OpenAPISystem, data::Dict; kwargs...)
     bus_lookup = _pm_bus_lookup(sys)
     _get_name = get(kwargs, :xfrm_3w_name_formatter, _get_pm_3w_name)
 
-    for (_, d) in _sorted_pm_entries(data["3w_transformer"])
+    for (d_key, d) in _sorted_pm_entries(data["3w_transformer"])
         primary_number = Int(d["bus_primary"])
         secondary_number = Int(d["bus_secondary"])
         tertiary_number = Int(d["bus_tertiary"])
@@ -620,6 +621,7 @@ function read_3w_transformers!(sys::OpenAPISystem, data::Dict; kwargs...)
             get_bus_id(reg, primary_number), get_bus_id(reg, secondary_number),
             get_bus_id(reg, tertiary_number), get_bus_id(reg, star_number),
         )
+        record_source!(reg, "3w_transformer", d_key)
     end
     return
 end

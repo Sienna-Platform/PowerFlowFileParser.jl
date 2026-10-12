@@ -93,7 +93,7 @@ function read_switch_breaker!(sys::OpenAPISystem, data::Dict; kwargs...)
     _get_name = get(kwargs, :branch_name_formatter, _get_pm_branch_name)
 
     for device_type in ("switch", "breaker", "generic_connector")
-        for (_, d) in _sorted_pm_entries(get(data, device_type, Dict{String, Any}()))
+        for (d_key, d) in _sorted_pm_entries(get(data, device_type, Dict{String, Any}()))
             from_number, to_number = Int(d["f_bus"]), Int(d["t_bus"])
             from_name, = bus_lookup[from_number]
             to_name, = bus_lookup[to_number]
@@ -101,6 +101,7 @@ function read_switch_breaker!(sys::OpenAPISystem, data::Dict; kwargs...)
             to_id = get_bus_id(reg, to_number)
             name = String(_get_name(d, from_name, to_name))
             make_switch_breaker!(sys, reg, name, d, from_id, to_id, sys_mbase)
+            record_source!(reg, device_type, d_key)
         end
     end
     return
