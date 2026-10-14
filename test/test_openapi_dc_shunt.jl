@@ -227,8 +227,7 @@ end
     @test_throws IS.DataFormatError PFP._facts_control_mode(3)
 end
 
-"""Minimal two-bus, two-area pm dict for the AreaInterchange bug-compatible site and its
-undefined-area skip path — no fixture on hand carries `interarea_transfer` data."""
+"""Minimal two-bus, two-area pm dict for the AreaInterchange undefined-area skip path."""
 function _two_area_pm_data(; power_transfer::Float64 = 50.0, area_to::Int = 2)
     bus = Dict{String, Any}(
         "1" => Dict{String, Any}(
@@ -256,22 +255,20 @@ function _two_area_pm_data(; power_transfer::Float64 = 50.0, area_to::Int = 2)
     )
 end
 
-@testset "Bug-compatible: AreaInterchange.active_power_flow is power_transfer ×baseMVA a second time" begin
-    data = _two_area_pm_data()
-    sys = PFP.OpenAPISystem(Float64(data["baseMVA"]))
-    PFP.read_loadzones!(sys, data)
-    PFP.read_bus!(sys, data)
-    PFP.read_area_interchanges!(sys, data)
+@testset "AreaInterchange.active_power_flow is PTRAN in natural MW" begin
+    pm = PFP.PowerModelsData(
+        joinpath(@__DIR__, "fixtures", "synthetic_v35_interarea_transfer.raw"),
+    )
+    d = only(values(pm.data["interarea_transfer"]))
+    # PTRAN is "MW comprising this transfer" (PSS/E manual) and `_make_per_unit!` never
+    # touches `interarea_transfer`, so it reaches the reader as natural MW.
+    @test d["power_transfer"] == 25.0
+    @test pm.data["baseMVA"] == 100.0
 
+    sys = PFP.build_openapi_system(pm)
     ai = only(PFP.get_components(sys, "AreaInterchange"))
-    # power_transfer (50.0) is PFFP's raw, already-natural PTRAN value (psse.jl copies it
-    # verbatim; "interarea_transfer" is not a native PowerModels section, so
-    # `_make_per_unit!` never touches it either). PSCB's oracle assigns it directly into
-    # a field PSY declares SU (system-base pu), with no division by sys_mbase first — a
-    # real `get_active_power_flow(interchange, PSY.NU)` call therefore multiplies this
-    # already-natural number by sys_mbase a SECOND time. This reader reproduces exactly
-    # that inflated value.
-    @test PFP.get_value(ai, :active_power_flow) == 50.0 * 100.0
+    @test PFP.get_value(ai, :name) == "1_2_A"
+    @test PFP.get_value(ai, :active_power_flow) == 25.0  # not 25 * 100 (#74)
     @test _matches_nt(
         PFP.get_value(ai, :flow_limits),
         (from_to = -1.0e6, to_from = 1.0e6),
