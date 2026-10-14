@@ -362,10 +362,11 @@ end
     @test PFP.get_value(vsc, :dc_voltage_setpoint_from) === PFP.ABSENT
     @test PFP.get_value(vsc, :power_factor_setpoint_from) == 1.0
     @test PFP.get_value(vsc, :ac_voltage_setpoint_from) === PFP.ABSENT
-    @test PFP.get_value(vsc, :dc_current) == 10.0
+    # The RAW records currents in A; the schema stores kA.
+    @test PFP.get_value(vsc, :dc_current) ≈ 10.0 / 1000
     # The pm dict keeps the RAW's RDC in ohms: r = 0.5 ohm, so g = 2 S.
     @test PFP.get_value(vsc, :g) ≈ 1.0 / 0.5
-    @test PFP.get_value(vsc, :max_dc_current_from) == 100.0
+    @test PFP.get_value(vsc, :max_dc_current_from) ≈ 100.0 / 1000
     @test PFP.get_value(vsc, :rated_dc_voltage) == 100.0
     @test PFP.get_value(vsc, :rated_ac_voltage_from) == 138.0
     @test PFP.get_value(vsc, :rated_ac_voltage_to) == 138.0
