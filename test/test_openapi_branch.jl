@@ -96,7 +96,7 @@ end
     @test PFP.get_value(line, :rating) ≈ d["rate_a"]
 end
 
-@testset "TwoWindingTransformer + TransformerCircuit: r/x device-base passthrough, rating/flow ×circuit base_power" begin
+@testset "TwoWindingTransformer + TransformerCircuit: r/x device-base passthrough, rating/flow ×sys_mbase" begin
     pm = fourteen_bus_pm_data()
     sys = PFP.build_openapi_system(pm)
     d = only(
@@ -117,10 +117,10 @@ end
     @test PFP.get_value(circuit, :base_voltage_primary) == d["base_voltage_from"]
     @test PFP.get_value(circuit, :base_voltage_secondary) == d["base_voltage_to"]
     # rating is per-unit-on-system-base in the raw pm dict (PowerModels' generic branch
-    # correction) but the circuit's rating field is component-base pu (PSY.CU); this fixture
-    # cannot distinguish the two bases (base_power == sys_mbase) — the synthetic cases in
+    # correction), so it converts with sys_mbase; this fixture cannot distinguish the two
+    # bases (base_power == sys_mbase) — the synthetic cases in
     # test_openapi_transformer_discriminators.jl do.
-    @test PFP.get_value(circuit, :rating) ≈ d["rate_a"] * d["base_power"]
+    @test PFP.get_value(circuit, :rating) ≈ d["rate_a"] * pm.data["baseMVA"]
     @test PFP.get_value(circuit, :active_power_flow) == 0.0
     @test PFP.get_value(circuit, :reactive_power_flow) == 0.0
     # COD1 = 0 => FIXED selects the tap band and the voltage band; the other three bands
@@ -148,9 +148,9 @@ end
 end
 
 @testset "TransformerCircuit: rating/flow are per-unit-on-own-base_power under COMPONENT_BASE, r/x/magnetizing_shunt untouched" begin
-    # NATURAL_UNITS stores rating = d["rate_a"] * d["base_power"] (the circuit's own base,
-    # not necessarily sys_mbase). COMPONENT_BASE divides that back by the same base_power, so
-    # the document should carry PowerModels' raw per-unit `rate_a` verbatim. r/x/
+    # NATURAL_UNITS stores rating = d["rate_a"] * sys_mbase. COMPONENT_BASE divides that by
+    # the circuit's own base_power, which equals sys_mbase in this fixture, so the document
+    # carries PowerModels' raw per-unit `rate_a` verbatim. r/x/
     # magnetizing_shunt are always COMPONENT_BASE pu already (their own `parameter_units`/
     # `admittance_units` discriminators, independent of the run's power_units) and
     # must not move at all between the two documents.
