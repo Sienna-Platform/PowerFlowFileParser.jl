@@ -492,7 +492,8 @@ function make_storage!(
     set_value!(
         component,
         :reactive_power_limits,
-        _natural_value((min = d["qmin"], max = d["qmax"]), sys_mbase),
+        # qmin/qmax bound qs (withdrawal); negating qs flips and swaps them.
+        _natural_value((min = -d["qmax"], max = -d["qmin"]), sys_mbase),
         "MVAr",
     )
     set_value!(component, :base_power, sys_mbase, "MVA")

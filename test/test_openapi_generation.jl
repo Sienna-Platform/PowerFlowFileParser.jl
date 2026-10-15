@@ -405,8 +405,8 @@ end
     @test PFP.get_value(storage, :output_active_power_limits).min == 0.0
     @test PFP.get_value(storage, :output_active_power_limits).max ≈ d["discharge_rating"]
     @test PFP.get_value(storage, :reactive_power) ≈ -0.1
-    @test PFP.get_value(storage, :reactive_power_limits).min ≈ d["qmin"]
-    @test PFP.get_value(storage, :reactive_power_limits).max ≈ d["qmax"]
+    @test PFP.get_value(storage, :reactive_power_limits).min ≈ -d["qmax"]
+    @test PFP.get_value(storage, :reactive_power_limits).max ≈ -d["qmin"]
     # Dimensionless / ratio fields: untouched by COMPONENT_BASE either way.
     @test PFP.get_value(storage, :initial_storage_capacity_level) == 0.5
     @test PFP.get_value(storage, :storage_level_limits).min == 0.0
@@ -445,8 +445,9 @@ end
         @test PFP.get_value(storage, :storage_capacity) ≈ 100.0
         @test PFP.get_value(storage, :input_active_power_limits).max ≈ 50.0
         @test PFP.get_value(storage, :output_active_power_limits).max ≈ 70.0
-        @test PFP.get_value(storage, :reactive_power_limits).min ≈ -50.0
-        @test PFP.get_value(storage, :reactive_power_limits).max ≈ 70.0
+        # Withdrawal bounds [-50, 70] become injection bounds [-70, 50].
+        @test PFP.get_value(storage, :reactive_power_limits).min ≈ -70.0
+        @test PFP.get_value(storage, :reactive_power_limits).max ≈ 50.0
         @test PFP.get_value(storage, :initial_storage_capacity_level) ≈
               d["energy"] / d["energy_rating"]  # 0.2 / 0.3
     end
