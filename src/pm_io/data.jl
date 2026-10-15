@@ -368,6 +368,8 @@ function _make_per_unit!(data::Dict{String, <:Any}, mva_base::Real)
 
     if haskey(data, "storage")
         for (i, strg) in data["storage"]
+            _apply_func!(strg, "ps", rescale)
+            _apply_func!(strg, "qs", rescale)
             _apply_func!(strg, "energy", rescale)
             _apply_func!(strg, "energy_rating", rescale)
             _apply_func!(strg, "charge_rating", rescale)
@@ -524,6 +526,8 @@ function _make_mixed_units!(data::Dict{String, <:Any})
 
     if haskey(data, "storage")
         for (i, strg) in data["storage"]
+            _apply_func!(strg, "ps", rescale)
+            _apply_func!(strg, "qs", rescale)
             _apply_func!(strg, "energy", rescale)
             _apply_func!(strg, "energy_rating", rescale)
             _apply_func!(strg, "charge_rating", rescale)
