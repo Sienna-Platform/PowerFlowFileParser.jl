@@ -311,14 +311,8 @@ make_hydro_reservoir!(sys::OpenAPISystem, reg::IdRegistry, bus_id::Int, pm_gen::
     gen_name::AbstractString, sys_mbase::Float64) =
     _make_hydro_dispatch_body!(sys, reg, bus_id, pm_gen, gen_name, sys_mbase)
 
-"""
-Curtailable renewable generator.
-
-# Bug-compatible with PSCB — `calculate_gen_rating` already
-multiplies by `base_conversion`; PSCB's `RenewableDispatch(...)` call then multiplies its
-own already-converted `rating` local by `base_conversion` a second time, so the stored
-device-base-pu rating carries `base_conversion^2`. Fix tracked upstream; not fixed here.
-"""
+"""Curtailable renewable generator. (PSCB's oracle applied `base_conversion` to the
+rating a second time, so its rating carried `base_conversion^2`.)"""
 function make_renewable_dispatch!(
     sys::OpenAPISystem,
     reg::IdRegistry,
@@ -334,14 +328,11 @@ function make_renewable_dispatch!(
         (min = pm_gen["qmin"] * base_conversion, max = pm_gen["qmax"] * base_conversion)
 
     rating = calculate_gen_rating(pm_gen["pmax"], pm_gen["qmax"], base_conversion)
-    if rating > mbase
+    # `rating` is device-base pu, so "larger than base power" means > 1.0.
+    if rating > 1.0
         @warn "rating is larger than base power for $gen_name, setting to $mbase"
-        rating = mbase
+        rating = 1.0
     end
-    # Bug-compatible with PSCB — `rating` above is already
-    # device-base per-unit (calculate_gen_rating applied `base_conversion` once); this
-    # second multiply is the double-application the docstring names.
-    rating = rating * base_conversion
 
     component = stage(PO.RenewableDispatch)
     set_value!(component, :id, register!(reg, "RenewableDispatch", gen_name))

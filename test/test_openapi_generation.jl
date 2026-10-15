@@ -318,31 +318,36 @@ end
     )
 end
 
-@testset "Bug-compatible: renewable rating's double base_conversion (power_models_data.jl:872,885)" begin
-    # Cross-checked directly against PSCB's real make_renewable_dispatch with this exact
-    # input (mbase=50.0, sys_mbase=100.0, pmax=40.0, qmax=20.0): raw stored `rating` field
-    # comes out 100.0 (device-base pu), and `get_rating(gen, PSY.NU)` on that real PSY
-    # component returns 5000.0 — reproduced below bit for bit.
+@testset "RenewableDispatch rating applies base_conversion once (mbase != sys_mbase)" begin
+    # pmax/qmax are system-base pu: sqrt(0.3^2 + 0.1^2) * 100 = 31.62 MVA. The oracle's
+    # double base_conversion (100/50) gave twice that.
     sys = PFP.OpenAPISystem(100.0)
     reg = PFP.get_registry(sys)
     bus = _register_test_bus!(sys)
     d = Dict{String, Any}(
-        "mbase" => 50.0, "gen_status" => true, "pg" => 10.0, "qg" => 2.0,
-        "pmax" => 40.0, "pmin" => 0.0, "qmax" => 20.0, "qmin" => -20.0, "type" => "WIND",
+        "mbase" => 50.0, "gen_status" => true, "pg" => 0.2, "qg" => 0.05,
+        "pmax" => 0.3, "pmin" => 0.0, "qmax" => 0.1, "qmin" => -0.1, "type" => "WIND",
+    )
+    PFP.make_renewable_dispatch!(sys, reg, bus, d, "wind1", 100.0)
+    gen = only(PFP.get_components(sys, "RenewableDispatch"))
+    @test PFP.get_value(gen, :rating) ≈ sqrt(0.3^2 + 0.1^2) * 100.0
+    @test PFP.get_value(gen, :active_power) ≈ 20.0
+    @test PFP.get_value(gen, :reactive_power) ≈ 5.0
+    @test PFP.get_value(gen, :base_power) == 50.0
+end
+
+@testset "RenewableDispatch rating above its own base_power is clamped to base_power" begin
+    sys = PFP.OpenAPISystem(100.0)
+    reg = PFP.get_registry(sys)
+    bus = _register_test_bus!(sys)
+    d = Dict{String, Any}(
+        "mbase" => 50.0, "gen_status" => true, "pg" => 0.2, "qg" => 0.0,
+        "pmax" => 0.6, "pmin" => 0.0, "qmax" => 0.0, "qmin" => 0.0, "type" => "WIND",
     )
     @test_logs (:warn, r"rating is larger than base power") PFP.make_renewable_dispatch!(
-        sys,
-        reg,
-        bus,
-        d,
-        "wind1",
-        100.0,
-    )
+        sys, reg, bus, d, "wind1", 100.0)
     gen = only(PFP.get_components(sys, "RenewableDispatch"))
-    @test PFP.get_value(gen, :rating) ≈ 5000.0
-    @test PFP.get_value(gen, :active_power) ≈ 1000.0
-    @test PFP.get_value(gen, :reactive_power) ≈ 200.0
-    @test PFP.get_value(gen, :base_power) == 50.0
+    @test PFP.get_value(gen, :rating) ≈ 50.0  # 60 MVA clamped to mbase
 end
 
 @testset "Bug-compatible: make_generic_battery's raw thermal_rating (power_models_data.jl:944,951)" begin
