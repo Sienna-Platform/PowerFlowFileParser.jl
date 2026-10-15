@@ -59,7 +59,7 @@ thermal_fuel(fuel::AbstractString) = _enum_value(THERMAL_FUEL_ALIASES, fuel)
 
 """Convert a device-base per-unit quantity (PSCB's own PSY storage convention) into the
 natural unit the schema wants, by multiplying by the component's own base (`mbase` for a
-generator, `thermal_rating` for `make_storage!`'s bug-compatible battery)."""
+generator, `sys_mbase` for storage)."""
 _natural_value(value::Real, base::Float64) = value * base
 _natural_value(limits::NamedTuple, base::Float64) = map(v -> v * base, limits)
 _natural_value(::Nothing, ::Float64) = nothing
@@ -425,12 +425,11 @@ end
 """
 Generic battery storage from a `data["storage"]` entry.
 
-# Bug-compatible with PSCB — `rating` and `base_power` are
-both assigned the raw `"thermal_rating"` value, itself PowerModels system per-unit and
-never converted. Every other field in this file uses the component's own base to reach
-natural units; here that base *is* the same unconverted `thermal_rating` value, so
-`rating` in particular ends up scaled by `thermal_rating` against itself. Fix tracked
-upstream; not fixed here.
+`_make_per_unit!` leaves every storage power/energy field in system-base pu, so they all
+convert with `sys_mbase`, which is also the `base_power` (PowerModels storage carries no
+device base of its own). PowerModels defines `ps`/`qs` as power *withdrawn*, while PSY's
+`active_power`/`reactive_power` are injections, so they are negated. (PSCB's oracle used
+the raw, system-pu `thermal_rating` as both `rating` and `base_power`.)
 """
 function make_storage!(
     sys::OpenAPISystem,
@@ -441,9 +440,6 @@ function make_storage!(
     sys_mbase::Float64,
 )
     energy_rating = iszero(d["energy_rating"]) ? d["energy"] : d["energy_rating"]
-    # Bug-compatible: PSCB's own `base_power` for a battery is this raw, unconverted
-    # per-unit value, not a true MVA base — see docstring.
-    thermal_rating = Float64(d["thermal_rating"])
 
     component = stage(PO.EnergyReservoirStorage)
     set_value!(component, :id, register!(reg, "EnergyReservoirStorage", storage_name))
@@ -467,23 +463,23 @@ function make_storage!(
     )
     set_value!(component, :prime_mover_type, "BA")
     set_value!(component, :storage_technology_type, "OTHER_CHEM")
-    set_value!(component, :storage_capacity, _natural_value(energy_rating, thermal_rating),
+    set_value!(component, :storage_capacity, _natural_value(energy_rating, sys_mbase),
         "MWh")
     # A fraction of storage_capacity; pm data carries no derate, so the full band.
     set_value!(component, :storage_level_limits, IC.MinMax(; min = 0.0, max = 1.0))
     set_value!(component, :initial_storage_capacity_level, d["energy"] / energy_rating, "1")
-    set_value!(component, :rating, _natural_value(thermal_rating, thermal_rating), "MVA")
-    set_value!(component, :active_power, _natural_value(d["ps"], thermal_rating), "MW")
+    set_value!(component, :rating, _natural_value(d["thermal_rating"], sys_mbase), "MVA")
+    set_value!(component, :active_power, _natural_value(-d["ps"], sys_mbase), "MW")
     set_value!(
         component,
         :input_active_power_limits,
-        _natural_value((min = 0.0, max = d["charge_rating"]), thermal_rating),
+        _natural_value((min = 0.0, max = d["charge_rating"]), sys_mbase),
         "MW",
     )
     set_value!(
         component,
         :output_active_power_limits,
-        _natural_value((min = 0.0, max = d["discharge_rating"]), thermal_rating),
+        _natural_value((min = 0.0, max = d["discharge_rating"]), sys_mbase),
         "MW",
     )
     set_value!(
@@ -491,14 +487,15 @@ function make_storage!(
         :efficiency,
         IC.InOut(; in = d["charge_efficiency"], out = d["discharge_efficiency"]),
     )
-    set_value!(component, :reactive_power, _natural_value(d["qs"], thermal_rating), "MVAr")
+    set_value!(component, :reactive_power, _natural_value(-d["qs"], sys_mbase),
+        "MVAr")
     set_value!(
         component,
         :reactive_power_limits,
-        _natural_value((min = d["qmin"], max = d["qmax"]), thermal_rating),
+        _natural_value((min = d["qmin"], max = d["qmax"]), sys_mbase),
         "MVAr",
     )
-    set_value!(component, :base_power, thermal_rating, "MVA")
+    set_value!(component, :base_power, sys_mbase, "MVA")
     add_component!(sys, component)
     set_component_ext!(sys, component, get(d, "ext", Dict{String, Any}()))
     return

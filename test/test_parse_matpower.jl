@@ -90,3 +90,20 @@ end
         test_parse(path)
     end
 end
+
+@testset "_make_per_unit!/_make_mixed_units! rescale storage ps/qs" begin
+    data = Dict{String, Any}(
+        "baseMVA" => 100.0,
+        "per_unit" => false,
+        "storage" => Dict{String, Any}(
+            "1" => Dict{String, Any}("ps" => 20.0, "qs" => -5.0),
+        ),
+    )
+    PFP._make_per_unit!(data, 100.0)
+    @test data["storage"]["1"]["ps"] ≈ 0.2
+    @test data["storage"]["1"]["qs"] ≈ -0.05
+    data["per_unit"] = true
+    PFP._make_mixed_units!(data)
+    @test data["storage"]["1"]["ps"] ≈ 20.0
+    @test data["storage"]["1"]["qs"] ≈ -5.0
+end
