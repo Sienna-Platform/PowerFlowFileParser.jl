@@ -59,6 +59,19 @@ end
     @test PFP.get_value(vsc, :g) ≈ 1.0 / 2.5
 end
 
+@testset "TwoTerminalVSCLine: RAW IMAX = 0 stores the 9999 kA no-limit value" begin
+    file = joinpath(@__DIR__, "fixtures", "synthetic_v35_vsc_line.raw")
+    raw = replace(read_fixture(file), " 250.00, 1000.00," => " 250.00, 0.00,")
+    sys = mktempdir() do dir
+        path = joinpath(dir, "vsc_line.raw")
+        write(path, raw)
+        PFP.build_openapi_system(PFP.PowerModelsData(path))
+    end
+    vsc = only(PFP.get_components(sys, "TwoTerminalVSCLine"))
+    @test PFP.get_value(vsc, :max_dc_current_from) ≈ 9999.0
+    @test PFP.get_value(vsc, :max_dc_current_to) ≈ 9999.0
+end
+
 @testset "TwoTerminalGenericHVDCLine (matpower): native pminf/pmaxf/... ×baseMVA" begin
     pm = PFP.PowerModelsData(joinpath(MATPOWER_DIR, "case5_dc.m"))
     sys = PFP.build_openapi_system(pm)

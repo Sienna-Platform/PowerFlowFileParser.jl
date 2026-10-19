@@ -222,8 +222,8 @@ Every numeric field `psse.jl` derives from a per-bridge PSS/E record (`rating`/
 convention as `data["dcline"]`'s native fields, so this maker multiplies them back by
 `sys_mbase` — `TwoTerminalVSCLine.base_power` is the system base.
 
-`dc_current`("if")/`max_dc_current_from`/`to`/`power_factor_weighting_fraction_from`/`to`
-are already natural (Amperes / a bare fraction) and pass through unscaled.
+`dc_current`("if")/`max_dc_current_from`/`to` are natural currents in A, converted to kA on
+store; `power_factor_weighting_fraction_from`/`to` are bare fractions and pass through unscaled.
 The pm dict's `dc_setpoint_from`/`to` is per-unit on `rated_dc_voltage` when the converter
 controls DC voltage, or on `sys_mbase` when it controls DC power; each lands on the one wire
 field its mode selects, `dc_voltage_setpoint_*` (kV) or `dc_power_setpoint_*` (MW), and the
