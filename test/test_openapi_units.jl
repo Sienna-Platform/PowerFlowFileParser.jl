@@ -35,8 +35,8 @@ end
     @test PFP.get_value(storage, :storage_capacity) ≈ 1.0
 
     converter = PFP.stage(PFP.PO.InterconnectingConverter)
-    PFP.set_value!(converter, :dc_current, 1.5, "kA")
-    @test PFP.get_value(converter, :dc_current) ≈ 1500.0
+    PFP.set_value!(converter, :dc_current, 1500.0, "A")
+    @test PFP.get_value(converter, :dc_current) ≈ 1.5
 end
 
 @testset "set_value! rejects a cross-quantity conversion" begin
