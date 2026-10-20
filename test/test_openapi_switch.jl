@@ -1,4 +1,4 @@
-@testset "DiscreteControlledACBranch: switch/breaker r/x/rating/flow verbatim passthrough, no INFINITE_BOUND" begin
+@testset "DiscreteControlledACBranch: switch/breaker r/x/flow passthrough, zero rating unbounded" begin
     pm = fourteen_bus_pm_data()
     sys = PFP.build_openapi_system(pm)
     data = pm.data
@@ -19,10 +19,17 @@
     @test PFP.get_value(switch, :branch_status) == "CLOSED"
     @test PFP.get_value(switch, :r) == switch_d["r"]
     @test PFP.get_value(switch, :x) == switch_d["x"]
-    # Verbatim-oracle passthrough: unlike Line/TransformerCircuit's `_get_rating`, a
-    # switch/breaker's zero `rating` is stored as literal 0.0, not INFINITE_BOUND.
+    # PSS/E writes 0 for an unset rating. It becomes the same unbounded MVA placeholder a
+    # Line gets (`_get_rating` returns pu, which `make_line!` scales by the system base),
+    # and the unset secondary ratings stay absent.
     @test switch_d["rating"] == 0.0
-    @test PFP.get_value(switch, :rating) == 0.0
+    @test switch_d["rating_b"] == 0.0
+    @test switch_d["rating_c"] == 0.0
+    line_placeholder_mva = PFP._get_rating("line", Dict{String, Any}(), "rate_a") * 100.0
+    @test PFP.get_value(switch, :rating) == PFP.INFINITE_BOUND * 100.0
+    @test PFP.get_value(switch, :rating) == line_placeholder_mva
+    @test PFP.get_value(switch, :rating_b) === PFP.ABSENT
+    @test PFP.get_value(switch, :rating_c) === PFP.ABSENT
     @test PFP.get_value(switch, :active_power_flow) == 0.0
     @test PFP.get_value(switch, :reactive_power_flow) == 0.0
     @test PFP.get_value(switch, :base_power) == 100.0  # sys_mbase
@@ -124,4 +131,80 @@ end
         PFP.get_value(c, :discrete_branch_type) == "BREAKER"
     )
     @test PFP.get_value(breaker, :r) == 7.5e-4
+end
+
+@testset "DiscreteControlledACBranch: PSS/E secondary ratings map to rating_b/rating_c" begin
+    for fixture in ("synthetic_v34_substation.raw", "synthetic_v34_full.raw")
+        pm = PFP.PowerModelsData(joinpath(@__DIR__, "fixtures", fixture))
+        data = pm.data
+        sys = PFP.build_openapi_system(pm)
+        sys_mbase = Float64(data["baseMVA"])
+        breaker_d = only(values(data["breaker"]))
+        # RATE2/RATE3 are rating_b/rating_c rather than ext entries, like a line's; as for a
+        # line, a zero value is unset (`nothing`).
+        @test !haskey(breaker_d["ext"], "RATE2")
+        @test !haskey(breaker_d["ext"], "RATE3")
+        breaker = only(
+            c for c in PFP.get_components(sys, "DiscreteControlledACBranch") if
+            PFP.get_value(c, :discrete_branch_type) == "BREAKER"
+        )
+        @test PFP.get_value(breaker, :rating) == breaker_d["rating"]
+        @test PFP.get_value(breaker, :rating_b) == breaker_d["rating_b"]
+        @test PFP.get_value(breaker, :rating_c) == breaker_d["rating_c"]
+        @test PFP.get_value(breaker, :base_power) == sys_mbase
+    end
+
+    pm = PFP.PowerModelsData(joinpath(@__DIR__, "fixtures", "synthetic_v34_substation.raw"))
+    breaker_d = only(values(pm.data["breaker"]))
+    @test (breaker_d["rating"], breaker_d["rating_b"], breaker_d["rating_c"]) ==
+          (100.0, 110.0, 120.0)
+    sys = PFP.build_openapi_system(pm)
+    switch = only(
+        c for c in PFP.get_components(sys, "DiscreteControlledACBranch") if
+        PFP.get_value(c, :discrete_branch_type) == "SWITCH"
+    )
+    @test PFP.get_value(switch, :rating) ==
+          PFP.INFINITE_BOUND * Float64(pm.data["baseMVA"])
+    @test PFP.get_value(switch, :rating_b) === PFP.ABSENT
+end
+
+@testset "make_switch_breaker!: missing or zero ratings" begin
+    bus_d(number, bus_type) = Dict{String, Any}(
+        "bus_i" => number, "bus_type" => bus_type, "area" => 1, "zone" => 1,
+        "base_kv" => 138.0, "va" => 0.0, "vm" => 1.0, "vmin" => 0.9, "vmax" => 1.1,
+        "name" => "b$number",
+    )
+    data = Dict{String, Any}(
+        "bus" => Dict{String, Any}("1" => bus_d(1, 3), "2" => bus_d(2, 1)),
+    )
+    switch_d(rating) = merge(
+        Dict{String, Any}(
+            "f_bus" => 1, "t_bus" => 2, "state" => 1, "r" => 0.0, "x" => 1e-4,
+            "active_power_flow" => 0.0, "reactive_power_flow" => 0.0,
+            "discrete_branch_type" => 0, "source_id" => ["switch", 1, 2, "1"],
+            "index" => 1,
+        ),
+        rating,
+    )
+    for (rating, expected) in (
+        (Dict{String, Any}(), (PFP.INFINITE_BOUND * 50.0, PFP.ABSENT, PFP.ABSENT)),
+        (
+            Dict{String, Any}("rating" => 0.0, "rating_b" => 0.0, "rating_c" => 75.0),
+            (PFP.INFINITE_BOUND * 50.0, PFP.ABSENT, 75.0),
+        ),
+        (
+            Dict{String, Any}("rating" => 80.0, "rating_b" => 90.0, "rating_c" => 0.0),
+            (80.0, 90.0, PFP.ABSENT),
+        ),
+    )
+        sys = PFP.OpenAPISystem(50.0)
+        data["switch"] = Dict{String, Any}("1" => switch_d(rating))
+        PFP.read_loadzones!(sys, data)
+        PFP.read_bus!(sys, data)
+        PFP.read_switch_breaker!(sys, data)
+        switch = only(PFP.get_components(sys, "DiscreteControlledACBranch"))
+        @test PFP.get_value(switch, :rating) == expected[1]
+        @test isequal(PFP.get_value(switch, :rating_b), expected[2])
+        @test isequal(PFP.get_value(switch, :rating_c), expected[3])
+    end
 end
