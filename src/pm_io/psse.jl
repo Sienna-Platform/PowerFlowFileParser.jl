@@ -2493,7 +2493,9 @@ function _build_switch_breaker_sub_data(
         # BRANCH records parsed as switches/breakers (CKT starts with '@' or '*') do.
         sub_data["r"] = pop!(dict_object, "R", 0.0)
         sub_data["rating"] = pop!(dict_object, "RATE1")
-        for i in 2:12
+        sub_data["rating_b"] = pop!(dict_object, "RATE2")
+        sub_data["rating_c"] = pop!(dict_object, "RATE3")
+        for i in 4:12
             rate_key = "RATE$i"
             if haskey(dict_object, rate_key)
                 sub_data["ext"][rate_key] = pop!(dict_object, rate_key)
@@ -2502,6 +2504,8 @@ function _build_switch_breaker_sub_data(
     else
         sub_data["r"] = pop!(dict_object, "R")
         sub_data["rating"] = pop!(dict_object, "RATEA")
+        sub_data["rating_b"] = pop!(dict_object, "RATEB")
+        sub_data["rating_c"] = pop!(dict_object, "RATEC")
     end
 
     sub_data["source_id"] =
