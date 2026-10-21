@@ -184,7 +184,7 @@ function read_bus!(sys::OpenAPISystem, data::Dict; kwargs...)
     _get_area_name = get(kwargs, :area_name_formatter, string)
     _get_zone_name = get(kwargs, :loadzone_name_formatter, string)
 
-    for (_, d) in bus_data
+    for (bus_key, d) in bus_data
         name = strip(_get_bus_name(d))
         number = Int(d["bus_i"])
         area_id = _ensure_area!(sys, data, _get_area_name(d["area"]))
@@ -192,6 +192,7 @@ function read_bus!(sys::OpenAPISystem, data::Dict; kwargs...)
 
         bus = stage(PC.ACBus)
         set_value!(bus, :id, register_bus!(reg, number, name))
+        record_source!(reg, "bus", bus_key)
         set_value!(bus, :number, number)
         set_value!(bus, :name, name)
         set_value!(bus, :available, Bool(get(d, "bus_status", true)))
