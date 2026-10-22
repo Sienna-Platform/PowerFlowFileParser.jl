@@ -123,7 +123,7 @@ end
     @test length(y_increase) == length(d["y_increment"])
     @test all(
         y_increase[i].real == real(d["y_increment"][i]) * base &&
-        y_increase[i].imag == imag(d["y_increment"][i]) * base for
+            y_increase[i].imag == imag(d["y_increment"][i]) * base for
         i in eachindex(d["y_increment"])
     )
     # The fixture's bus-101 SWITCHED SHUNT record declares BINIT = 50.00 and B1 = 100.00,
@@ -223,8 +223,42 @@ end
     @test PFP.get_value(facts, :regulated_bus_number) == d["regulated_bus_number"]
 end
 
-@testset "_facts_control_mode rejects a code outside the current 0-2 enum domain" begin
-    @test_throws IS.DataFormatError PFP._facts_control_mode(3)
+@testset "_facts_control_mode: series MODEs 3/4 keep a normal shunt link; IPFC MODEs fail" begin
+    @test PFP._facts_control_mode(3) == "NML"
+    @test PFP._facts_control_mode(4) == "NML"
+    @test_throws IS.DataFormatError PFP._facts_control_mode(5)
+end
+
+@testset "FACTS series link: MODE 2 is BYPASSED, MODE 3 FIXED at SET1/SET2, MODE 1 dropped" begin
+    raw = read(joinpath(@__DIR__, "modified_14bus_system.raw"), String)
+    record = "'FACTS      1',   108,     0,1,"
+    series = "     0.000, 0.05000,  100.0,   1,   0.00000,   0.00000,"
+    @test occursin(record, raw) && occursin(series, raw)
+    for (mode, control_mode) in ((2, "BYPASSED"), (3, "FIXED"), (1, nothing))
+        # IMX = 500 MVA, SET1 = 0.001 pu, SET2 = -0.02 pu.
+        edited = replace(raw, record => "'FACTS      1',   108,   107,$mode,",
+            series => "   500.000, 0.05000,  100.0,   1,   0.00100,  -0.02000,")
+        path = joinpath(mktempdir(), "facts_mode_$mode.raw")
+        write(path, edited)
+        if isnothing(control_mode)
+            sys =
+                Test.@test_logs (:warn, r"MODE 1 is not supported") match_mode = :any PFP.build_openapi_system(
+                    PFP.PowerModelsData(path))
+            @test isempty(PFP.get_components(sys, "SeriesCompensator"))
+            continue
+        end
+        sys = PFP.build_openapi_system(PFP.PowerModelsData(path))
+        compensator = only(PFP.get_components(sys, "SeriesCompensator"))
+        @test PFP.get_value(compensator, :control_mode) == control_mode
+        @test PFP.get_value(compensator, :rating) == 500.0
+        @test PFP.get_value(compensator, :r) == (mode == 3 ? 0.001 : 0.0)
+        @test PFP.get_value(compensator, :x) == (mode == 3 ? -0.02 : 0.0)
+        @test PFP.get_value(
+            only(PFP.get_components(sys, "FACTSControlDevice")),
+            :control_mode,
+        ) ==
+              (mode == 2 ? "BYP" : "NML")
+    end
 end
 
 """Minimal two-bus, two-area pm dict for the AreaInterchange undefined-area skip path."""
