@@ -372,7 +372,7 @@ function make_switch_from_zero_impedance_branch!(
 end
 
 """A series compensator from a branch record: PSS/E treats a non-transformer branch with
-R = 0 and X < 0 as a series capacitor. Its line charging, if any, is dropped."""
+R = 0 and X < 0 as a series capacitor. Only a record without line charging gets here."""
 function make_series_compensator!(
     sys::OpenAPISystem,
     reg::IdRegistry,
@@ -384,9 +384,6 @@ function make_series_compensator!(
     to_isolated::Bool,
     sys_mbase::Float64,
 )
-    if any(!iszero(d[k]) for k in ("b_fr", "b_to", "g_fr", "g_to"))
-        @warn "Series compensator $name has line charging, which a SeriesCompensator does not carry; dropping it"
-    end
     available = _branch_available(d["br_status"] == 1, from_isolated, to_isolated)
     rating = (rating = _get_rating(name, d, "rate_a") * sys_mbase,
         rating_b = _natural_value(_get_rating(name, d, "rate_b"), sys_mbase),
@@ -454,8 +451,13 @@ function _branch_type_psse(d::Dict, name::AbstractString)
     if !d["transformer"] && iszero(d["br_r"]) && iszero(d["br_x"])
         return :switch
     end
+    # PSS/E's series compensation: R = 0 and X < 0. A SeriesCompensator has no line
+    # charging, so a record that carries some stays a Line with a negative reactance.
     if !d["transformer"] && iszero(d["br_r"]) && d["br_x"] < 0
-        return :series_compensator
+        if all(iszero(d[k]) for k in ("b_fr", "b_to", "g_fr", "g_to"))
+            return :series_compensator
+        end
+        @warn "Branch $name has R = 0, X < 0 and line charging; it is represented as a Line with negative reactance and line charging, not as a SeriesCompensator"
     end
     is_transformer = d["transformer"]
     tap = d["tap"]
