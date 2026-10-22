@@ -437,3 +437,32 @@ end
         :controlled_active_power_flow_limits,
     )
 end
+
+@testset "a PSS/E branch with R = 0 and X < 0 becomes a FIXED SeriesCompensator" begin
+    raw = read(joinpath(@__DIR__, "modified_14bus_system.raw"), String)
+    record = "   107,   108,'1 ', 7.98000E-3, 5.01000E-2,"
+    @test occursin(record, raw)
+    path = joinpath(mktempdir(), "compensated.raw")
+    write(path, replace(raw, record => "   107,   108,'1 ', 0.00000E+0,-2.00000E-2,"))
+    sys =
+        Test.@test_logs (:warn, r"line charging") match_mode = :any PFP.build_openapi_system(
+            PFP.PowerModelsData(path))
+
+    compensator = _component_between(sys, "SeriesCompensator", 107, 108)
+    @test PFP.get_value(compensator, :control_mode) == "FIXED"
+    @test PFP.get_value(compensator, :parameter_units) == "COMPONENT_BASE"
+    @test PFP.get_value(compensator, :r) == 0.0
+    @test PFP.get_value(compensator, :x) == -0.02
+    @test_throws ErrorException _component_between(sys, "Line", 107, 108)
+end
+
+@testset "_branch_type_psse: only R = 0 with X < 0 is a series compensator" begin
+    d = Dict{String, Any}(
+        "transformer" => false,
+        "br_r" => 0.0,
+        "br_x" => -0.02,
+        "tap" => 1.0,
+    )
+    @test PFP._branch_type_psse(d, "capacitor") == :series_compensator
+    @test PFP._branch_type_psse(merge(d, Dict("br_r" => 0.01)), "lossy") == :line
+end
