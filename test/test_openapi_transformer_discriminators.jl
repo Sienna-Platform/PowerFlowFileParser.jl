@@ -79,12 +79,10 @@ _transformer_discriminator_pm_data() =
     @test PFP.get_value(magnetizing, :real) == d["g_fr"]
     @test PFP.get_value(magnetizing, :imag) == d["b_fr"]
     @test PFP.get_value(circuit, :base_power) == d["base_power"]
-    # THE discriminator assertion: rating is rate_a scaled by the CIRCUIT's own base_power
-    # (50.0), not sys_mbase (100.0) — these differ here, unlike every fixture on hand
-    # before this task, so a reader that multiplied by sys_mbase instead would be caught:
-    # 0.4*100=40.0 (wrong) vs 0.4*50=20.0 (right).
-    @test PFP.get_value(circuit, :rating) ≈ d["rate_a"] * d["base_power"]
-    @test PFP.get_value(circuit, :rating) ≈ 20.0
+    # THE discriminator assertion: rate_a is system-base pu, so the natural rating is
+    # rate_a * sys_mbase = RATE11 = 40.0 MVA, not rate_a * base_power = 20.0 (#74).
+    @test PFP.get_value(circuit, :rating) ≈ d["rate_a"] * sys_mbase
+    @test PFP.get_value(circuit, :rating) ≈ 40.0
     @test _matches_nt(
         PFP.get_value(circuit, :tap_ratio_limits),
         (min = d["RMI1"], max = d["RMA1"]),
@@ -156,9 +154,9 @@ end
     @test PFP.get_value(magnetizing, :imag) == d["b_fr"]
     @test PFP.get_value(circuit, :base_power) == 80.0
     # THE discriminator assertion again, on the second (CZ=3/CW=3/CM=2) transformer:
-    # 0.64*100=64.0 (wrong, sys_mbase) vs 0.64*80=51.2 (right, circuit base_power).
-    @test PFP.get_value(circuit, :rating) ≈ d["rate_a"] * d["base_power"]
-    @test PFP.get_value(circuit, :rating) ≈ 51.2
+    # 0.64*100=64.0 = RATE11 (right, sys_mbase) vs 0.64*80=51.2 (wrong, circuit base_power).
+    @test PFP.get_value(circuit, :rating) ≈ d["rate_a"] * sys_mbase
+    @test PFP.get_value(circuit, :rating) ≈ 64.0
 end
 
 @testset "two-terminal DC line MDC=2 (current-controlled): control_mode=CURRENT, hand-derived power_demand" begin

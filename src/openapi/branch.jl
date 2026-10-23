@@ -8,14 +8,10 @@
 # For a PSS/E-sourced transformer, PFFP's own `psse.jl` additionally REBASES `br_r`/
 # `br_x`/`g_fr`/`b_fr` from system-pu onto the transformer's own winding base
 # (`d["base_power"]`, a custom key `_make_per_unit!` never touches) BEFORE this reader
-# sees them. `rate_a`/`rate_b`/`rate_c`/`pf`/`qf` are NOT rebased that way, so the
-# oracle's `TransformerCircuit.rating`/`*_power_flow` fields hold a SYSTEM-pu number that
-# PSY's units engine reads back as DEVICE-base pu. Verified against the real oracle
-# (synthetic `base_power = 50` on a 100 MVA system): `PSY.get_rating(circuit, PSY.NU)`
-# multiplies by the CIRCUIT's own `base_power`, not by `sys_mbase`, and this reader
-# reproduces exactly that. The two coincide whenever the winding base equals the system
-# base — true in every fixture on hand, and always true for MATPOWER — so no real fixture
-# can distinguish them.
+# sees them, so those pass through as device-base pu. `rate_a`/`rate_b`/`rate_c`/`pf`/`qf`
+# are NOT rebased that way — they are still system-base pu — so the 2W builder converts
+# them to natural units with `sys_mbase`, exactly like a `Line`. (PSCB's oracle used the
+# circuit's `base_power` here, which scales ratings/flows by `SBASE1-2 / SBASE`; see #74.)
 #
 # `data["3w_transformer"]` is NOT a native PowerModels section — `_make_per_unit!` never
 # touches it. Its per-winding ratings/flows come straight from raw PSS/E fields
@@ -408,7 +404,7 @@ end
 
 """Two-winding transformer + its `TransformerCircuit`. Ported from PSCB's
 `make_transformer_2w`. See the file header for the rating/flow base
-(circuit's own `base_power`, not `sys_mbase`) and the magnetizing shunt basis
+(`sys_mbase`, not the circuit's own `base_power`) and the magnetizing shunt basis
 (`g_fr`/`b_fr` are already device-base pu for PSS/E-origin data; identical to system base
 for MATPOWER, where `base_power == sys_mbase` unconditionally)."""
 function make_transformer_2w!(
@@ -420,6 +416,7 @@ function make_transformer_2w!(
     to_id::Int,
     from_isolated::Bool,
     to_isolated::Bool,
+    sys_mbase::Float64,
 )
     available = _branch_available(d["br_status"] == 1, from_isolated, to_isolated)
     base_power = d["base_power"]
@@ -432,14 +429,14 @@ function make_transformer_2w!(
         tap_key = "tap", angle_key = "shift", control_suffix = 1,
         available = available,
         r = d["br_r"], x = d["br_x"],
-        rating = _natural_value(rate_a, base_power),
-        rating_b = _natural_value(rate_b, base_power),
-        rating_c = _natural_value(rate_c, base_power),
+        rating = _natural_value(rate_a, sys_mbase),
+        rating_b = _natural_value(rate_b, sys_mbase),
+        rating_c = _natural_value(rate_c, sys_mbase),
         base_power = base_power,
         base_voltage_primary = _base_voltage_or_nothing(d["base_voltage_from"]),
         base_voltage_secondary = _base_voltage_or_nothing(d["base_voltage_to"]),
-        active_power_flow = get(d, "pf", 0.0) * base_power,
-        reactive_power_flow = get(d, "qf", 0.0) * base_power,
+        active_power_flow = get(d, "pf", 0.0) * sys_mbase,
+        reactive_power_flow = get(d, "qf", 0.0) * sys_mbase,
     )
 
     component = stage(PO.TwoWindingTransformer)
@@ -577,7 +574,7 @@ function read_branches!(sys::OpenAPISystem, data::Dict; kwargs...)
                 from_isolated, to_isolated, sys_mbase)
         elseif branch_type == :transformer
             make_transformer_2w!(sys, reg, name, d, from_id, to_id, from_isolated,
-                to_isolated)
+                to_isolated, sys_mbase)
         elseif branch_type == :line
             make_line!(sys, reg, name, d, from_id, to_id, from_isolated, to_isolated,
                 sys_mbase)

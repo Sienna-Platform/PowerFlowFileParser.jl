@@ -436,12 +436,10 @@ Create one `AreaInterchange` per `data["interarea_transfer"]` entry. Ported from
 `interarea_transfer` block inside PSCB's `read_bus!`, grouped here with the other
 DC/interchange readers rather than with `topology.jl`'s bus reader.
 
-# Bug-compatible with PSCB — `active_power_flow =
-d["power_transfer"]` assigns PFFP's raw `PTRAN` value (already natural MW, since
-`interarea_transfer` is not a native PowerModels section) into a field PSY declares `SU`,
-with no division by `sys_mbase` first, so a real `get_active_power_flow(interchange,
-PSY.NU)` on the oracle's object multiplies an already-natural number by `sys_mbase` a
-second time. This reader reproduces that inflated value. Fix tracked upstream.
+`active_power_flow` is PFFP's raw `PTRAN`, which the PSS/E manual defines as "MW
+comprising this transfer" and which `_make_per_unit!` never touches
+(`interarea_transfer` is not a native PowerModels section), so it is already natural MW.
+(PSCB's oracle multiplied it by `sys_mbase` a second time.)
 
 `flow_limits` mirrors the oracle's hardcoded `(from_to = -INFINITE_BOUND, to_from =
 INFINITE_BOUND)` sentinel verbatim.
@@ -480,8 +478,7 @@ function read_area_interchanges!(sys::OpenAPISystem, data::Dict; kwargs...)
         set_value!(component, :id, register!(reg, "AreaInterchange", name))
         set_value!(component, :name, name)
         set_value!(component, :available, true)
-        # Bug-compatible with PSCB — see docstring.
-        set_value!(component, :active_power_flow, d["power_transfer"] * sys_mbase, "MW")
+        set_value!(component, :active_power_flow, d["power_transfer"], "MW")
         set_value!(component, :from_area, get_id(reg, "Area", area_from_name))
         set_value!(component, :to_area, get_id(reg, "Area", area_to_name))
         set_value!(component, :flow_limits,
