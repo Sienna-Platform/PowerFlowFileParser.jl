@@ -2332,9 +2332,14 @@ function _psse2pm_dcline!(pm_data::Dict, pti_data::Dict, import_all::Bool)
             sub_data["rating_to"] =
                 to_bus["SMAX"] == 0.0 ? PTI_INF : to_bus["SMAX"] / baseMVA
             sub_data["rating"] = min(sub_data["rating_from"], sub_data["rating_to"])
+            # Currents stay in A here and are converted to kA when stored, so "no limit"
+            # is 1000 * PTI_INF A = 9999 kA. Keep in sync by hand with the "no limit"
+            # current default of the consuming data model (9999 kA).
+            PTI_INF_CURRENT = 1000.0 * PTI_INF
             sub_data["max_dc_current_from"] =
-                from_bus["IMAX"] == 0.0 ? PTI_INF : from_bus["IMAX"]
-            sub_data["max_dc_current_to"] = to_bus["IMAX"] == 0.0 ? PTI_INF : to_bus["IMAX"]
+                from_bus["IMAX"] == 0.0 ? PTI_INF_CURRENT : from_bus["IMAX"]
+            sub_data["max_dc_current_to"] =
+                to_bus["IMAX"] == 0.0 ? PTI_INF_CURRENT : to_bus["IMAX"]
             sub_data["power_factor_weighting_fraction_from"] = from_bus["PWF"]
             sub_data["power_factor_weighting_fraction_to"] = to_bus["PWF"]
             qmax_from = max(abs(sub_data["qminf"]), abs(sub_data["qmaxf"]))

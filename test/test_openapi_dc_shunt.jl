@@ -59,6 +59,19 @@ end
     @test PFP.get_value(vsc, :g) ≈ 1.0 / 2.5
 end
 
+@testset "TwoTerminalVSCLine: RAW IMAX = 0 stores the 9999 kA no-limit value" begin
+    file = joinpath(@__DIR__, "fixtures", "synthetic_v35_vsc_line.raw")
+    raw = replace(read_fixture(file), " 250.00, 1000.00," => " 250.00, 0.00,")
+    sys = mktempdir() do dir
+        path = joinpath(dir, "vsc_line.raw")
+        write(path, raw)
+        PFP.build_openapi_system(PFP.PowerModelsData(path))
+    end
+    vsc = only(PFP.get_components(sys, "TwoTerminalVSCLine"))
+    @test PFP.get_value(vsc, :max_dc_current_from) ≈ 9999.0
+    @test PFP.get_value(vsc, :max_dc_current_to) ≈ 9999.0
+end
+
 @testset "TwoTerminalGenericHVDCLine (matpower): native pminf/pmaxf/... ×baseMVA" begin
     pm = PFP.PowerModelsData(joinpath(MATPOWER_DIR, "case5_dc.m"))
     sys = PFP.build_openapi_system(pm)
@@ -359,10 +372,11 @@ end
     @test PFP.get_value(vsc, :dc_voltage_setpoint_from) === PFP.ABSENT
     @test PFP.get_value(vsc, :power_factor_setpoint_from) == 1.0
     @test PFP.get_value(vsc, :ac_voltage_setpoint_from) === PFP.ABSENT
-    @test PFP.get_value(vsc, :dc_current) == 10.0
+    # The RAW records currents in A; the schema stores kA.
+    @test PFP.get_value(vsc, :dc_current) ≈ 10.0 / 1000
     # The pm dict keeps the RAW's RDC in ohms: r = 0.5 ohm, so g = 2 S.
     @test PFP.get_value(vsc, :g) ≈ 1.0 / 0.5
-    @test PFP.get_value(vsc, :max_dc_current_from) == 100.0
+    @test PFP.get_value(vsc, :max_dc_current_from) ≈ 100.0 / 1000
     @test PFP.get_value(vsc, :rated_dc_voltage) == 100.0
     @test PFP.get_value(vsc, :rated_ac_voltage_from) == 138.0
     @test PFP.get_value(vsc, :rated_ac_voltage_to) == 138.0
