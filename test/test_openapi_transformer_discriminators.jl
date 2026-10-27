@@ -178,9 +178,9 @@ end
 
     sys = PFP.build_openapi_system(pm)
     line = only(PFP.get_components(sys, "TwoTerminalLCCLine"))
-    # MDC=2: CURRENT holds the amperes schedule; the MW schedule stays absent.
+    # MDC=2: CURRENT holds the current schedule (A in the RAW, kA stored); the MW schedule
+    # stays absent.
     @test PFP.get_value(line, :control_mode) == "CURRENT"
-    # SETVL is in A; the schema stores kA.
     @test PFP.get_value(line, :current_transfer_setpoint) ≈ d["transfer_setpoint"] / 1000
     @test PFP.get_value(line, :power_transfer_setpoint) === PFP.ABSENT
     # Emit-layer scaling is uniform regardless of MDC (dc_branch.jl multiplies `pf` by

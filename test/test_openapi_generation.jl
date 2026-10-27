@@ -1,9 +1,5 @@
-# The oracle bug-compatible sites (renewable rating double `base_conversion`, generic
-# battery's raw `thermal_rating` as both `rating` and `base_power`) are invisible on every
-# real fixture on hand: each states `mbase`/`thermal_rating` equal to the system base,
-# making `base_conversion == 1.0` and collapsing the bug into the non-buggy answer. Both
-# are instead verified against a synthetic generator with `mbase != sys_mbase`, whose
-# expected numbers were cross-checked against PSCB's real oracle on identical input.
+# Every real generator fixture on hand has `mbase == sys_mbase`, so per-unit base
+# handling is verified against synthetic generators with `mbase != sys_mbase`.
 
 function _bus_component(sys, number::Int)
     return only(
@@ -76,7 +72,7 @@ end
 @testset "ThermalStandard fields are per-unit-on-own-mbase under COMPONENT_BASE, mbase != sys_mbase" begin
     # sys_mbase=100, mbase=50: every 14-bus generator states mbase == sys_mbase (see this
     # file's header), so COMPONENT_BASE's own-base division is only distinguishable from the
-    # system base on a synthetic generator, same reason the "Bug-compatible" tests below
+    # system base on a synthetic generator, same reason the renewable tests below
     # build one directly rather than through build_openapi_system.
     #
     # NATURAL_UNITS would store natural_MW = pg * base_conversion * mbase, where
@@ -318,57 +314,61 @@ end
     )
 end
 
-@testset "Bug-compatible: renewable rating's double base_conversion (power_models_data.jl:872,885)" begin
-    # Cross-checked directly against PSCB's real make_renewable_dispatch with this exact
-    # input (mbase=50.0, sys_mbase=100.0, pmax=40.0, qmax=20.0): raw stored `rating` field
-    # comes out 100.0 (device-base pu), and `get_rating(gen, PSY.NU)` on that real PSY
-    # component returns 5000.0 — reproduced below bit for bit.
+@testset "RenewableDispatch rating applies base_conversion once (mbase != sys_mbase)" begin
+    # pmax/qmax are system-base pu: sqrt(0.3^2 + 0.1^2) * 100 = 31.62 MVA. The oracle's
+    # double base_conversion (100/50) gave twice that.
     sys = PFP.OpenAPISystem(100.0)
     reg = PFP.get_registry(sys)
     bus = _register_test_bus!(sys)
     d = Dict{String, Any}(
-        "mbase" => 50.0, "gen_status" => true, "pg" => 10.0, "qg" => 2.0,
-        "pmax" => 40.0, "pmin" => 0.0, "qmax" => 20.0, "qmin" => -20.0, "type" => "WIND",
+        "mbase" => 50.0, "gen_status" => true, "pg" => 0.2, "qg" => 0.05,
+        "pmax" => 0.3, "pmin" => 0.0, "qmax" => 0.1, "qmin" => -0.1, "type" => "WIND",
     )
-    @test_logs (:warn, r"rating is larger than base power") PFP.make_renewable_dispatch!(
-        sys,
-        reg,
-        bus,
-        d,
-        "wind1",
-        100.0,
-    )
+    PFP.make_renewable_dispatch!(sys, reg, bus, d, "wind1", 100.0)
     gen = only(PFP.get_components(sys, "RenewableDispatch"))
-    @test PFP.get_value(gen, :rating) ≈ 5000.0
-    @test PFP.get_value(gen, :active_power) ≈ 1000.0
-    @test PFP.get_value(gen, :reactive_power) ≈ 200.0
+    @test PFP.get_value(gen, :rating) ≈ sqrt(0.3^2 + 0.1^2) * 100.0
+    @test PFP.get_value(gen, :active_power) ≈ 20.0
+    @test PFP.get_value(gen, :reactive_power) ≈ 5.0
     @test PFP.get_value(gen, :base_power) == 50.0
 end
 
-@testset "Bug-compatible: make_generic_battery's raw thermal_rating (power_models_data.jl:944,951)" begin
-    # Cross-checked directly against PSCB's real make_generic_battery with this exact
-    # input: `get_rating(storage, PSY.NU)` on the real PSY component returns 0.0225
-    # (0.15 used as both the raw rating and, via base_power, the device base it is then
-    # exported against — reproduced below bit for bit), not the physically-intended 0.15.
+@testset "RenewableDispatch rating above its own base_power is clamped to base_power" begin
     sys = PFP.OpenAPISystem(100.0)
     reg = PFP.get_registry(sys)
     bus = _register_test_bus!(sys)
     d = Dict{String, Any}(
-        "energy_rating" => 50.0, "energy" => 25.0, "status" => true,
+        "mbase" => 50.0, "gen_status" => true, "pg" => 0.2, "qg" => 0.0,
+        "pmax" => 0.6, "pmin" => 0.0, "qmax" => 0.0, "qmin" => 0.0, "type" => "WIND",
+    )
+    @test_logs (:warn, r"rating is larger than base power") PFP.make_renewable_dispatch!(
+        sys, reg, bus, d, "wind1", 100.0)
+    gen = only(PFP.get_components(sys, "RenewableDispatch"))
+    @test PFP.get_value(gen, :rating) ≈ 50.0  # 60 MVA clamped to mbase
+end
+
+@testset "EnergyReservoirStorage: system-pu fields convert with sys_mbase, ps/qs negate" begin
+    sys = PFP.OpenAPISystem(100.0)
+    reg = PFP.get_registry(sys)
+    bus = _register_test_bus!(sys)
+    d = Dict{String, Any}(
+        "energy_rating" => 0.5, "energy" => 0.25, "status" => true,
         "thermal_rating" => 0.15, "ps" => 0.02, "charge_rating" => 0.05,
-        "discharge_rating" => 0.05, "charge_efficiency" => 0.9,
-        "discharge_efficiency" => 0.9, "qs" => 0.0, "qmin" => -0.05, "qmax" => 0.05,
+        "discharge_rating" => 0.06, "charge_efficiency" => 0.9,
+        "discharge_efficiency" => 0.9, "qs" => 0.01, "qmin" => -0.05, "qmax" => 0.05,
     )
     PFP.make_storage!(sys, reg, bus, d, "bat1", 100.0)
     storage = only(PFP.get_components(sys, "EnergyReservoirStorage"))
-    @test PFP.get_value(storage, :rating) ≈ 0.0225
-    @test PFP.get_value(storage, :base_power) == 0.15
-    @test PFP.get_value(storage, :active_power) ≈ 0.003
-    @test PFP.get_value(storage, :storage_capacity) ≈ 7.5
+    @test PFP.get_value(storage, :base_power) == 100.0
+    @test PFP.get_value(storage, :rating) ≈ 15.0  # oracle: 0.15 * 0.15 = 0.0225
+    @test PFP.get_value(storage, :storage_capacity) ≈ 50.0
+    # ps/qs are system-pu withdrawals; PSY's fields are injections.
+    @test PFP.get_value(storage, :active_power) ≈ -2.0
+    @test PFP.get_value(storage, :reactive_power) ≈ -1.0
     @test PFP.get_value(storage, :input_active_power_limits).min == 0.0
-    @test PFP.get_value(storage, :input_active_power_limits).max ≈ 0.0075
-    @test PFP.get_value(storage, :reactive_power_limits).min ≈ -0.0075
-    @test PFP.get_value(storage, :reactive_power_limits).max ≈ 0.0075
+    @test PFP.get_value(storage, :input_active_power_limits).max ≈ 5.0
+    @test PFP.get_value(storage, :output_active_power_limits).max ≈ 6.0
+    @test PFP.get_value(storage, :reactive_power_limits).min ≈ -5.0
+    @test PFP.get_value(storage, :reactive_power_limits).max ≈ 5.0
     @test PFP.get_value(storage, :initial_storage_capacity_level) == 0.5
     # A fraction of storage_capacity: no derate means the full [0, 1] band.
     @test PFP.get_value(storage, :storage_level_limits).min == 0.0
@@ -377,48 +377,36 @@ end
     @test PFP.get_value(storage, :storage_technology_type) == "OTHER_CHEM"
 end
 
-@testset "EnergyReservoirStorage fields are per-unit-on-own-thermal_rating under COMPONENT_BASE, device base != system base" begin
+@testset "EnergyReservoirStorage fields are per-unit-on-sys_mbase under COMPONENT_BASE" begin
     # Regression: storage_capacity's quantity (ElectricalEnergy) is only resolvable
     # through `energy_units`' instance-level discriminator. A COMPONENT_BASE pass that
     # treats every instance-dispatched field as "leave untouched" skips this conversion
-    # silently instead of erroring. `own base_power` here is
-    # `thermal_rating` (PSCB's bug-compatible battery convention, same as the
-    # "Bug-compatible" testset above); sys_mbase = 100, thermal_rating = 50, so the two
-    # bases genuinely differ and every quotient below is *not* 1.
-    #
-    # NATURAL_UNITS (`_natural_value(v, thermal_rating) = v * thermal_rating`, per
-    # `make_storage!` above):
-    #   storage_capacity = energy_rating * thermal_rating = 8.0 * 50.0 = 400.0
-    #   rating            = thermal_rating * thermal_rating = 50.0 * 50.0 = 2500.0
-    #   active_power      = ps * thermal_rating = 0.6 * 50.0 = 30.0
-    #   input/output_active_power_limits.max = charge/discharge_rating * thermal_rating
-    #   reactive_power    = qs * thermal_rating = 0.1 * 50.0 = 5.0
-    #   reactive_power_limits = (qmin, qmax) .* thermal_rating
-    # COMPONENT_BASE divides every one of those back by the SAME thermal_rating = 50.0,
-    # collapsing each to the raw un-multiplied input value.
+    # silently instead of erroring. base_power is sys_mbase, so COMPONENT_BASE divides
+    # every NATURAL_UNITS value by 100 again: system-pu inputs come back verbatim (ps/qs
+    # negated, withdrawal -> injection).
     sys = PFP.OpenAPISystem(100.0; power_units = "COMPONENT_BASE")
     reg = PFP.get_registry(sys)
     bus = _register_test_bus!(sys)
     d = Dict{String, Any}(
         "energy_rating" => 8.0, "energy" => 4.0, "status" => true,
-        "thermal_rating" => 50.0, "ps" => 0.6, "charge_rating" => 0.3,
+        "thermal_rating" => 0.5, "ps" => 0.6, "charge_rating" => 0.3,
         "discharge_rating" => 0.4, "charge_efficiency" => 0.9,
         "discharge_efficiency" => 0.85, "qs" => 0.1, "qmin" => -0.2, "qmax" => 0.2,
     )
     PFP.make_storage!(sys, reg, bus, d, "bat1", 100.0)
     PFP.apply_device_base_conversion!(sys)
     storage = only(PFP.get_components(sys, "EnergyReservoirStorage"))
-    @test PFP.get_value(storage, :base_power) == 50.0
+    @test PFP.get_value(storage, :base_power) == 100.0
     @test PFP.get_value(storage, :storage_capacity) ≈ d["energy_rating"]
     @test PFP.get_value(storage, :rating) ≈ d["thermal_rating"]
-    @test PFP.get_value(storage, :active_power) ≈ d["ps"]
+    @test PFP.get_value(storage, :active_power) ≈ -0.6
     @test PFP.get_value(storage, :input_active_power_limits).min == 0.0
     @test PFP.get_value(storage, :input_active_power_limits).max ≈ d["charge_rating"]
     @test PFP.get_value(storage, :output_active_power_limits).min == 0.0
     @test PFP.get_value(storage, :output_active_power_limits).max ≈ d["discharge_rating"]
-    @test PFP.get_value(storage, :reactive_power) ≈ d["qs"]
-    @test PFP.get_value(storage, :reactive_power_limits).min ≈ d["qmin"]
-    @test PFP.get_value(storage, :reactive_power_limits).max ≈ d["qmax"]
+    @test PFP.get_value(storage, :reactive_power) ≈ -0.1
+    @test PFP.get_value(storage, :reactive_power_limits).min ≈ -d["qmax"]
+    @test PFP.get_value(storage, :reactive_power_limits).max ≈ -d["qmin"]
     # Dimensionless / ratio fields: untouched by COMPONENT_BASE either way.
     @test PFP.get_value(storage, :initial_storage_capacity_level) == 0.5
     @test PFP.get_value(storage, :storage_level_limits).min == 0.0
@@ -450,12 +438,18 @@ end
             v for v in values(data["storage"]) if
             PFP._get_pm_dict_name(v) == PFP.get_value(storage, :name)
         )
-        thermal_rating = d["thermal_rating"]
-        # thermal_rating == 1.0 in this real fixture, so the bug is numerically inert
-        # here (1.0^2 == 1.0) — this locks in the code path runs end to end on real
-        # data; the numeric distortion itself is covered by the synthetic test above.
-        @test PFP.get_value(storage, :rating) ≈ thermal_rating * thermal_rating
-        @test PFP.get_value(storage, :base_power) == thermal_rating
+        # case5_strg.m (baseMVA 100): energy_rating 100, charge 50, discharge 70,
+        # thermal_rating 100, qmin/qmax -50/70, all MW(h) in the file.
+        @test PFP.get_value(storage, :base_power) == 100.0
+        @test PFP.get_value(storage, :rating) ≈ 100.0
+        @test PFP.get_value(storage, :storage_capacity) ≈ 100.0
+        @test PFP.get_value(storage, :input_active_power_limits).max ≈ 50.0
+        @test PFP.get_value(storage, :output_active_power_limits).max ≈ 70.0
+        # Withdrawal bounds [-50, 70] become injection bounds [-70, 50].
+        @test PFP.get_value(storage, :reactive_power_limits).min ≈ -70.0
+        @test PFP.get_value(storage, :reactive_power_limits).max ≈ 50.0
+        @test PFP.get_value(storage, :initial_storage_capacity_level) ≈
+              d["energy"] / d["energy_rating"]  # 0.2 / 0.3
     end
 end
 

@@ -59,7 +59,7 @@ thermal_fuel(fuel::AbstractString) = _enum_value(THERMAL_FUEL_ALIASES, fuel)
 
 """Convert a device-base per-unit quantity (PSCB's own PSY storage convention) into the
 natural unit the schema wants, by multiplying by the component's own base (`mbase` for a
-generator, `thermal_rating` for `make_storage!`'s bug-compatible battery)."""
+generator, `sys_mbase` for storage)."""
 _natural_value(value::Real, base::Float64) = value * base
 _natural_value(limits::NamedTuple, base::Float64) = map(v -> v * base, limits)
 _natural_value(::Nothing, ::Float64) = nothing
@@ -311,14 +311,8 @@ make_hydro_reservoir!(sys::OpenAPISystem, reg::IdRegistry, bus_id::Int, pm_gen::
     gen_name::AbstractString, sys_mbase::Float64) =
     _make_hydro_dispatch_body!(sys, reg, bus_id, pm_gen, gen_name, sys_mbase)
 
-"""
-Curtailable renewable generator.
-
-# Bug-compatible with PSCB — `calculate_gen_rating` already
-multiplies by `base_conversion`; PSCB's `RenewableDispatch(...)` call then multiplies its
-own already-converted `rating` local by `base_conversion` a second time, so the stored
-device-base-pu rating carries `base_conversion^2`. Fix tracked upstream; not fixed here.
-"""
+"""Curtailable renewable generator. (PSCB's oracle applied `base_conversion` to the
+rating a second time, so its rating carried `base_conversion^2`.)"""
 function make_renewable_dispatch!(
     sys::OpenAPISystem,
     reg::IdRegistry,
@@ -334,14 +328,11 @@ function make_renewable_dispatch!(
         (min = pm_gen["qmin"] * base_conversion, max = pm_gen["qmax"] * base_conversion)
 
     rating = calculate_gen_rating(pm_gen["pmax"], pm_gen["qmax"], base_conversion)
-    if rating > mbase
+    # `rating` is device-base pu, so "larger than base power" means > 1.0.
+    if rating > 1.0
         @warn "rating is larger than base power for $gen_name, setting to $mbase"
-        rating = mbase
+        rating = 1.0
     end
-    # Bug-compatible with PSCB — `rating` above is already
-    # device-base per-unit (calculate_gen_rating applied `base_conversion` once); this
-    # second multiply is the double-application the docstring names.
-    rating = rating * base_conversion
 
     component = stage(PO.RenewableDispatch)
     set_value!(component, :id, register!(reg, "RenewableDispatch", gen_name))
@@ -434,12 +425,11 @@ end
 """
 Generic battery storage from a `data["storage"]` entry.
 
-# Bug-compatible with PSCB — `rating` and `base_power` are
-both assigned the raw `"thermal_rating"` value, itself PowerModels system per-unit and
-never converted. Every other field in this file uses the component's own base to reach
-natural units; here that base *is* the same unconverted `thermal_rating` value, so
-`rating` in particular ends up scaled by `thermal_rating` against itself. Fix tracked
-upstream; not fixed here.
+`_make_per_unit!` leaves every storage power/energy field in system-base pu, so they all
+convert with `sys_mbase`, which is also the `base_power` (PowerModels storage carries no
+device base of its own). PowerModels defines `ps`/`qs` as power *withdrawn*, while PSY's
+`active_power`/`reactive_power` are injections, so they are negated. (PSCB's oracle used
+the raw, system-pu `thermal_rating` as both `rating` and `base_power`.)
 """
 function make_storage!(
     sys::OpenAPISystem,
@@ -450,9 +440,6 @@ function make_storage!(
     sys_mbase::Float64,
 )
     energy_rating = iszero(d["energy_rating"]) ? d["energy"] : d["energy_rating"]
-    # Bug-compatible: PSCB's own `base_power` for a battery is this raw, unconverted
-    # per-unit value, not a true MVA base — see docstring.
-    thermal_rating = Float64(d["thermal_rating"])
 
     component = stage(PO.EnergyReservoirStorage)
     set_value!(component, :id, register!(reg, "EnergyReservoirStorage", storage_name))
@@ -476,23 +463,23 @@ function make_storage!(
     )
     set_value!(component, :prime_mover_type, "BA")
     set_value!(component, :storage_technology_type, "OTHER_CHEM")
-    set_value!(component, :storage_capacity, _natural_value(energy_rating, thermal_rating),
+    set_value!(component, :storage_capacity, _natural_value(energy_rating, sys_mbase),
         "MWh")
     # A fraction of storage_capacity; pm data carries no derate, so the full band.
     set_value!(component, :storage_level_limits, IC.MinMax(; min = 0.0, max = 1.0))
     set_value!(component, :initial_storage_capacity_level, d["energy"] / energy_rating, "1")
-    set_value!(component, :rating, _natural_value(thermal_rating, thermal_rating), "MVA")
-    set_value!(component, :active_power, _natural_value(d["ps"], thermal_rating), "MW")
+    set_value!(component, :rating, _natural_value(d["thermal_rating"], sys_mbase), "MVA")
+    set_value!(component, :active_power, _natural_value(-d["ps"], sys_mbase), "MW")
     set_value!(
         component,
         :input_active_power_limits,
-        _natural_value((min = 0.0, max = d["charge_rating"]), thermal_rating),
+        _natural_value((min = 0.0, max = d["charge_rating"]), sys_mbase),
         "MW",
     )
     set_value!(
         component,
         :output_active_power_limits,
-        _natural_value((min = 0.0, max = d["discharge_rating"]), thermal_rating),
+        _natural_value((min = 0.0, max = d["discharge_rating"]), sys_mbase),
         "MW",
     )
     set_value!(
@@ -500,14 +487,16 @@ function make_storage!(
         :efficiency,
         IC.InOut(; in = d["charge_efficiency"], out = d["discharge_efficiency"]),
     )
-    set_value!(component, :reactive_power, _natural_value(d["qs"], thermal_rating), "MVAr")
+    set_value!(component, :reactive_power, _natural_value(-d["qs"], sys_mbase),
+        "MVAr")
     set_value!(
         component,
         :reactive_power_limits,
-        _natural_value((min = d["qmin"], max = d["qmax"]), thermal_rating),
+        # qmin/qmax bound qs (withdrawal); negating qs flips and swaps them.
+        _natural_value((min = -d["qmax"], max = -d["qmin"]), sys_mbase),
         "MVAr",
     )
-    set_value!(component, :base_power, thermal_rating, "MVA")
+    set_value!(component, :base_power, sys_mbase, "MVA")
     add_component!(sys, component)
     set_component_ext!(sys, component, get(d, "ext", Dict{String, Any}()))
     return
@@ -664,7 +653,7 @@ function read_generation!(sys::OpenAPISystem, data::Dict; kwargs...)
     sys_mbase = get_base_power(sys)
     _get_name = get(kwargs, :gen_name_formatter, _get_pm_dict_name)
 
-    for (_, pm_gen) in _sorted_pm_entries(data["gen"])
+    for (gen_key, pm_gen) in _sorted_pm_entries(data["gen"])
         gen_name = String(_get_name(pm_gen))
         bus_id = get_bus_id(reg, Int(pm_gen["gen_bus"]))
         fuel = get(pm_gen, "fuel", "OTHER")
@@ -672,6 +661,7 @@ function read_generation!(sys::OpenAPISystem, data::Dict; kwargs...)
         type_name = get_generator_type(fuel, unit_type, GENERATOR_MAPPING_PM)
         _make_generator!(Val(Symbol(type_name)), sys, reg, bus_id, pm_gen, gen_name,
             sys_mbase)
+        record_source!(reg, "gen", gen_key)
     end
 
     for (_, pm_storage) in _sorted_pm_entries(get(data, "storage", Dict{String, Any}()))

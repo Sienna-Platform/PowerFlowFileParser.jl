@@ -222,8 +222,8 @@ Every numeric field `psse.jl` derives from a per-bridge PSS/E record (`rating`/
 convention as `data["dcline"]`'s native fields, so this maker multiplies them back by
 `sys_mbase` — `TwoTerminalVSCLine.base_power` is the system base.
 
-`dc_current`("if")/`max_dc_current_from`/`to`/`power_factor_weighting_fraction_from`/`to`
-are already natural (Amperes / a bare fraction) and pass through unscaled.
+`dc_current`("if")/`max_dc_current_from`/`to` are natural currents in A, converted to kA on
+store; `power_factor_weighting_fraction_from`/`to` are bare fractions and pass through unscaled.
 The pm dict's `dc_setpoint_from`/`to` is per-unit on `rated_dc_voltage` when the converter
 controls DC voltage, or on `sys_mbase` when it controls DC power; each lands on the one wire
 field its mode selects, `dc_voltage_setpoint_*` (kV) or `dc_power_setpoint_*` (MW), and the
@@ -291,7 +291,7 @@ function make_vscline!(
             IS.get_constant_term(d["converter_loss_from"]),
         ),
     )
-    set_value!(component, :max_dc_current_from, d["max_dc_current_from"], "kA")
+    set_value!(component, :max_dc_current_from, d["max_dc_current_from"], "A")
     set_value!(component, :rating_from, d["rating_from"] * sys_mbase, "MVA")
     set_value!(component, :reactive_power_limits_from,
         (min = d["qminf"] * sys_mbase, max = d["qmaxf"] * sys_mbase), "MVAr")
@@ -334,7 +334,7 @@ function make_vscline!(
             IS.get_constant_term(d["converter_loss_to"]),
         ),
     )
-    set_value!(component, :max_dc_current_to, d["max_dc_current_to"], "kA")
+    set_value!(component, :max_dc_current_to, d["max_dc_current_to"], "A")
     set_value!(component, :rating_to, d["rating_to"] * sys_mbase, "MVA")
     set_value!(component, :reactive_power_limits_to,
         (min = d["qmint"] * sys_mbase, max = d["qmaxt"] * sys_mbase), "MVAr")
@@ -398,6 +398,7 @@ function read_dc_lines!(sys::OpenAPISystem, data::Dict; kwargs...)
         to_id = get_bus_id(reg, to_number)
         name = String(_get_name(d, bus_lookup[from_number][1], bus_lookup[to_number][1]))
         make_dcline!(sys, reg, name, d, from_id, to_id, source_type, sys_mbase)
+        record_source!(reg, "dcline", d_key)
     end
     return
 end
@@ -427,6 +428,7 @@ function read_vsc_lines!(sys::OpenAPISystem, data::Dict; kwargs...)
         to_id = get_bus_id(reg, to_number)
         name = String(_get_name(d, bus_lookup[from_number][1], bus_lookup[to_number][1]))
         make_vscline!(sys, reg, name, d, from_id, to_id, sys_mbase)
+        record_source!(reg, "vscline", d_key)
     end
     return
 end

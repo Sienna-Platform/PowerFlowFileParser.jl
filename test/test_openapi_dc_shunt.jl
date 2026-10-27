@@ -59,6 +59,19 @@ end
     @test PFP.get_value(vsc, :g) ≈ 1.0 / 2.5
 end
 
+@testset "TwoTerminalVSCLine: RAW IMAX = 0 stores the 9999 kA no-limit value" begin
+    file = joinpath(@__DIR__, "fixtures", "synthetic_v35_vsc_line.raw")
+    raw = replace(read_fixture(file), " 250.00, 1000.00," => " 250.00, 0.00,")
+    sys = mktempdir() do dir
+        path = joinpath(dir, "vsc_line.raw")
+        write(path, raw)
+        PFP.build_openapi_system(PFP.PowerModelsData(path))
+    end
+    vsc = only(PFP.get_components(sys, "TwoTerminalVSCLine"))
+    @test PFP.get_value(vsc, :max_dc_current_from) ≈ 9999.0
+    @test PFP.get_value(vsc, :max_dc_current_to) ≈ 9999.0
+end
+
 @testset "TwoTerminalGenericHVDCLine (matpower): native pminf/pmaxf/... ×baseMVA" begin
     pm = PFP.PowerModelsData(joinpath(MATPOWER_DIR, "case5_dc.m"))
     sys = PFP.build_openapi_system(pm)
@@ -123,7 +136,7 @@ end
     @test length(y_increase) == length(d["y_increment"])
     @test all(
         y_increase[i].real == real(d["y_increment"][i]) * base &&
-        y_increase[i].imag == imag(d["y_increment"][i]) * base for
+            y_increase[i].imag == imag(d["y_increment"][i]) * base for
         i in eachindex(d["y_increment"])
     )
     # The fixture's bus-101 SWITCHED SHUNT record declares BINIT = 50.00 and B1 = 100.00,
@@ -223,8 +236,42 @@ end
     @test PFP.get_value(facts, :regulated_bus_number) == d["regulated_bus_number"]
 end
 
-@testset "_facts_control_mode rejects a code outside the current 0-2 enum domain" begin
-    @test_throws IS.DataFormatError PFP._facts_control_mode(3)
+@testset "_facts_control_mode: series MODEs 3/4 keep a normal shunt link; IPFC MODEs fail" begin
+    @test PFP._facts_control_mode(3) == "NML"
+    @test PFP._facts_control_mode(4) == "NML"
+    @test_throws IS.DataFormatError PFP._facts_control_mode(5)
+end
+
+@testset "FACTS series link: MODE 2 is BYPASSED, MODE 3 FIXED at SET1/SET2, MODE 1 dropped" begin
+    raw = read(joinpath(@__DIR__, "modified_14bus_system.raw"), String)
+    record = "'FACTS      1',   108,     0,1,"
+    series = "     0.000, 0.05000,  100.0,   1,   0.00000,   0.00000,"
+    @test occursin(record, raw) && occursin(series, raw)
+    for (mode, control_mode) in ((2, "BYPASSED"), (3, "FIXED"), (1, nothing))
+        # IMX = 500 MVA, SET1 = 0.001 pu, SET2 = -0.02 pu.
+        edited = replace(raw, record => "'FACTS      1',   108,   107,$mode,",
+            series => "   500.000, 0.05000,  100.0,   1,   0.00100,  -0.02000,")
+        path = joinpath(mktempdir(), "facts_mode_$mode.raw")
+        write(path, edited)
+        if isnothing(control_mode)
+            sys =
+                Test.@test_logs (:warn, r"MODE 1 is not supported") match_mode = :any PFP.build_openapi_system(
+                    PFP.PowerModelsData(path))
+            @test isempty(PFP.get_components(sys, "SeriesCompensator"))
+            continue
+        end
+        sys = PFP.build_openapi_system(PFP.PowerModelsData(path))
+        compensator = only(PFP.get_components(sys, "SeriesCompensator"))
+        @test PFP.get_value(compensator, :control_mode) == control_mode
+        @test PFP.get_value(compensator, :rating) == 500.0
+        @test PFP.get_value(compensator, :r) == (mode == 3 ? 0.001 : 0.0)
+        @test PFP.get_value(compensator, :x) == (mode == 3 ? -0.02 : 0.0)
+        @test PFP.get_value(
+            only(PFP.get_components(sys, "FACTSControlDevice")),
+            :control_mode,
+        ) ==
+              (mode == 2 ? "BYP" : "NML")
+    end
 end
 
 """Minimal two-bus, two-area pm dict for the AreaInterchange undefined-area skip path."""
@@ -313,7 +360,7 @@ function _synthetic_vscline_dict()
         "dc_setpoint_to" => -0.02, "ac_setpoint_to" => 1.0,
         "converter_loss_from" => IS.LinearCurve(0.001, 0.002),
         "converter_loss_to" => IS.LinearCurve(0.001, 0.002),
-        "max_dc_current_from" => 0.1, "max_dc_current_to" => 0.1,
+        "max_dc_current_from" => 100.0, "max_dc_current_to" => 100.0,
         "rating_from" => 1.0, "rating_to" => 1.0,
         "power_factor_weighting_fraction_from" => 1.0,
         "power_factor_weighting_fraction_to" => 1.0,
@@ -359,11 +406,11 @@ end
     @test PFP.get_value(vsc, :dc_voltage_setpoint_from) === PFP.ABSENT
     @test PFP.get_value(vsc, :power_factor_setpoint_from) == 1.0
     @test PFP.get_value(vsc, :ac_voltage_setpoint_from) === PFP.ABSENT
-    # The pm dict holds `if` in A; the schema stores kA.
-    @test PFP.get_value(vsc, :dc_current) ≈ 0.01
+    # The RAW records currents in A; the schema stores kA.
+    @test PFP.get_value(vsc, :dc_current) ≈ 10.0 / 1000
     # The pm dict keeps the RAW's RDC in ohms: r = 0.5 ohm, so g = 2 S.
     @test PFP.get_value(vsc, :g) ≈ 1.0 / 0.5
-    @test PFP.get_value(vsc, :max_dc_current_from) == 0.1
+    @test PFP.get_value(vsc, :max_dc_current_from) ≈ 100.0 / 1000
     @test PFP.get_value(vsc, :rated_dc_voltage) == 100.0
     @test PFP.get_value(vsc, :rated_ac_voltage_from) == 138.0
     @test PFP.get_value(vsc, :rated_ac_voltage_to) == 138.0

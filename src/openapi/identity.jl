@@ -18,6 +18,8 @@ struct IdRegistry
     by_name::Dict{Tuple{String, String}, Int}
     by_bus_number::Dict{Int, Int}
     arcs::Dict{Tuple{Int, Int}, Int}
+    by_source::Dict{Tuple{String, Any}, Int}
+    last_registered::Base.RefValue{Int}
 end
 
 function IdRegistry(document::PC.SystemDocument)
@@ -26,6 +28,8 @@ function IdRegistry(document::PC.SystemDocument)
         Dict{Tuple{String, String}, Int}(),
         Dict{Int, Int}(),
         Dict{Tuple{Int, Int}, Int}(),
+        Dict{Tuple{String, Any}, Int}(),
+        Ref(0),
     )
 end
 
@@ -47,7 +51,25 @@ function register!(reg::IdRegistry, type_name::AbstractString, name::AbstractStr
     end
     id = next_id!(reg)
     reg.by_name[key] = id
+    reg.last_registered[] = id
     return id
+end
+
+"""Map the pm dict entry `(section, key)` to the id of the most recent registered component.
+Call it right after the maker that builds the component of that entry."""
+function record_source!(reg::IdRegistry, section::AbstractString, key)
+    reg.by_source[(String(section), key)] = reg.last_registered[]
+    return
+end
+
+function get_source_id(reg::IdRegistry, section::AbstractString, key)
+    source = (String(section), key)
+    if !haskey(reg.by_source, source)
+        throw(
+            IS.DataFormatError("no component built from pm dict section=$section key=$key"),
+        )
+    end
+    return reg.by_source[source]
 end
 
 """Register a bus under both its name and its pm dict bus number."""
