@@ -312,7 +312,7 @@ function set_value!(
 ) where {T}
     target, quantity = _declared(s, prop)
     points = [
-        IC.XYCoords(;
+        IC.TwoDimensionalFunctionPoint(;
             x = _convert(s, prop, Float64(point.x), source_unit, target, quantity),
             y = point.y,
         ) for point in value.points
