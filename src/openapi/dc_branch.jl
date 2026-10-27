@@ -291,7 +291,7 @@ function make_vscline!(
             IS.get_constant_term(d["converter_loss_from"]),
         ),
     )
-    set_value!(component, :max_dc_current_from, d["max_dc_current_from"], "A")
+    set_value!(component, :max_dc_current_from, d["max_dc_current_from"], "kA")
     set_value!(component, :rating_from, d["rating_from"] * sys_mbase, "MVA")
     set_value!(component, :reactive_power_limits_from,
         (min = d["qminf"] * sys_mbase, max = d["qmaxf"] * sys_mbase), "MVAr")
@@ -334,7 +334,7 @@ function make_vscline!(
             IS.get_constant_term(d["converter_loss_to"]),
         ),
     )
-    set_value!(component, :max_dc_current_to, d["max_dc_current_to"], "A")
+    set_value!(component, :max_dc_current_to, d["max_dc_current_to"], "kA")
     set_value!(component, :rating_to, d["rating_to"] * sys_mbase, "MVA")
     set_value!(component, :reactive_power_limits_to,
         (min = d["qmint"] * sys_mbase, max = d["qmaxt"] * sys_mbase), "MVAr")

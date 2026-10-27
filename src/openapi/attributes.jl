@@ -41,7 +41,9 @@ function _impedance_correction_curves(data::Dict)
         end
         curve = IC.PiecewiseLinearData(;
             function_type = "PIECEWISE_LINEAR",
-            points = [IC.XYCoords(; x = x[i], y = y[i]) for i in eachindex(x)],
+            points = [
+                IC.TwoDimensionalFunctionPoint(; x = x[i], y = y[i]) for i in eachindex(x)
+            ],
         )
         control_mode =
             if PSSE_PARSER_TAP_RATIO_LBOUND <= x[1] <= PSSE_PARSER_TAP_RATIO_UBOUND

@@ -16,17 +16,17 @@ PowerOperationsOpenAPIModels = "a372b6d7-45a2-44c2-8199-6a724b72e8ff"
 Unicode = "4ec0a83e-493e-50e2-b9ac-8f72acf5a8f5"
 [sources]
 # Branch pin until the psy6-line InfrastructureSystems is registered.
-InfrastructureSystems = {url = "https://github.com/Sienna-Platform/InfrastructureSystems.jl.git", rev = "IS4"}
+InfrastructureSystems = {url = "https://github.com/Sienna-Platform/InfrastructureSystems.jl.git", rev = "jd/sdk-0.3"}
 
 [compat]
 DataStructures = "0.19.3"
 DocStringExtensions = "~0.8, ~0.9"
-InfrastructureCoreOpenAPIModels = "0.2.1"
+InfrastructureCoreOpenAPIModels = "0.3"
 InfrastructureSystems = "^3.2"
 JSON = "1"
 LinearAlgebra = "1"
 OpenAPI = "1"
-PowerCoreOpenAPIModels = "0.2.1"
-PowerOperationsOpenAPIModels = "0.2.1"
+PowerCoreOpenAPIModels = "0.3"
+PowerOperationsOpenAPIModels = "0.3"
 Unicode = "1"
 julia = "^1.10"

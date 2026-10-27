@@ -313,7 +313,7 @@ function _synthetic_vscline_dict()
         "dc_setpoint_to" => -0.02, "ac_setpoint_to" => 1.0,
         "converter_loss_from" => IS.LinearCurve(0.001, 0.002),
         "converter_loss_to" => IS.LinearCurve(0.001, 0.002),
-        "max_dc_current_from" => 100.0, "max_dc_current_to" => 100.0,
+        "max_dc_current_from" => 0.1, "max_dc_current_to" => 0.1,
         "rating_from" => 1.0, "rating_to" => 1.0,
         "power_factor_weighting_fraction_from" => 1.0,
         "power_factor_weighting_fraction_to" => 1.0,
@@ -359,10 +359,11 @@ end
     @test PFP.get_value(vsc, :dc_voltage_setpoint_from) === PFP.ABSENT
     @test PFP.get_value(vsc, :power_factor_setpoint_from) == 1.0
     @test PFP.get_value(vsc, :ac_voltage_setpoint_from) === PFP.ABSENT
-    @test PFP.get_value(vsc, :dc_current) == 10.0
+    # The pm dict holds `if` in A; the schema stores kA.
+    @test PFP.get_value(vsc, :dc_current) ≈ 0.01
     # The pm dict keeps the RAW's RDC in ohms: r = 0.5 ohm, so g = 2 S.
     @test PFP.get_value(vsc, :g) ≈ 1.0 / 0.5
-    @test PFP.get_value(vsc, :max_dc_current_from) == 100.0
+    @test PFP.get_value(vsc, :max_dc_current_from) == 0.1
     @test PFP.get_value(vsc, :rated_dc_voltage) == 100.0
     @test PFP.get_value(vsc, :rated_ac_voltage_from) == 138.0
     @test PFP.get_value(vsc, :rated_ac_voltage_to) == 138.0
