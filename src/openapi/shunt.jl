@@ -165,12 +165,15 @@ function make_switched_admittance!(
     return
 end
 
-"""PSS/E FACTS MODE codes (0/1/2 — "Unavailable"/"Normal"/"Link bypassed", per
-`pm_io/psse.jl:430`), in the schema's `FACTSControlDevice.control_mode` spelling. Ported
-from PSY's `FACTSOperationModes` enum (`definitions.jl:98-102`). PSCB's own
-`make_facts` guards only `d["control_mode"] > 3`, a stale bound from a since-shrunk enum;
-this reader's bound is 0-2, the current enum's actual domain."""
-const FACTS_CONTROL_MODE_NAMES = Dict(0 => "OOS", 1 => "NML", 2 => "BYP")
+"""PSS/E FACTS MODE codes in the schema's `FACTSControlDevice.control_mode` spelling:
+0 out of service, 1 normal, 2 series link bypassed, and 3/4 (series link at constant
+impedance or voltage), whose shunt link operates normally. The IPFC modes 5-8 have no
+mapping."""
+const FACTS_CONTROL_MODE_NAMES =
+    Dict(0 => "OOS", 1 => "NML", 2 => "BYP", 3 => "NML", 4 => "NML")
+
+# FACTS MODEs whose series link is a `SeriesCompensator`: bypassed, or at constant impedance.
+const FACTS_SERIES_COMPENSATOR_MODES = Dict(2 => "BYPASSED", 3 => "FIXED")
 
 function _facts_control_mode(code::Integer)
     if !haskey(FACTS_CONTROL_MODE_NAMES, code)
@@ -179,9 +182,9 @@ function _facts_control_mode(code::Integer)
     return FACTS_CONTROL_MODE_NAMES[code]
 end
 
-"""FACTS control device. Series FACTS
-(`tbus != 0`) are unsupported and only warned about, matching the oracle; this reader
-still emits the STATCOM-simplified device."""
+"""FACTS control device, as its STATCOM-simplified shunt link. A series link
+(`tbus != 0`) becomes a `SeriesCompensator` when it is bypassed (MODE 2) or at constant
+impedance (MODE 3); other series modes are warned about and dropped."""
 function make_facts!(
     sys::OpenAPISystem,
     reg::IdRegistry,
@@ -190,7 +193,7 @@ function make_facts!(
     bus_id::Int,
 )
     if d["tbus"] != 0
-        @warn "Series FACTs not supported for $name."
+        _make_facts_series_link!(sys, reg, name, d, bus_id)
     end
     control_mode = _facts_control_mode(Int(d["control_mode"]))
 
@@ -214,6 +217,31 @@ function make_facts!(
     )
     add_component!(sys, component)
     set_component_ext!(sys, component, get(d, "ext", Dict{String, Any}()))
+    return
+end
+
+function _make_facts_series_link!(
+    sys::OpenAPISystem,
+    reg::IdRegistry,
+    name::AbstractString,
+    d::Dict,
+    from_id::Int,
+)
+    mode = Int(d["control_mode"])
+    control_mode = get(FACTS_SERIES_COMPENSATOR_MODES, mode, nothing)
+    if isnothing(control_mode)
+        mode == 0 ||
+            @warn "Series link of FACTS $name in MODE $mode is not supported; dropping it"
+        return
+    end
+    sys_mbase = get_base_power(sys)
+    # SET1/SET2 hold the series impedance only under MODE 3.
+    impedance = mode == 3 ? (r = d["series_r"], x = d["series_x"]) : (r = 0.0, x = 0.0)
+    imx = d["max_series_current"]
+    rating = (rating = iszero(imx) ? INFINITE_BOUND * sys_mbase : imx,)
+    to_id = get_bus_id(reg, Int(d["tbus"]))
+    _add_series_compensator!(sys, reg, name, Bool(d["available"]),
+        add_arc!(sys, from_id, to_id), impedance, control_mode, rating, sys_mbase)
     return
 end
 

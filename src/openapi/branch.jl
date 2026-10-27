@@ -371,6 +371,67 @@ function make_switch_from_zero_impedance_branch!(
     return
 end
 
+"""A series compensator from a branch record: PSS/E treats a non-transformer branch with
+R = 0 and X < 0 as a series capacitor. Only a record without line charging gets here."""
+function make_series_compensator!(
+    sys::OpenAPISystem,
+    reg::IdRegistry,
+    name::AbstractString,
+    d::Dict,
+    from_id::Int,
+    to_id::Int,
+    from_isolated::Bool,
+    to_isolated::Bool,
+    sys_mbase::Float64,
+)
+    available = _branch_available(d["br_status"] == 1, from_isolated, to_isolated)
+    rating = (rating = _get_rating(name, d, "rate_a") * sys_mbase,
+        rating_b = _natural_value(_get_rating(name, d, "rate_b"), sys_mbase),
+        rating_c = _natural_value(_get_rating(name, d, "rate_c"), sys_mbase))
+    _add_series_compensator!(sys, reg, name, available, add_arc!(sys, from_id, to_id),
+        (r = d["br_r"], x = d["br_x"]), "FIXED", rating, sys_mbase;
+        active_power_flow = get(d, "pf", 0.0) * sys_mbase,
+        reactive_power_flow = get(d, "qf", 0.0) * sys_mbase,
+        ext = get(d, "ext", Dict{String, Any}()))
+    return
+end
+
+# `impedance` is system-base pu; `rating` holds natural MVA, with `rating_b`/`rating_c`
+# optional.
+function _add_series_compensator!(
+    sys::OpenAPISystem,
+    reg::IdRegistry,
+    name::AbstractString,
+    available::Bool,
+    arc_id::Int,
+    impedance::NamedTuple,
+    control_mode::AbstractString,
+    rating::NamedTuple,
+    sys_mbase::Float64;
+    active_power_flow = 0.0,
+    reactive_power_flow = 0.0,
+    ext = Dict{String, Any}(),
+)
+    component = stage(PO.SeriesCompensator)
+    set_value!(component, :id, register!(reg, "SeriesCompensator", name))
+    set_value!(component, :name, name)
+    set_value!(component, :available, available)
+    set_value!(component, :active_power_flow, active_power_flow, "MW")
+    set_value!(component, :reactive_power_flow, reactive_power_flow, "MVAr")
+    set_value!(component, :arc, arc_id)
+    set_value!(component, :parameter_units, "COMPONENT_BASE")
+    set_value!(component, :r, impedance.r, "pu")
+    set_value!(component, :x, impedance.x, "pu")
+    set_value!(component, :rating, rating.rating, "MVA")
+    set_optional_value!(component, :rating_b, get(rating, :rating_b, nothing), "MVA")
+    set_optional_value!(component, :rating_c, get(rating, :rating_c, nothing), "MVA")
+    set_value!(component, :control_mode, control_mode)
+    set_value!(component, :base_power, sys_mbase, "MVA")
+    add_component!(sys, component)
+    set_component_ext!(sys, component, ext)
+    return
+end
+
 function _branch_type_matpower(d::Dict)
     tap = d["tap"]
     shift = d["shift"]
@@ -389,6 +450,14 @@ function _branch_type_psse(d::Dict, name::AbstractString)
     # with no impedance is the modeled switching device this shortcut is looking for.
     if !d["transformer"] && iszero(d["br_r"]) && iszero(d["br_x"])
         return :switch
+    end
+    # PSS/E's series compensation: R = 0 and X < 0. A SeriesCompensator has no line
+    # charging, so a record that carries some stays a Line with a negative reactance.
+    if !d["transformer"] && iszero(d["br_r"]) && d["br_x"] < 0
+        if all(iszero(d[k]) for k in ("b_fr", "b_to", "g_fr", "g_to"))
+            return :series_compensator
+        end
+        @warn "Branch $name has R = 0, X < 0 and line charging; it is represented as a Line with negative reactance and line charging, not as a SeriesCompensator"
     end
     is_transformer = d["transformer"]
     tap = d["tap"]
@@ -532,10 +601,11 @@ function make_3w_transformer!(
 end
 
 """
-Create a `Line`, `TwoWindingTransformer`, or `DiscreteControlledACBranch` per
-`data["branch"]` entry. `data["branch"]` carries both untransformed lines and 2W transformers —
-PowerModels represents both as "branch" rows, discriminated by `tap`/`shift`/
-`"transformer"` (MATPOWER) or by zero impedance / the `"transformer"` flag (PSS/E).
+Create a `Line`, `TwoWindingTransformer`, `DiscreteControlledACBranch`, or
+`SeriesCompensator` per `data["branch"]` entry. `data["branch"]` carries both
+untransformed lines and 2W transformers — PowerModels represents both as "branch" rows,
+discriminated by `tap`/`shift`/`"transformer"` (MATPOWER) or by zero impedance, R = 0 with
+X < 0, or the `"transformer"` flag (PSS/E).
 """
 function read_branches!(sys::OpenAPISystem, data::Dict; kwargs...)
     if !haskey(data, "branch")
@@ -572,6 +642,9 @@ function read_branches!(sys::OpenAPISystem, data::Dict; kwargs...)
         elseif branch_type == :switch
             make_switch_from_zero_impedance_branch!(sys, reg, name, d, from_id, to_id,
                 from_isolated, to_isolated, sys_mbase)
+        elseif branch_type == :series_compensator
+            make_series_compensator!(sys, reg, name, d, from_id, to_id, from_isolated,
+                to_isolated, sys_mbase)
         elseif branch_type == :transformer
             make_transformer_2w!(sys, reg, name, d, from_id, to_id, from_isolated,
                 to_isolated, sys_mbase)

@@ -2396,7 +2396,7 @@ function _psse2pm_facts!(pm_data::Dict, pti_data::Dict, import_all::Bool)
     pm_data["facts"] = []
 
     if haskey(pti_data, "FACTS CONTROL DEVICE")
-        @info "FACTS devices are parsed as their shunt (STATCOM) half only; a series terminal is dropped"
+        @info "FACTS devices are parsed as their shunt (STATCOM) half; a series link is kept only when bypassed (MODE 2) or at constant impedance (MODE 3)"
         for facts in pti_data["FACTS CONTROL DEVICE"]
             sub_data = Dict{String, Any}()
 
@@ -2419,6 +2419,10 @@ function _psse2pm_facts!(pm_data::Dict, pti_data::Dict, import_all::Bool)
 
             sub_data["voltage_setpoint"] = facts["VSET"]
             sub_data["max_shunt_current"] = facts["SHMX"]
+            # The series link: its impedance under MODE 3 (pu), and its current limit (MVA).
+            sub_data["series_r"] = facts["SET1"]
+            sub_data["series_x"] = facts["SET2"]
+            sub_data["max_series_current"] = facts["IMX"]
 
             # % of MVAr required to hold voltage at sending bus
             if facts["RMPCT"] < 0
