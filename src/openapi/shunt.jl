@@ -240,6 +240,7 @@ function read_shunts!(sys::OpenAPISystem, data::Dict; kwargs...)
         name = String(_get_shunt_name(d))
         bus_id = get_bus_id(reg, Int(d["shunt_bus"]))
         make_fixed_admittance!(sys, reg, name, d, bus_id)
+        record_source!(reg, "shunt", d_key)
     end
 
     for (d_key, d) in _sorted_pm_entries(get(data, "switched_shunt", Dict{String, Any}()))
@@ -247,6 +248,7 @@ function read_shunts!(sys::OpenAPISystem, data::Dict; kwargs...)
         name = String(_get_switched_shunt_name(d))
         bus_id = get_bus_id(reg, Int(d["shunt_bus"]))
         make_switched_admittance!(sys, reg, name, d, bus_id)
+        record_source!(reg, "switched_shunt", d_key)
     end
 
     for (d_key, d) in _sorted_pm_entries(get(data, "facts", Dict{String, Any}()))
@@ -256,6 +258,7 @@ function read_shunts!(sys::OpenAPISystem, data::Dict; kwargs...)
         full_name = "$(bus_number)_$(name)"
         bus_id = get_bus_id(reg, bus_number)
         make_facts!(sys, reg, full_name, d, bus_id)
+        record_source!(reg, "facts", d_key)
     end
     return
 end
