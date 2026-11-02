@@ -73,7 +73,7 @@ function _piecewise_linear_cost(cost_component::Vector{Float64}, sys_mbase::Floa
     (first_x, first_y), (second_x, second_y) = points[1], points[2]
     first_slope = (second_y - first_y) / (second_x - first_x)
     fixed = max(0.0, first_y - first_slope * first_x)
-    shifted = [IC.XYCoords(; x = x, y = y - fixed) for (x, y) in points]
+    shifted = [IC.TwoDimensionalFunctionPoint(; x = x, y = y - fixed) for (x, y) in points]
     return IC.PiecewiseLinearData(; function_type = "PIECEWISE_LINEAR", points = shifted),
     fixed
 end
