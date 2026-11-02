@@ -1093,12 +1093,18 @@ function _transformer_bus_label(sub_data::Dict)
     )
 end
 
-# Base Power has a different key in sub_data depending on the number of windings
+# Base Power has a different key in sub_data depending on the number of windings.
+# CM=2 gives MAG1/MAG2 on SBASE1-2 and winding-one nominal voltage NOMV1; the series
+# impedance is on winding-one bus base voltage, so rebase the admittance by
+# (V_bus/NOMV1)^2. NOMV1 = 0 means NOMV1 is the bus base voltage: no correction.
 function _transformer_mag_pu_conversion(
     transformer::Dict,
     sub_data::Dict,
     base_power::Float64,
+    bus_kv::Float64,
 )
+    voltage_factor =
+        iszero(transformer["NOMV1"]) ? 1.0 : (bus_kv / transformer["NOMV1"])^2
     if isapprox(transformer["MAG1"], 0.0; atol = ZERO_IMPEDANCE_REACTANCE_THRESHOLD) &&
        isapprox(transformer["MAG2"], 0.0; atol = ZERO_IMPEDANCE_REACTANCE_THRESHOLD)
         @warn "Transformer $(_transformer_bus_label(sub_data)) has zero MAG1 and MAG2 values."
@@ -1111,7 +1117,7 @@ function _transformer_mag_pu_conversion(
         # magnitude (positive by convention), so the susceptance it implies is the
         # negative root, matching the already-negative MAG2 a CM=1 record supplies.
         B_pu = -sqrt(max(0.0, mag_diff))
-        return G_pu, B_pu
+        return G_pu * voltage_factor, B_pu * voltage_factor
     end
 end
 
@@ -1227,14 +1233,10 @@ function _psse2pm_transformer!(pm_data::Dict, pti_data::Dict, import_all::Bool, 
                 end
 
                 # Unit Transformations
-                # Data must be stored in the DEVICE_BASE
-                # Z_base_device = (V_device)^2 / S_device, Z_base_sys = (V_device)^2 / S_sys
-                # Z_ohms = Z_pu_sys * Z_base_sys, Z_pu_device = Z_ohms / Z_device = Z_pu_sys * S_device / S_sys
+                # Data must be stored in the DEVICE_BASE. The voltage base is the winding
+                # bus's on both sides, so system pu -> device pu is the power ratio alone:
+                # Z_pu_device = Z_pu_sys * S_device / S_sys
                 mva_ratio = sub_data["base_power"] / pm_data["baseMVA"]
-                Z_base_device = sub_data["base_voltage_from"]^2 / sub_data["base_power"]
-                Z_base_sys = sub_data["base_voltage_from"]^2 / pm_data["baseMVA"]
-                #_get_bus_value(transformer["I"], "base_kv", pm_data)^2 /
-                #pm_data["baseMVA"]
                 if transformer["CZ"] == 2  # "for resistance and reactance in pu on system MVA base and winding voltage base"
                     # Compute br_r and br_x in pu of device base
                     br_r, br_x = transformer["R1-2"], transformer["X1-2"]
@@ -1246,14 +1248,8 @@ function _psse2pm_transformer!(pm_data::Dict, pti_data::Dict, import_all::Bool, 
                         br_x = sqrt(transformer["X1-2"]^2 - br_r^2) # device pu
                     else # "CZ" = 1 in system base pu
                         @assert transformer["CZ"] == 1
-                        br_r, br_x = transformer["R1-2"], transformer["X1-2"] # sys pu
-                        if iszero(Z_base_device) # NOMV1 = 0.0: use the power ratios
-                            br_r = transformer["R1-2"] * mva_ratio
-                            br_x = transformer["X1-2"] * mva_ratio
-                        else # NOMV1 could potentially be different than the bus_voltage, use impedance ratios
-                            br_r = (transformer["R1-2"] * Z_base_sys) / Z_base_device
-                            br_x = (transformer["X1-2"] * Z_base_sys) / Z_base_device
-                        end
+                        br_r = transformer["R1-2"] * mva_ratio
+                        br_x = transformer["X1-2"] * mva_ratio
                     end
                 end
 
@@ -1312,6 +1308,7 @@ function _psse2pm_transformer!(pm_data::Dict, pti_data::Dict, import_all::Bool, 
                         transformer,
                         sub_data,
                         sub_data["base_power"],
+                        _get_bus_value(transformer["I"], "base_kv", pm_data),
                     )
                     sub_data["g_fr"] = G_pu
                     sub_data["b_fr"] = B_pu
@@ -1808,6 +1805,7 @@ function _psse2pm_transformer!(pm_data::Dict, pti_data::Dict, import_all::Bool, 
                         transformer,
                         sub_data,
                         sub_data["base_power_12"],
+                        _get_bus_value(transformer["I"], "base_kv", pm_data),
                     )
                     sub_data["g"] = G_pu
                     sub_data["b"] = B_pu
