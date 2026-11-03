@@ -1527,7 +1527,7 @@ function _psse2pm_transformer!(pm_data::Dict, pti_data::Dict, import_all::Bool, 
                     if base < 0.0
                         throw(
                             IS.InvalidValue(
-                                "Transformer $(transformer[I]) -> $(transformer["J"]) -> $(transformer["K"]) has negative base power $base",
+                                "Transformer $(transformer["I"]) -> $(transformer["J"]) -> $(transformer["K"]) has negative base power $base",
                             ),
                         )
                     end
@@ -2871,7 +2871,7 @@ function _pti_to_powermodels!(
     pm_data["per_unit"] = false
     pm_data["source_type"] = "pti"
     pm_data["source_version"] = "$rev"
-    pm_data["baseMVA"] = pop!(pti_data["CASE IDENTIFICATION"][1], "SBASE")
+    pm_data["baseMVA"] = _checked_base_mva(pop!(pti_data["CASE IDENTIFICATION"][1], "SBASE"))
     pm_data["name"] = pop!(pti_data["CASE IDENTIFICATION"][1], "NAME")
 
     if import_all

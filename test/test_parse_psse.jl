@@ -638,3 +638,24 @@ end
         end
     end
 end
+
+@testset "Non-positive system base power is rejected (issue #18)" begin
+    raw = read(joinpath(@__DIR__, "modified_14bus_system.raw"), String)
+    for sbase in ("0.0", "-100.0")
+        bad = replace(raw, "0,   100.00, 33" => "0, $sbase, 33"; count = 1)
+        @test_throws PowerFlowFileParser.IS.InvalidValue parse_file(
+            IOBuffer(bad);
+            filetype = "raw",
+        )
+    end
+    m = read(joinpath(@__DIR__, "fixtures", "matpower_cost_units.m"), String)
+    bad_m = replace(m, r"mpc.baseMVA *= *[0-9.]+" => "mpc.baseMVA = 0")
+    @test_throws PowerFlowFileParser.IS.InvalidValue parse_file(
+        IOBuffer(bad_m);
+        filetype = "m",
+    )
+    # A zero generator MBASE still falls back to the system base; a negative one is rejected.
+    @test PowerFlowFileParser._device_base_power(Dict("mbase" => 0.0), "g", 100.0) == 100.0
+    @test_throws PowerFlowFileParser.IS.InvalidValue PowerFlowFileParser._device_base_power(
+        Dict("mbase" => -50.0), "g", 100.0)
+end

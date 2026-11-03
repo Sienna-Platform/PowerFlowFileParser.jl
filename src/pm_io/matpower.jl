@@ -199,7 +199,7 @@ function _parse_matpower_string(data_string::String)
     end
 
     if haskey(matlab_data, "mpc.baseMVA")
-        case["baseMVA"] = Float64(matlab_data["mpc.baseMVA"])
+        case["baseMVA"] = _checked_base_mva(matlab_data["mpc.baseMVA"])
     else
         @info(
             string(
