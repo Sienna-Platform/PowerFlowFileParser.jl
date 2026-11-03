@@ -220,6 +220,46 @@ end
     @test PFP.get_value(circuit, :base_power) == 40.0
     @test PFP.get_value(circuit, :rating) ≈ d["rate_a"] * sys_mbase
     @test PFP.get_value(circuit, :rating) ≈ 32.0
+    # r/x and the magnetizing shunt are on bus I's base voltage, so that is the declared
+    # base; NOMV1 survives in ext.
+    @test PFP.get_value(circuit, :base_voltage_primary) == 138.0
+    @test PFP.get_value(circuit, :base_voltage_secondary) == 13.8
+    @test d["ext"]["NOMV1"] == 145.0
+end
+
+@testset "T4 3W (CZ=1, CW=1, CM=2, NOMV1=145 != bus_I base_kv=138): magnetizing admittance rebased to the bus base" begin
+    pm = _transformer_discriminator_pm_data()
+    d = only(values(pm.data["3w_transformer"]))
+    @test d["bus_primary"] == 207
+    @test d["base_power_12"] == 30.0
+
+    # CM=2 on SBASE1-2 and NOMV1: G = 1e-6*MAG1/SBASE1-2, B = -sqrt(MAG2^2 - G^2), then
+    # rebased from NOMV1 to the 138 kV bus base by (138/145)^2.
+    g_pu = 1e-6 * 30000.0 / 30.0
+    b_pu = -sqrt(0.003^2 - g_pu^2)
+    voltage_factor = (138.0 / 145.0)^2
+    @test d["g"] ≈ g_pu * voltage_factor
+    @test d["b"] ≈ b_pu * voltage_factor
+    @test d["b"] < 0
+    @test d["base_voltage_primary"] == 138.0
+    @test d["ext"]["NOMV1"] == 145.0
+
+    # CZ=1, equal winding bases: each pair impedance is 0.01+j0.05 sys pu -> x0.3 device
+    # pu, and every star leg is half that.
+    @test d["r_primary"] ≈ 0.5 * 0.01 * 0.3
+    @test d["x_primary"] ≈ 0.5 * 0.05 * 0.3
+
+    sys = PFP.build_openapi_system(pm)
+    t = only(PFP.get_components(sys, "ThreeWindingTransformer"))
+    primary = only(
+        c for c in PFP.get_components(sys, "TransformerCircuit") if
+        PFP.get_value(c, :id) == PFP.get_value(t, :primary_circuit)
+    )
+    magnetizing = PFP.get_value(t, :magnetizing_shunt)
+    @test PFP.get_value(magnetizing, :real) == d["g"]
+    @test PFP.get_value(magnetizing, :imag) == d["b"]
+    @test PFP.get_value(primary, :base_voltage_primary) == 138.0
+    @test PFP.get_value(primary, :r) == d["r_primary"]
 end
 
 @testset "two-terminal DC line MDC=2 (current-controlled): control_mode=CURRENT, hand-derived power_demand" begin
@@ -264,6 +304,7 @@ end
     # fixture's DC-line buses, borrowed from `synthetic_v35_two_terminal_dc.raw`'s
     # template, not one of T1/T2/T3.
     @test length(PFP.PC.get_components(doc, "TwoWindingTransformer")) == 4
+    @test length(PFP.PC.get_components(doc, "ThreeWindingTransformer")) == 1
     @test length(PFP.PC.get_components(doc, "TwoTerminalLCCLine")) == 1
     PFP.PC.validate_document(doc)
 end
