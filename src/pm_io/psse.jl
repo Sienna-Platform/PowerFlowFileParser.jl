@@ -2871,7 +2871,8 @@ function _pti_to_powermodels!(
     pm_data["per_unit"] = false
     pm_data["source_type"] = "pti"
     pm_data["source_version"] = "$rev"
-    pm_data["baseMVA"] = _checked_base_mva(pop!(pti_data["CASE IDENTIFICATION"][1], "SBASE"))
+    pm_data["baseMVA"] =
+        _checked_base_mva(pop!(pti_data["CASE IDENTIFICATION"][1], "SBASE"))
     pm_data["name"] = pop!(pti_data["CASE IDENTIFICATION"][1], "NAME")
 
     if import_all

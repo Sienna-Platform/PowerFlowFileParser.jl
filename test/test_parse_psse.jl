@@ -659,3 +659,23 @@ end
     @test_throws PowerFlowFileParser.IS.InvalidValue PowerFlowFileParser._device_base_power(
         Dict("mbase" => -50.0), "g", 100.0)
 end
+
+@testset "Negative 3W winding-pair SBASE is rejected with the transformer's buses" begin
+    raw = read(joinpath(PSSE_RAW_DIR, "case6_3w.raw"), String)
+    line = " 0.00000E+0, 2.00000E-4,   100.00, 0.00000E+0, 2.00000E-4,   100.00, 0.00000E+0, 2.00000E-4,   100.00,0.99999,  -0.0064"
+    @test occursin(line, raw)
+    fields = split(line, ',')
+    for ix in (3, 6, 9)  # SBASE1-2, SBASE2-3, SBASE3-1
+        bad_fields = copy(fields)
+        bad_fields[ix] = "   -50.00"
+        bad = replace(raw, line => join(bad_fields, ','))
+        err = try
+            parse_file(IOBuffer(bad); filetype = "raw")
+            nothing
+        catch e
+            e
+        end
+        @test err isa PowerFlowFileParser.IS.InvalidValue
+        @test occursin("102 -> 104 -> 103", sprint(showerror, err))
+    end
+end
