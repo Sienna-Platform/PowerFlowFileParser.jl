@@ -187,7 +187,7 @@ end
     @test ext["ARNAME"] == "AREA1"  # strip()'d, unlike the raw fixed-width field
     @test ext["I"] == "1"
     @test ext["ISW"] == "2"
-    @test ext["PDES"] == area1_d["net_interchange"]
+    @test !haskey(ext, "PDES")
     @test ext["PTOL"] == area1_d["tol_interchange"]
 end
 
@@ -272,4 +272,22 @@ end
         Dict{String, Any}("bus" => Dict{String, Any}(), "baseMVA" => 100.0),
     )
     @test_throws IS.DataFormatError PFP.build_openapi_system(pm_data)
+end
+
+@testset "Area schedule and off-area loads come from PSS/E AREA and LOAD records" begin
+    pm_data = PFP.PowerModelsData(joinpath(@__DIR__, "fixtures", "v35_off_area_load.raw"))
+    sys = PFP.build_openapi_system(pm_data)
+    areas = Dict(
+        PFP.get_value(a, :name) => a for a in PFP.get_components(sys, "Area")
+    )
+    load = only(PFP.get_components(sys, "StandardLoad"))
+    area1 = areas["1"]
+    area2 = areas["2"]
+    # Bus 3 is in area 2; its load belongs to area 1, so area 1 owns the off-area load.
+    @test PFP.get_value(area1, :scheduled_net_interchange) == 25.5
+    @test PFP.get_value(area1, :out_of_area_load_ids) == [PFP.get_value(load, :id)]
+    # Area 2 has no AREA INTERCHANGE record.
+    @test isnothing(PFP.get_value(area2, :scheduled_net_interchange))
+    @test isempty(PFP.get_value(area2, :out_of_area_load_ids))
+    @test !haskey(PFP.get_ext(sys, PFP.get_value(area1, :id)), "PDES")
 end

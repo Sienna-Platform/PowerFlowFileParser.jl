@@ -88,12 +88,24 @@ function _area_interchange_ext(data::Dict, area_name::AbstractString)
                 "ARNAME" => strip(get(area_data, "area_name", "")),
                 "I" => string(get(area_data, "area_number", "")),
                 "ISW" => string(get(area_data, "bus_number", "")),
-                "PDES" => get(area_data, "net_interchange", ""),
                 "PTOL" => get(area_data, "tol_interchange", ""),
             )
         end
     end
     error("_area_interchange_ext: no area_interchange record for area $area_name")
+end
+
+"""
+PSS/E PDES (MW) of the AREA INTERCHANGE record for `area_name`. Call only after
+[`_has_area_interchange`](@ref) confirms a match exists.
+"""
+function _area_pdes(data::Dict, area_name::AbstractString)
+    for (_, area_data) in data["area_interchange"]
+        if string(get(area_data, "area_number", "")) == area_name
+            return Float64(area_data["net_interchange"])
+        end
+    end
+    error("_area_pdes: no area_interchange record for area $area_name")
 end
 
 """
@@ -114,8 +126,15 @@ function _ensure_area!(sys::OpenAPISystem, data::Dict, name::AbstractString)
     set_value!(area, :name, name)
     # Area has no device base; base_power records the system base.
     set_value!(area, :base_power, get_base_power(sys), "MVA")
+    set_value!(area, :out_of_area_load_ids, Int[])
+    has_interchange = _has_area_interchange(data, name)
+    if has_interchange
+        set_value!(area, :scheduled_net_interchange, _area_pdes(data, name), "MW")
+    else
+        set_value!(area, :scheduled_net_interchange, nothing, "MW")
+    end
     add_component!(sys, area)
-    if _has_area_interchange(data, name)
+    if has_interchange
         set_ext!(sys, id, _area_interchange_ext(data, name))
     end
     return id

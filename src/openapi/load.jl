@@ -86,7 +86,7 @@ function _make_standard_load!(
     _set_zip_fields!(load, d, base_power)
     add_component!(sys, load)
     set_component_ext!(sys, load, get(d, "ext", Dict{String, Any}()))
-    return
+    return get_value(load, :id)
 end
 
 function _make_interruptible_standardload!(
@@ -105,7 +105,7 @@ function _make_interruptible_standardload!(
     _set_zip_fields!(load, d, base_power)
     add_component!(sys, load)
     set_component_ext!(sys, load, get(d, "ext", Dict{String, Any}()))
-    return
+    return get_value(load, :id)
 end
 
 function _make_power_load!(
@@ -125,7 +125,7 @@ function _make_power_load!(
     set_value!(load, :conformity, _conformity_string(Int(d["conformity"])))
     add_component!(sys, load)
     set_component_ext!(sys, load, get(d, "ext", Dict{String, Any}()))
-    return
+    return get_value(load, :id)
 end
 
 """
@@ -162,6 +162,24 @@ function _make_dgen_renewable!(
 end
 
 """
+Set `out_of_area_load_ids` on the already-added `Area` with id `area_id`. The document
+holds immutable rows, so the row is rebuilt in place.
+"""
+function _set_out_of_area_load_ids!(
+    sys::OpenAPISystem,
+    area_id::Int,
+    load_ids::Vector{Int},
+)
+    areas = get_components(sys, "Area")
+    index = findfirst(area -> area.id == area_id, areas)
+    old = areas[index]
+    fields = Dict(name => getfield(old, name) for name in fieldnames(PC.Area))
+    fields[:out_of_area_load_ids] = load_ids
+    areas[index] = PC.Area(; fields...)
+    return
+end
+
+"""
 Create one load per `data["load"]` entry, plus a `RenewableNonDispatch` for every load
 whose `source_id` matches a `data["distributed_generation"]` entry. The three-way type choice mirrors PSCB exactly: PSS/E
 loads (`source_type == "pti"`) split on their `"interruptible"` flag between
@@ -182,17 +200,32 @@ function read_loads!(sys::OpenAPISystem, data::Dict; kwargs...)
         dgen_lookup[(Int(dgen["bus"]), strip(string(dgen["source_id"][3])))] = dgen
     end
     unmatched_dgen_keys = Set(keys(dgen_lookup))
+    _get_area_name = get(kwargs, :area_name_formatter, string)
+    off_area_load_ids = Dict{Int, Vector{Int}}()
 
     for (d_key, d) in _sorted_pm_entries(data["load"])
         bus_id = get_bus_id(reg, Int(d["load_bus"]))
         name = String(_get_name(d))
         is_interruptible = haskey(d, "interruptible")
         if is_pti && is_interruptible && d["interruptible"] != 1
-            _make_standard_load!(sys, reg, bus_id, d, name, base_power)
+            load_id = _make_standard_load!(sys, reg, bus_id, d, name, base_power)
         elseif is_pti && is_interruptible && d["interruptible"] == 1
-            _make_interruptible_standardload!(sys, reg, bus_id, d, name, base_power)
+            load_id =
+                _make_interruptible_standardload!(sys, reg, bus_id, d, name, base_power)
         else
-            _make_power_load!(sys, reg, bus_id, d, name, base_power)
+            load_id = _make_power_load!(sys, reg, bus_id, d, name, base_power)
+        end
+        bus_area = data["bus"][d["load_bus"]]["area"]
+        load_area = get(d, "area", bus_area)
+        if load_area != bus_area
+            push!(
+                get!(
+                    off_area_load_ids,
+                    get_id(reg, "Area", _get_area_name(load_area)),
+                    Int[],
+                ),
+                load_id,
+            )
         end
         record_source!(reg, "load", d_key)
 
@@ -205,6 +238,10 @@ function read_loads!(sys::OpenAPISystem, data::Dict; kwargs...)
                 delete!(unmatched_dgen_keys, dgen_key)
             end
         end
+    end
+
+    for (area_id, load_ids) in off_area_load_ids
+        _set_out_of_area_load_ids!(sys, area_id, load_ids)
     end
 
     if !isempty(unmatched_dgen_keys)

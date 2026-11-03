@@ -277,6 +277,18 @@ function set_value!(
     return
 end
 
+"""Assign an explicit `null` to a numeric property that allows it."""
+function set_value!(
+    s::Staged{T},
+    prop::Symbol,
+    ::Nothing,
+    source_unit::AbstractString,
+) where {T}
+    _declared(s, prop)
+    s.fields[prop] = nothing
+    return
+end
+
 """
 Assign a compound property such as `MinMax`, `UpDown`, `FromTo` or `InOut`.
 
