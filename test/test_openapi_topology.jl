@@ -195,10 +195,10 @@ end
     pm_data =
         PFP.PowerModelsData(joinpath(@__DIR__, "fixtures", "v35_area_slack_variants.raw"))
     data = pm_data.data
-    @test !PFP._has_area_interchange(data, "999")  # no area_number == "999"
-    @test !PFP._has_area_interchange(Dict{String, Any}(), "1")  # no source_type
+    @test !PFP._has_area_interchange(data, "999", string)  # no area_number == "999"
+    @test !PFP._has_area_interchange(Dict{String, Any}(), "1", string)  # no source_type
     matpower_data = merge(data, Dict{String, Any}("source_type" => "matpower"))
-    @test !PFP._has_area_interchange(matpower_data, "1")  # oracle-matched: pti only
+    @test !PFP._has_area_interchange(matpower_data, "1", string)  # oracle-matched: pti only
 end
 
 @testset "_bustype_name rejects a code outside PowerModels' 1-4 range" begin
@@ -290,4 +290,16 @@ end
     @test isnothing(PFP.get_value(area2, :scheduled_net_interchange))
     @test isempty(PFP.get_value(area2, :out_of_area_load_ids))
     @test !haskey(PFP.get_ext(sys, PFP.get_value(area1, :id)), "PDES")
+end
+
+@testset "Area schedule and off-area loads survive a custom area_name_formatter" begin
+    pm_data = PFP.PowerModelsData(joinpath(@__DIR__, "fixtures", "v35_off_area_load.raw"))
+    sys = PFP.build_openapi_system(pm_data; area_name_formatter = n -> "Area$n")
+    areas = Dict(PFP.get_value(a, :name) => a for a in PFP.get_components(sys, "Area"))
+    load = only(PFP.get_components(sys, "StandardLoad"))
+    @test PFP.get_value(areas["Area1"], :scheduled_net_interchange) == 25.5
+    @test PFP.get_value(areas["Area1"], :out_of_area_load_ids) ==
+          [PFP.get_value(load, :id)]
+    @test isnothing(PFP.get_value(areas["Area2"], :scheduled_net_interchange))
+    @test PFP.get_ext(sys, PFP.get_value(areas["Area1"], :id))["ISW"] == "2"
 end

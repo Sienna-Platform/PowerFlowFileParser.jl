@@ -58,18 +58,16 @@ end
 
 """
 Whether PSS/E AREA DATA carries per-area metadata (name, slack bus, desired/tolerance
-interchange) for the `Area` named `area_name`. Matches the inline area_interchange lookup
-inside PSCB's `read_bus!`, including its match rule's `area_name_formatter`-dependent
-behavior: a non-default formatter makes this comparison never match, the same silent gap
-the oracle has.
+interchange) for the `Area` named `area_name`. A record matches when `get_area_name`
+(the `area_name_formatter`) maps its area number to `area_name`.
 """
-function _has_area_interchange(data::Dict, area_name::AbstractString)
+function _has_area_interchange(data::Dict, area_name::AbstractString, get_area_name)
     if get(data, "source_type", nothing) != "pti" || !haskey(data, "area_interchange")
         return false
     end
     for (_, area_data) in data["area_interchange"]
         if haskey(area_data, "area_number") &&
-           string(area_data["area_number"]) == area_name
+           get_area_name(area_data["area_number"]) == area_name
             return true
         end
     end
@@ -80,10 +78,10 @@ end
 PSS/E AREA DATA per-area metadata for the `Area` named `area_name`, in PSCB's own `ext`
 shape. Call only after [`_has_area_interchange`](@ref) confirms a match exists.
 """
-function _area_interchange_ext(data::Dict, area_name::AbstractString)
+function _area_interchange_ext(data::Dict, area_name::AbstractString, get_area_name)
     for (_, area_data) in data["area_interchange"]
         if haskey(area_data, "area_number") &&
-           string(area_data["area_number"]) == area_name
+           get_area_name(area_data["area_number"]) == area_name
             return Dict{String, Any}(
                 "ARNAME" => strip(get(area_data, "area_name", "")),
                 "I" => string(get(area_data, "area_number", "")),
@@ -99,9 +97,9 @@ end
 PSS/E PDES (MW) of the AREA INTERCHANGE record for `area_name`. Call only after
 [`_has_area_interchange`](@ref) confirms a match exists.
 """
-function _area_pdes(data::Dict, area_name::AbstractString)
+function _area_pdes(data::Dict, area_name::AbstractString, get_area_name)
     for (_, area_data) in data["area_interchange"]
-        if string(get(area_data, "area_number", "")) == area_name
+        if get_area_name(area_data["area_number"]) == area_name
             return Float64(area_data["net_interchange"])
         end
     end
@@ -115,7 +113,12 @@ The peak stays at `PO.Area`'s own zero default: PSCB never back-fills an `Area`'
 from load data — only `LoadZone` does, via `read_loadzones!` — an asymmetry ported rather
 than fixed.
 """
-function _ensure_area!(sys::OpenAPISystem, data::Dict, name::AbstractString)
+function _ensure_area!(
+    sys::OpenAPISystem,
+    data::Dict,
+    name::AbstractString,
+    get_area_name,
+)
     reg = get_registry(sys)
     if has_id(reg, "Area", name)
         return get_id(reg, "Area", name)
@@ -127,15 +130,20 @@ function _ensure_area!(sys::OpenAPISystem, data::Dict, name::AbstractString)
     # Area has no device base; base_power records the system base.
     set_value!(area, :base_power, get_base_power(sys), "MVA")
     set_value!(area, :out_of_area_load_ids, Int[])
-    has_interchange = _has_area_interchange(data, name)
+    has_interchange = _has_area_interchange(data, name, get_area_name)
     if has_interchange
-        set_value!(area, :scheduled_net_interchange, _area_pdes(data, name), "MW")
+        set_value!(
+            area,
+            :scheduled_net_interchange,
+            _area_pdes(data, name, get_area_name),
+            "MW",
+        )
     else
         set_value!(area, :scheduled_net_interchange, nothing, "MW")
     end
     add_component!(sys, area)
     if has_interchange
-        set_ext!(sys, id, _area_interchange_ext(data, name))
+        set_ext!(sys, id, _area_interchange_ext(data, name, get_area_name))
     end
     return id
 end
@@ -206,7 +214,7 @@ function read_bus!(sys::OpenAPISystem, data::Dict; kwargs...)
     for (bus_key, d) in bus_data
         name = strip(_get_bus_name(d))
         number = Int(d["bus_i"])
-        area_id = _ensure_area!(sys, data, _get_area_name(d["area"]))
+        area_id = _ensure_area!(sys, data, _get_area_name(d["area"]), _get_area_name)
         zone_id = get_id(reg, "LoadZone", _get_zone_name(d["zone"]))
 
         bus = stage(PC.ACBus)
