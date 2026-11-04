@@ -112,6 +112,14 @@ function parse_file(
     return pm_data
 end
 
+"""System MVA base, rejected unless positive: every zero-base fallback (generator MBASE,
+transformer SBASE) substitutes it, so a zero here would reach components as a zero base."""
+function _checked_base_mva(base_mva::Real)
+    base_mva > 0 ||
+        throw(IS.InvalidValue("System base power must be positive, got $base_mva"))
+    return Float64(base_mva)
+end
+
 """
 Runs various data quality checks on a PowerModels data dictionary.
 Applies modifications in some cases.  Reports modified component ids.

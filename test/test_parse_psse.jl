@@ -638,3 +638,44 @@ end
         end
     end
 end
+
+@testset "Non-positive system base power is rejected (issue #18)" begin
+    raw = read(joinpath(@__DIR__, "modified_14bus_system.raw"), String)
+    for sbase in ("0.0", "-100.0")
+        bad = replace(raw, "0,   100.00, 33" => "0, $sbase, 33"; count = 1)
+        @test_throws PowerFlowFileParser.IS.InvalidValue parse_file(
+            IOBuffer(bad);
+            filetype = "raw",
+        )
+    end
+    m = read(joinpath(@__DIR__, "fixtures", "matpower_cost_units.m"), String)
+    bad_m = replace(m, r"mpc.baseMVA *= *[0-9.]+" => "mpc.baseMVA = 0")
+    @test_throws PowerFlowFileParser.IS.InvalidValue parse_file(
+        IOBuffer(bad_m);
+        filetype = "m",
+    )
+    # A zero generator MBASE still falls back to the system base; a negative one is rejected.
+    @test PowerFlowFileParser._device_base_power(Dict("mbase" => 0.0), "g", 100.0) == 100.0
+    @test_throws PowerFlowFileParser.IS.InvalidValue PowerFlowFileParser._device_base_power(
+        Dict("mbase" => -50.0), "g", 100.0)
+end
+
+@testset "Negative 3W winding-pair SBASE is rejected with the transformer's buses" begin
+    raw = read(joinpath(PSSE_RAW_DIR, "case6_3w.raw"), String)
+    line = " 0.00000E+0, 2.00000E-4,   100.00, 0.00000E+0, 2.00000E-4,   100.00, 0.00000E+0, 2.00000E-4,   100.00,0.99999,  -0.0064"
+    @test occursin(line, raw)
+    fields = split(line, ',')
+    for ix in (3, 6, 9)  # SBASE1-2, SBASE2-3, SBASE3-1
+        bad_fields = copy(fields)
+        bad_fields[ix] = "   -50.00"
+        bad = replace(raw, line => join(bad_fields, ','))
+        err = try
+            parse_file(IOBuffer(bad); filetype = "raw")
+            nothing
+        catch e
+            e
+        end
+        @test err isa PowerFlowFileParser.IS.InvalidValue
+        @test occursin("102 -> 104 -> 103", sprint(showerror, err))
+    end
+end

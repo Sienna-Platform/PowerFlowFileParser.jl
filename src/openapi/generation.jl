@@ -84,6 +84,8 @@ generator that states zero — PSCB warns and does the same rather than dividing
 downstream."""
 function _device_base_power(pm_gen::Dict, gen_name::AbstractString, sys_mbase::Float64)
     mbase = pm_gen["mbase"]
+    mbase < 0 &&
+        throw(IS.InvalidValue("Generator $gen_name has negative base power: $mbase"))
     if iszero(mbase)
         @warn "Generator $gen_name has base power equal to zero: $mbase. Changing it to system base: $sys_mbase"
         return sys_mbase
