@@ -99,12 +99,10 @@ end
     @test PFP.get_value(gen, :reactive_power_limits).max ≈ d["qmax"] * base_conversion
     @test PFP.get_value(gen, :base_power) == 50.0
     # ramp_limits (quantity ActivePowerChangeRate, MW/min) belongs to this pass's
-    # power-family quantity set: with no ramp_agc/ramp_10/ramp_30 in `d`,
-    # calculate_ramp_limit falls back to (up = down = abs(pmax)) *without* base_conversion
-    # (`calculate_ramp_limit`'s own documented inconsistency) -- natural_MW = pmax * mbase,
-    # so COMPONENT_BASE's pu = natural_MW / mbase collapses back to plain `pmax`.
-    @test PFP.get_value(gen, :ramp_limits).up ≈ d["pmax"]
-    @test PFP.get_value(gen, :ramp_limits).down ≈ d["pmax"]
+    # power-family quantity set: with no ramp_agc/ramp_10/ramp_30 in `d`, it falls back to
+    # abs(pmax) per minute, which COMPONENT_BASE then states on the device base.
+    @test PFP.get_value(gen, :ramp_limits).up ≈ d["pmax"] * base_conversion
+    @test PFP.get_value(gen, :ramp_limits).down ≈ d["pmax"] * base_conversion
 end
 
 @testset "an out-of-service Matpower generator maps to OFFLINE, an in-service one to ONLINE" begin
@@ -278,13 +276,24 @@ end
           1.0
 end
 
+@testset "MATPOWER ramp_agc is the file's MW/min, on or off the system base" begin
+    pm = PFP.PowerModelsData(joinpath(@__DIR__, "fixtures", "matpower_ramps.m"))
+    sys = PFP.build_openapi_system(pm; power_units = "NATURAL_UNITS")
+    gens = collect(PFP.get_components(sys, "ThermalStandard"))
+    @test sort([PFP.get_value(g, :base_power) for g in gens]) == [50.0, 100.0]
+    for gen in gens
+        @test PFP.get_value(gen, :ramp_limits).up ≈ 5.0
+        @test PFP.get_value(gen, :ramp_limits).down ≈ 5.0
+    end
+end
+
 @testset "calculate_ramp_limit prefers ramp_agc, then ramp_10, then ramp_30, then pmax" begin
     @test PFP.calculate_ramp_limit(Dict("ramp_agc" => 1.0, "pmax" => 9.0), "g") ==
           (up = 1.0, down = 1.0)
     @test PFP.calculate_ramp_limit(Dict("ramp_10" => 2.0, "pmax" => 9.0), "g") ==
-          (up = 2.0, down = 2.0)
+          (up = 0.2, down = 0.2)
     @test PFP.calculate_ramp_limit(Dict("ramp_30" => 3.0, "pmax" => 9.0), "g") ==
-          (up = 3.0, down = 3.0)
+          (up = 0.1, down = 0.1)
     @test PFP.calculate_ramp_limit(Dict("pmax" => 9.0), "g") == (up = 9.0, down = 9.0)
     @test isnothing(
         (@test_logs (:warn, r"Returning nothing") PFP.calculate_ramp_limit(
