@@ -1800,16 +1800,16 @@ function _correct_nothing_values!(data::Dict)
 
     if haskey(data, "TRANSFORMER")
         for transformer in data["TRANSFORMER"]
-            transformer_bus = bus_lookup[transformer["I"]]
             for base_id in ["SBASE1-2", "SBASE2-3", "SBASE3-1"]
                 if haskey(transformer, base_id) && transformer[base_id] === nothing
                     transformer[base_id] = sbase
                 end
             end
-            for winding_id in ["WINDV1", "WINDV2", "WINDV3"]
+            for (winding_id, bus_id) in
+                (("WINDV1", "I"), ("WINDV2", "J"), ("WINDV3", "K"))
                 if haskey(transformer, winding_id) && transformer[winding_id] === nothing
                     if transformer["CW"] == 2
-                        transformer[winding_id] = transformer_bus["BASKV"]
+                        transformer[winding_id] = bus_lookup[transformer[bus_id]]["BASKV"]
                     else
                         transformer[winding_id] = 1.0
                     end
