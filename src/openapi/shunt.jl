@@ -185,7 +185,7 @@ function _facts_control_mode(code::Integer)
 end
 
 """FACTS control device, as its STATCOM-simplified shunt link. A series link
-(`tbus != 0`) becomes a `SeriesCompensator` when it is bypassed (MODE 2) or at constant
+(`tbus != 0`) becomes a `SeriesAdmittance` when it is bypassed (MODE 2) or at constant
 impedance (MODE 3); other series modes are warned about and dropped."""
 function make_facts!(
     sys::OpenAPISystem,
@@ -230,7 +230,7 @@ function _make_facts_series_link!(
     bypassed = get(FACTS_SERIES_COMPENSATOR_BYPASSED, mode, nothing)
     if isnothing(bypassed)
         mode == 0 ||
-            @warn "Series link of FACTS $name in MODE $mode is not supported; dropping it"
+            @warn "Series link of FACTS $name in MODE $mode is not supported; dropping it. A controlled series link awaits a UPFC type"
         return
     end
     sys_mbase = get_base_power(sys)

@@ -248,7 +248,7 @@ end
     @test_throws IS.DataFormatError PFP._facts_control_mode(5)
 end
 
-@testset "FACTS series link: MODE 2 is BYPASSED, MODE 3 FIXED at SET1/SET2, MODE 1 dropped" begin
+@testset "FACTS series link: MODE 2 is bypassed, MODE 3 fixed at SET1/SET2, MODE 1 dropped" begin
     raw = read(joinpath(@__DIR__, "modified_14bus_system.raw"), String)
     record = "'FACTS      1',   108,     0,1,"
     series = "     0.000, 0.05000,  100.0,   1,   0.00000,   0.00000,"
@@ -263,7 +263,7 @@ end
             sys =
                 Test.@test_logs (:warn, r"MODE 1 is not supported") match_mode = :any PFP.build_openapi_system(
                     PFP.PowerModelsData(path))
-            @test isempty(PFP.get_components(sys, "SeriesCompensator"))
+            @test isempty(PFP.get_components(sys, "SeriesAdmittance"))
             continue
         end
         sys = PFP.build_openapi_system(PFP.PowerModelsData(path))

@@ -438,7 +438,7 @@ end
     )
 end
 
-@testset "a PSS/E branch with R = 0, X < 0 and no charging becomes a FIXED SeriesCompensator" begin
+@testset "a PSS/E branch with R = 0, X < 0 and no charging becomes a SeriesAdmittance" begin
     raw = read(joinpath(@__DIR__, "modified_14bus_system.raw"), String)
     record = "   107,   108,'1 ', 7.98000E-3, 5.01000E-2,   0.00056,"
     @test occursin(record, raw)
@@ -464,7 +464,7 @@ end
             @test_throws ErrorException _component_between(sys, "Line", 107, 108)
         else
             @test PFP.get_value(branch, :b).from + PFP.get_value(branch, :b).to ≈ 0.00056
-            @test isempty(PFP.get_components(sys, "SeriesCompensator"))
+            @test isempty(PFP.get_components(sys, "SeriesAdmittance"))
         end
     end
 end
@@ -703,7 +703,7 @@ end
         "g_fr" => 0.0,
         "g_to" => 0.0,
     )
-    @test PFP._branch_type_psse(d, "capacitor") == :series_compensator
+    @test PFP._branch_type_psse(d, "capacitor") == :series_admittance
     @test PFP._branch_type_psse(merge(d, Dict("br_r" => 0.01)), "lossy") == :line
     @test (@test_logs (:warn, r"negative reactance") PFP._branch_type_psse(
         merge(d, Dict("b_fr" => 0.001)), "charged")) == :line
