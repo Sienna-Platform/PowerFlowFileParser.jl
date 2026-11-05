@@ -203,3 +203,27 @@ end
     @test t3w["RMA1"] == 1.1002
     @test t3w["CONT1"] == 110
 end
+
+@testset "blank WINDVn defaults to its own winding's bus base voltage when CW=2" begin
+    function default_windings(cw)
+        transformer = Dict{String, Any}(
+            "I" => 1, "J" => 2, "K" => 3, "CW" => cw,
+            "WINDV1" => nothing, "WINDV2" => nothing, "WINDV3" => nothing,
+        )
+        PowerFlowFileParser._correct_nothing_values!(
+            Dict{String, Any}(
+                "CASE IDENTIFICATION" => [Dict{String, Any}("SBASE" => 100.0)],
+                "BUS" => [
+                    Dict{String, Any}("I" => 1, "BASKV" => 345.0),
+                    Dict{String, Any}("I" => 2, "BASKV" => 138.0),
+                    Dict{String, Any}("I" => 3, "BASKV" => 13.8),
+                ],
+                "TRANSFORMER" => [transformer],
+            ),
+        )
+        return [transformer["WINDV$n"] for n in 1:3]
+    end
+    @test default_windings(2) == [345.0, 138.0, 13.8]
+    @test default_windings(1) == [1.0, 1.0, 1.0]
+    @test default_windings(3) == [1.0, 1.0, 1.0]
+end
