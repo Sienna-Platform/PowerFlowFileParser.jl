@@ -1096,15 +1096,16 @@ end
 # Base Power has a different key in sub_data depending on the number of windings.
 # CM=2 gives MAG1/MAG2 on SBASE1-2 and winding-one nominal voltage NOMV1; the series
 # impedance is on winding-one bus base voltage, so rebase the admittance by
-# (V_bus/NOMV1)^2. NOMV1 = 0 means NOMV1 is the bus base voltage: no correction.
+# (V_bus/NOMV1)^2. No correction if NOMV1 = 0 (it is then the bus base voltage) or
+# BASKV = 0 (PSS/E's default: there is no bus base to rebase onto).
 function _transformer_mag_pu_conversion(
     transformer::Dict,
     sub_data::Dict,
     base_power::Float64,
     bus_kv::Float64,
 )
-    voltage_factor =
-        iszero(transformer["NOMV1"]) ? 1.0 : (bus_kv / transformer["NOMV1"])^2
+    nomv1 = transformer["NOMV1"]
+    voltage_factor = (iszero(nomv1) || iszero(bus_kv)) ? 1.0 : (bus_kv / nomv1)^2
     if isapprox(transformer["MAG1"], 0.0; atol = ZERO_IMPEDANCE_REACTANCE_THRESHOLD) &&
        isapprox(transformer["MAG2"], 0.0; atol = ZERO_IMPEDANCE_REACTANCE_THRESHOLD)
         @warn "Transformer $(_transformer_bus_label(sub_data)) has zero MAG1 and MAG2 values."
@@ -1796,7 +1797,8 @@ function _psse2pm_transformer!(pm_data::Dict, pti_data::Dict, import_all::Bool, 
                     bus_base_kv = _get_bus_value(winding_buses[i], "base_kv", pm_data)
                     transformer["CW"] == 2 && return 1.0 / bus_base_kv
                     @assert transformer["CW"] == 3
-                    return sub_data["base_voltage_$(WINDING_NAMES[i])"] / bus_base_kv
+                    nomv = transformer["NOMV$i"]
+                    return iszero(nomv) ? 1.0 : nomv / bus_base_kv
                 end
                 for (i, windv) in enumerate((windv1, windv2, windv3))
                     sub_data["$(WINDING_NAMES[i])_turns_ratio"] =
