@@ -221,7 +221,7 @@ function read_loads!(sys::OpenAPISystem, data::Dict; kwargs...)
             push!(
                 get!(
                     off_area_load_ids,
-                    get_id(reg, "Area", _get_area_name(load_area)),
+                    _ensure_area!(sys, data, _get_area_name(load_area), _get_area_name),
                     Int[],
                 ),
                 load_id,
