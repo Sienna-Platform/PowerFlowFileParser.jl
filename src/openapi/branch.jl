@@ -459,7 +459,8 @@ end
 """One end's line charging (`g + jb`, system-base pu) of a branch that became a
 `GenericArcImpedance`, as a `FixedAdmittance` at that end's bus. Nothing is built for a
 zero admittance. The shunt is available exactly when the branch is: an out-of-service
-branch has no energized charging at either end. It names the source branch in `ext`. Returns the shunt's name, or `nothing`."""
+branch has no energized charging at either end. It names the source branch in `ext`.
+Returns the shunt's name, or `nothing`."""
 function _make_charging_shunt!(
     sys::OpenAPISystem,
     reg::IdRegistry,
