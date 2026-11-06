@@ -652,8 +652,8 @@ end
         ),
     )
 
-    # An integer rating from JSON input is scaled like a float; with the to bus isolated,
-    # the branch and the to shunt are unavailable while the from shunt stays in service.
+    # An integer rating from JSON input is scaled like a float. With the to bus isolated
+    # the branch is out of service, so neither end's charging is energized.
     charged = merge(d, Dict("b_fr" => 0.001, "b_to" => 0.002, "rate_a" => 2))
     Test.@test_logs (:warn, r"negative resistance") PFP.make_generic_arc_impedance!(
         sys, reg, "g2", charged, PFP.get_bus_id(reg, 1), PFP.get_bus_id(reg, 2), false,
@@ -667,8 +667,29 @@ end
         PFP.get_value(branch, :operational_flow_limit),
         (from_to_min = 0.0, from_to_max = 200.0, to_from_min = 0.0, to_from_max = 200.0),
     )
-    @test PFP.get_value(_charging_shunt(sys, "g2", "from"), :available)
+    @test !PFP.get_value(_charging_shunt(sys, "g2", "from"), :available)
     @test !PFP.get_value(_charging_shunt(sys, "g2", "to"), :available)
+end
+
+@testset "_branch_type_psse and _branch_type_matpower route R < 0 to a GenericArcImpedance" begin
+    d = Dict{String, Any}(
+        "transformer" => false,
+        "br_r" => -0.01,
+        "br_x" => 0.05,
+        "tap" => 1.0,
+        "shift" => 0.0,
+        "b_fr" => 0.0,
+        "b_to" => 0.0,
+        "g_fr" => 0.0,
+        "g_to" => 0.0,
+    )
+    @test PFP._branch_type_psse(d, "negative_r") == :generic_arc_impedance
+    @test PFP._branch_type_matpower(d) == :generic_arc_impedance
+    # A transformer keeps its type whatever the sign of R.
+    @test PFP._branch_type_psse(merge(d, Dict("transformer" => true)), "xfmr") ==
+          :transformer
+    @test PFP._branch_type_matpower(merge(d, Dict("tap" => 1.05))) == :transformer
+    @test PFP._branch_type_psse(merge(d, Dict("br_r" => 0.01)), "lossy") == :line
 end
 
 @testset "_branch_type_psse: only R = 0, X < 0 and no charging is a series compensator" begin
