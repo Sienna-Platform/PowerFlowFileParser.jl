@@ -458,8 +458,9 @@ end
 
 """One end's line charging (`g + jb`, system-base pu) of a branch that became a
 `GenericArcImpedance`, as a `FixedAdmittance` at that end's bus. Nothing is built for a
-zero admittance. The shunt follows the branch status and its own bus's isolation, and
-names the source branch in `ext`. Returns the shunt's name, or `nothing`."""
+zero admittance. The shunt is available exactly when the branch is: an out-of-service
+branch has no energized charging at either end. It names the source branch in `ext`.
+Returns the shunt's name, or `nothing`."""
 function _make_charging_shunt!(
     sys::OpenAPISystem,
     reg::IdRegistry,
@@ -502,8 +503,7 @@ function make_generic_arc_impedance!(
     to_isolated::Bool,
     sys_mbase::Float64,
 )
-    raw_status = d["br_status"] == 1
-    available = _branch_available(raw_status, from_isolated, to_isolated)
+    available = _branch_available(d["br_status"] == 1, from_isolated, to_isolated)
     arc_id = add_arc!(sys, from_id, to_id)
 
     component = stage(PO.GenericArcImpedance)
@@ -526,9 +526,9 @@ function make_generic_arc_impedance!(
         !isnothing,
         [
             _make_charging_shunt!(sys, reg, name, "from", from_id, d["g_fr"], d["b_fr"],
-                raw_status && !from_isolated),
+                available),
             _make_charging_shunt!(sys, reg, name, "to", to_id, d["g_to"], d["b_to"],
-                raw_status && !to_isolated),
+                available),
         ],
     )
     message =
