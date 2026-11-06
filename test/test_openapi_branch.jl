@@ -442,9 +442,13 @@ end
     raw = read(joinpath(@__DIR__, "modified_14bus_system.raw"), String)
     record = "   107,   108,'1 ', 7.98000E-3, 5.01000E-2,   0.00056,"
     @test occursin(record, raw)
-    for (charging, type_name) in (("   0.00000,", "SeriesCompensator"), ("   0.00056,", "Line"))
+    for (charging, type_name) in
+        (("   0.00000,", "SeriesCompensator"), ("   0.00056,", "Line"))
         path = joinpath(mktempdir(), "compensated.raw")
-        write(path, replace(raw, record => "   107,   108,'1 ', 0.00000E+0,-2.00000E-2,$charging"))
+        write(
+            path,
+            replace(raw, record => "   107,   108,'1 ', 0.00000E+0,-2.00000E-2,$charging"),
+        )
         sys = if type_name == "Line"
             Test.@test_logs (:warn, r"represented as a Line with negative reactance") match_mode =
                 :any PFP.build_openapi_system(PFP.PowerModelsData(path))
