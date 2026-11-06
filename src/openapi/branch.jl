@@ -415,9 +415,9 @@ function make_switch_from_zero_impedance_branch!(
     return
 end
 
-"""A series admittance from a branch record: PSS/E treats a non-transformer branch with
+"""A series compensator from a branch record: PSS/E treats a non-transformer branch with
 R = 0 and X < 0 as a series capacitor. Only a record without line charging gets here."""
-function make_series_admittance!(
+function make_series_compensator!(
     sys::OpenAPISystem,
     reg::IdRegistry,
     name::AbstractString,
@@ -442,7 +442,7 @@ end
 
 # `impedance` is system-base pu; `rating` holds natural MVA, with `rating_b`/`rating_c`
 # optional.
-function _add_series_admittance!(
+function _add_series_compensator!(
     sys::OpenAPISystem,
     reg::IdRegistry,
     name::AbstractString,
@@ -456,8 +456,8 @@ function _add_series_admittance!(
     reactive_power_flow = 0.0,
     ext = Dict{String, Any}(),
 )
-    component = stage(PO.SeriesAdmittance)
-    set_value!(component, :id, register!(reg, "SeriesAdmittance", name))
+    component = stage(PO.SeriesCompensator)
+    set_value!(component, :id, register!(reg, "SeriesCompensator", name))
     set_value!(component, :name, name)
     set_value!(component, :available, available)
     set_value!(component, :active_power_flow, active_power_flow, "MW")
@@ -615,9 +615,9 @@ function _branch_type_psse(d::Dict, name::AbstractString)
     # charging, so a record that carries some stays a Line with a negative reactance.
     if !d["transformer"] && iszero(d["br_r"]) && d["br_x"] < 0
         if all(iszero(d[k]) for k in ("b_fr", "b_to", "g_fr", "g_to"))
-            return :series_admittance
+            return :series_compensator
         end
-        @warn "Branch $name has R = 0, X < 0 and line charging; it is represented as a Line with negative reactance and line charging, not as a SeriesAdmittance"
+        @warn "Branch $name has R = 0, X < 0 and line charging; it is represented as a Line with negative reactance and line charging, not as a SeriesCompensator"
     end
     is_transformer = d["transformer"]
     tap = d["tap"]
@@ -806,8 +806,8 @@ function read_branches!(sys::OpenAPISystem, data::Dict; kwargs...)
         elseif branch_type == :switch
             make_switch_from_zero_impedance_branch!(sys, reg, name, d, from_id, to_id,
                 from_isolated, to_isolated, sys_mbase)
-        elseif branch_type == :series_admittance
-            make_series_admittance!(sys, reg, name, d, from_id, to_id, from_isolated,
+        elseif branch_type == :series_compensator
+            make_series_compensator!(sys, reg, name, d, from_id, to_id, from_isolated,
                 to_isolated, sys_mbase)
         elseif branch_type == :generic_arc_impedance
             make_generic_arc_impedance!(sys, reg, name, d, from_id, to_id, from_isolated,

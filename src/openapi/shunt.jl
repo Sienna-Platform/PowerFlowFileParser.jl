@@ -185,7 +185,7 @@ function _facts_control_mode(code::Integer)
 end
 
 """FACTS control device, as its STATCOM-simplified shunt link. A series link
-(`tbus != 0`) becomes a `SeriesAdmittance` when it is bypassed (MODE 2) or at constant
+(`tbus != 0`) becomes a `SeriesCompensator` when it is bypassed (MODE 2) or at constant
 impedance (MODE 3); other series modes are warned about and dropped."""
 function make_facts!(
     sys::OpenAPISystem,

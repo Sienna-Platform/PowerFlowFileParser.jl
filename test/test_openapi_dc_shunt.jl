@@ -263,7 +263,7 @@ end
             sys =
                 Test.@test_logs (:warn, r"MODE 1 is not supported") match_mode = :any PFP.build_openapi_system(
                     PFP.PowerModelsData(path))
-            @test isempty(PFP.get_components(sys, "SeriesAdmittance"))
+            @test isempty(PFP.get_components(sys, "SeriesCompensator"))
             continue
         end
         sys = PFP.build_openapi_system(PFP.PowerModelsData(path))
