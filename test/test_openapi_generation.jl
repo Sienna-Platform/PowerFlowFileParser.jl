@@ -421,7 +421,7 @@ end
     # `_devicebase_classification` today. The guard is checked directly, for the schema
     # that adds a selector without a default.
     @test_throws ErrorException PFP._devicebase_instance_dispatched(
-        "GenericArcImpedance",
+        "UnregisteredType",
         :r,
     )
     @test PFP._devicebase_instance_dispatched("FACTSControlDevice", :voltage_setpoint) ==

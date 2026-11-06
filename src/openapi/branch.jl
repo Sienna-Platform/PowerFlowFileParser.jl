@@ -434,17 +434,63 @@ end
 
 # A bounded `rate_a` (system-base pu) becomes a symmetric natural-unit flow limit; an
 # unbounded one leaves the optional field unset rather than writing `INFINITE_BOUND`.
-function _generic_arc_flow_limit(rating::Float64, sys_mbase::Float64)
+function _generic_arc_flow_limit(rating::Real, sys_mbase::Float64)
     if rating == INFINITE_BOUND
         return nothing
     end
-    max_flow = rating * sys_mbase
-    return (from_to_min = 0.0, from_to_max = max_flow, to_from_min = 0.0,
-        to_from_max = max_flow)
+    limit = (from_to_min = 0.0, from_to_max = rating, to_from_min = 0.0,
+        to_from_max = rating)
+    return _natural_value(limit, sys_mbase)
+end
+
+"""The branch's own `ext` plus its bounded `rate_b`/`rate_c` in natural MVA, which a
+`GenericArcImpedance` has no field for."""
+function _generic_arc_ext(name::AbstractString, d::Dict, sys_mbase::Float64)
+    ext = Dict{String, Any}(get(d, "ext", Dict{String, Any}()))
+    for key in ("rate_b", "rate_c")
+        rating = _get_rating(name, d, key)
+        if !isnothing(rating) && rating != INFINITE_BOUND
+            ext[key] = _natural_value(rating, sys_mbase)
+        end
+    end
+    return ext
+end
+
+"""One end's line charging (`g + jb`, system-base pu) of a branch that became a
+`GenericArcImpedance`, as a `FixedAdmittance` at that end's bus. Nothing is built for a
+zero admittance. The shunt follows the branch status and its own bus's isolation, and
+names the source branch in `ext`. Returns the shunt's name, or `nothing`."""
+function _make_charging_shunt!(
+    sys::OpenAPISystem,
+    reg::IdRegistry,
+    branch_name::AbstractString,
+    end_label::AbstractString,
+    bus_id::Int,
+    g::Real,
+    b::Real,
+    available::Bool,
+)
+    if iszero(g) && iszero(b)
+        return nothing
+    end
+    name = "$branch_name-$end_label-charging"
+    shunt = Dict{String, Any}("status" => available, "gs" => g, "bs" => b)
+    make_fixed_admittance!(sys, reg, name, shunt, bus_id;
+        ext = Dict{String, Any}("source_branch" => String(branch_name)))
+    return name
 end
 
 """A `GenericArcImpedance` from a non-transformer branch with a negative resistance, which
-is not a valid `Line`. `r`/`x` stay system-base pu; `rate_a` becomes the flow limit."""
+is not a valid `Line`. The branch's series `r`/`x` stay system-base pu. The type has no
+shunt elements, so the line charging (`g_fr + j b_fr`, `g_to + j b_to`) goes into a
+`FixedAdmittance` at each end bus — the pi-model split, as reduced-network equivalents are
+usually represented. Taking the branch out of service in a contingency study does not
+remove those shunts.
+
+The type also has no thermal rating: `rate_a` becomes the operational flow limit, symmetric
+in both directions; a bounded `rate_b`/`rate_c` is kept in `ext` (natural MVA); the angle
+limits are dropped.
+"""
 function make_generic_arc_impedance!(
     sys::OpenAPISystem,
     reg::IdRegistry,
@@ -456,9 +502,9 @@ function make_generic_arc_impedance!(
     to_isolated::Bool,
     sys_mbase::Float64,
 )
-    available = _branch_available(d["br_status"] == 1, from_isolated, to_isolated)
+    raw_status = d["br_status"] == 1
+    available = _branch_available(raw_status, from_isolated, to_isolated)
     arc_id = add_arc!(sys, from_id, to_id)
-    @warn "Branch $name has negative resistance $(d["br_r"]); converting to a GenericArcImpedance"
 
     component = stage(PO.GenericArcImpedance)
     set_value!(component, :id, register!(reg, "GenericArcImpedance", name))
@@ -474,7 +520,25 @@ function make_generic_arc_impedance!(
     set_value!(component, :x, d["br_x"], "pu")
     set_value!(component, :base_power, sys_mbase, "MVA")
     add_component!(sys, component)
-    set_component_ext!(sys, component, get(d, "ext", Dict{String, Any}()))
+    set_component_ext!(sys, component, _generic_arc_ext(name, d, sys_mbase))
+
+    shunts = filter(
+        !isnothing,
+        [
+            _make_charging_shunt!(sys, reg, name, "from", from_id, d["g_fr"], d["b_fr"],
+                raw_status && !from_isolated),
+            _make_charging_shunt!(sys, reg, name, "to", to_id, d["g_to"], d["b_to"],
+                raw_status && !to_isolated),
+        ],
+    )
+    message =
+        "Branch $name has negative resistance $(d["br_r"]); converting to a " *
+        "GenericArcImpedance: rate_a becomes operational_flow_limit, rate_b/rate_c " *
+        "are kept in ext and the angle limits are dropped."
+    if !isempty(shunts)
+        message *= " Its line charging is split into FixedAdmittance $(join(shunts, ", "))."
+    end
+    @warn message
     return
 end
 
