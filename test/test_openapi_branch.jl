@@ -438,12 +438,12 @@ end
     )
 end
 
-@testset "a PSS/E branch with R = 0, X < 0 and no charging becomes a SeriesAdmittance" begin
+@testset "a PSS/E branch with R = 0, X < 0 and no charging becomes a SeriesCompensator" begin
     raw = read(joinpath(@__DIR__, "modified_14bus_system.raw"), String)
     record = "   107,   108,'1 ', 7.98000E-3, 5.01000E-2,   0.00056,"
     @test occursin(record, raw)
     for (charging, type_name) in
-        (("   0.00000,", "SeriesAdmittance"), ("   0.00056,", "Line"))
+        (("   0.00000,", "SeriesCompensator"), ("   0.00056,", "Line"))
         path = joinpath(mktempdir(), "compensated.raw")
         write(
             path,
@@ -457,14 +457,14 @@ end
         end
         branch = _component_between(sys, type_name, 107, 108)
         @test PFP.get_value(branch, :x) == -0.02
-        if type_name == "SeriesAdmittance"
+        if type_name == "SeriesCompensator"
             @test PFP.get_value(branch, :bypassed) == false
             @test PFP.get_value(branch, :parameter_units) == "COMPONENT_BASE"
             @test PFP.get_value(branch, :r) == 0.0
             @test_throws ErrorException _component_between(sys, "Line", 107, 108)
         else
             @test PFP.get_value(branch, :b).from + PFP.get_value(branch, :b).to ≈ 0.00056
-            @test isempty(PFP.get_components(sys, "SeriesAdmittance"))
+            @test isempty(PFP.get_components(sys, "SeriesCompensator"))
         end
     end
 end
@@ -568,7 +568,7 @@ end
     @test PFP.get_value(branch, :operational_flow_limit) isa PFP.IC.Absent
 end
 
-@testset "SeriesAdmittance and GenericArcImpedance build under COMPONENT_BASE" begin
+@testset "SeriesCompensator and GenericArcImpedance build under COMPONENT_BASE" begin
     # Both types carry `parameter_units`-discriminated r/x, which the COMPONENT_BASE pass
     # must know to leave alone; their power fields rescale onto the system base.
     raw = _negative_r_raw("  250.00,")
@@ -594,7 +594,7 @@ end
         PFP.get_value(arc, :operational_flow_limit),
         (from_to_min = 0.0, from_to_max = 2.5, to_from_min = 0.0, to_from_max = 2.5),
     )
-    compensator = _component_between(sys, "SeriesAdmittance", 109, 401)
+    compensator = _component_between(sys, "SeriesCompensator", 109, 401)
     @test PFP.get_value(compensator, :power_units) == "COMPONENT_BASE"
     @test PFP.get_value(compensator, :r) == 0.0
     @test PFP.get_value(compensator, :x) == -0.0071
@@ -671,7 +671,7 @@ end
     @test !PFP.get_value(_charging_shunt(sys, "g2", "to"), :available)
 end
 
-@testset "_branch_type_psse: only R = 0, X < 0 and no charging is a series admittance" begin
+@testset "_branch_type_psse: only R = 0, X < 0 and no charging is a series compensator" begin
     d = Dict{String, Any}(
         "transformer" => false,
         "br_r" => 0.0,
@@ -682,7 +682,7 @@ end
         "g_fr" => 0.0,
         "g_to" => 0.0,
     )
-    @test PFP._branch_type_psse(d, "capacitor") == :series_admittance
+    @test PFP._branch_type_psse(d, "capacitor") == :series_compensator
     @test PFP._branch_type_psse(merge(d, Dict("br_r" => 0.01)), "lossy") == :line
     @test (@test_logs (:warn, r"negative reactance") PFP._branch_type_psse(
         merge(d, Dict("b_fr" => 0.001)), "charged")) == :line

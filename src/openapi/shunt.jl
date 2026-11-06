@@ -175,9 +175,9 @@ mapping."""
 const FACTS_CONTROL_MODE_NAMES =
     Dict(0 => "OOS", 1 => "NML", 2 => "BYP", 3 => "NML", 4 => "NML")
 
-# FACTS MODEs whose series link is a `SeriesAdmittance`, mapped to its `bypassed` flag:
+# FACTS MODEs whose series link is a `SeriesCompensator`, mapped to its `bypassed` flag:
 # MODE 2 bypassed, MODE 3 at constant impedance.
-const FACTS_SERIES_ADMITTANCE_BYPASSED = Dict(2 => true, 3 => false)
+const FACTS_SERIES_COMPENSATOR_BYPASSED = Dict(2 => true, 3 => false)
 
 function _facts_control_mode(code::Integer)
     if !haskey(FACTS_CONTROL_MODE_NAMES, code)
@@ -187,7 +187,7 @@ function _facts_control_mode(code::Integer)
 end
 
 """FACTS control device, as its STATCOM-simplified shunt link. A series link
-(`tbus != 0`) becomes a `SeriesAdmittance` when it is bypassed (MODE 2) or at constant
+(`tbus != 0`) becomes a `SeriesCompensator` when it is bypassed (MODE 2) or at constant
 impedance (MODE 3); other series modes are warned about and dropped."""
 function make_facts!(
     sys::OpenAPISystem,
@@ -232,7 +232,7 @@ function _make_facts_series_link!(
     from_id::Int,
 )
     mode = Int(d["control_mode"])
-    bypassed = get(FACTS_SERIES_ADMITTANCE_BYPASSED, mode, nothing)
+    bypassed = get(FACTS_SERIES_COMPENSATOR_BYPASSED, mode, nothing)
     if isnothing(bypassed)
         mode == 0 ||
             @warn "Series link of FACTS $name in MODE $mode is not supported; dropping it. A controlled series link awaits a UPFC type"
@@ -244,7 +244,7 @@ function _make_facts_series_link!(
     imx = d["max_series_current"]
     rating = (rating = iszero(imx) ? INFINITE_BOUND * sys_mbase : imx,)
     to_id = get_bus_id(reg, Int(d["tbus"]))
-    _add_series_admittance!(sys, reg, name, Bool(d["available"]),
+    _add_series_compensator!(sys, reg, name, Bool(d["available"]),
         add_arc!(sys, from_id, to_id), impedance, bypassed, rating, sys_mbase)
     return
 end

@@ -257,15 +257,15 @@ end
             sys =
                 Test.@test_logs (:warn, r"MODE 1 is not supported") match_mode = :any PFP.build_openapi_system(
                     PFP.PowerModelsData(path))
-            @test isempty(PFP.get_components(sys, "SeriesAdmittance"))
+            @test isempty(PFP.get_components(sys, "SeriesCompensator"))
             continue
         end
         sys = PFP.build_openapi_system(PFP.PowerModelsData(path))
-        admittance = only(PFP.get_components(sys, "SeriesAdmittance"))
-        @test PFP.get_value(admittance, :bypassed) == bypassed
-        @test PFP.get_value(admittance, :rating) == 500.0
-        @test PFP.get_value(admittance, :r) == (mode == 3 ? 0.001 : 0.0)
-        @test PFP.get_value(admittance, :x) == (mode == 3 ? -0.02 : 0.0)
+        compensator = only(PFP.get_components(sys, "SeriesCompensator"))
+        @test PFP.get_value(compensator, :bypassed) == bypassed
+        @test PFP.get_value(compensator, :rating) == 500.0
+        @test PFP.get_value(compensator, :r) == (mode == 3 ? 0.001 : 0.0)
+        @test PFP.get_value(compensator, :x) == (mode == 3 ? -0.02 : 0.0)
         @test PFP.get_value(
             only(PFP.get_components(sys, "FACTSControlDevice")),
             :control_mode,
