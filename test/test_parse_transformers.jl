@@ -223,6 +223,18 @@ end
         end
     end
 
+    # Twelve-rating versions keep ratings 4-12 in ext, as lines and 2W transformers do.
+    path = joinpath(PSSE_RAW_DIR, "case25_v35_savnwb.raw")
+    raw = only(
+        t for t in open(PowerFlowFileParser._parse_pti_data, path)["TRANSFORMER"]
+        if t["K"] != 0
+    )
+    ext = only(values(PowerFlowFileParser.parse_file(path)["3w_transformer"]))["ext"]
+    for winding in 1:3, rating in 4:12
+        key = "RATE$winding$rating"
+        @test ext[key] == raw[key]
+    end
+
     # (rating, rating_b, rating_c) on each winding's own circuit.
     function winding_ratings(file)
         pm = PowerFlowFileParser.PowerModelsData(joinpath(PSSE_RAW_DIR, file))
