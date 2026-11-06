@@ -391,3 +391,13 @@ end
     @test length(PFP.PC.get_components(doc, "TwoTerminalLCCLine")) == 1
     PFP.PC.validate_document(doc)
 end
+
+@testset "CW=2 or CW=3 on a BASKV=0 bus is an error" begin
+    fixture = "synthetic_v35_transformer_discriminators.raw"
+    raw = read(joinpath(@__DIR__, "fixtures", fixture), String)
+    for record in ("213, 214, 215, '1 ', ", "216, 217, 0, '1 ', "), cw in (2, 3)
+        edited = replace(raw, record * "1, 1, 2," => record * "$cw, 1, 2,")
+        @test edited != raw
+        @test_throws PFP.IS.DataFormatError PFP.parse_psse(IOBuffer(edited))
+    end
+end

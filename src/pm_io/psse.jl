@@ -1176,6 +1176,21 @@ function _psse2pm_transformer!(pm_data::Dict, pti_data::Dict, import_all::Bool, 
                 transformer["CM"] = 1
             end
 
+            # A turns ratio in kV or on NOMV is defined against the winding bus base.
+            if transformer["CW"] != 1
+                for bus in (transformer["I"], transformer["J"], transformer["K"])
+                    if bus != 0 && iszero(_get_bus_value(bus, "base_kv", pm_data))
+                        throw(
+                            IS.DataFormatError(
+                                "Transformer $(_transformer_identity_label(identity)) " *
+                                "circuit '$(identity[4])' has CW=$(transformer["CW"]) " *
+                                "but bus $bus has BASKV=0, so its turns ratio is undefined.",
+                            ),
+                        )
+                    end
+                end
+            end
+
             if transformer["K"] == 0  # Two-winding Transformers
                 sub_data = Dict{String, Any}()
 
