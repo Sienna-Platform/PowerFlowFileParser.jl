@@ -223,11 +223,35 @@ end
         end
     end
 
-    # RATCn = 0 on every winding must not erase the RATAn limits.
-    pm = PowerFlowFileParser.PowerModelsData(joinpath(PSSE_RAW_DIR, "frankenstein_70.raw"))
-    sys = PowerFlowFileParser.build_openapi_system(pm; power_units = "NATURAL_UNITS")
-    circuits = PowerFlowFileParser.get_components(sys, "TransformerCircuit")
-    ratings = [PowerFlowFileParser.get_value(c, :rating) for c in circuits]
-    @test issubset([336.0, 268.0, 84.0], ratings)
-    @test !(PowerFlowFileParser.INFINITE_BOUND in ratings)
+    # (rating, rating_b, rating_c) on each winding's own circuit.
+    function winding_ratings(file)
+        pm = PowerFlowFileParser.PowerModelsData(joinpath(PSSE_RAW_DIR, file))
+        sys = PowerFlowFileParser.build_openapi_system(pm; power_units = "NATURAL_UNITS")
+        circuits = Dict(
+            PowerFlowFileParser.get_value(c, :id) => c for
+            c in PowerFlowFileParser.get_components(sys, "TransformerCircuit")
+        )
+        transformer = only(
+            PowerFlowFileParser.get_components(sys, "ThreeWindingTransformer"),
+        )
+        return [
+            [
+                PowerFlowFileParser.get_value(
+                    circuits[PowerFlowFileParser.get_value(transformer, winding)],
+                    field,
+                ) for field in (:rating, :rating_b, :rating_c)
+            ] for winding in (:primary_circuit, :secondary_circuit, :tertiary_circuit)
+        ]
+    end
+
+    # RATCn = 0 stays unset and must not erase the RATAn and RATBn limits.
+    absent = PowerFlowFileParser.ABSENT
+    @test winding_ratings("frankenstein_70.raw") ==
+          [[336.0, 336.0, absent], [268.0, 268.0, absent], [84.0, 84.0, absent]]
+    # Every rating here is distinct, so a swapped rating or winding can't pass.
+    @test winding_ratings("case25_v35_savnwb.raw") == [
+        [1200.0, 1202.12, 1203.13],
+        [1250.0, 1252.12, 1253.13],
+        [1280.0, 1282.12, 1283.13],
+    ]
 end
