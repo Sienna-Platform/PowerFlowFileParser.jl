@@ -469,6 +469,208 @@ end
     end
 end
 
+# The 14-bus fixture's 107-108 line, with R negated, RATEB/RATEC set and GI non-zero so
+# both line-charging ends carry an admittance. The from end sees GI + j B/2, the to end
+# j B/2.
+const NEGATIVE_R_RECORD = "   107,   108,'1 ', 7.98000E-3, 5.01000E-2,   0.00056,    0.00,    0.00,    0.00,  0.00000,"
+const NEGATIVE_R_FROM_Y = (real = 0.001 * 100.0, imag = 0.00056 / 2 * 100.0)
+const NEGATIVE_R_TO_Y = (real = 0.0, imag = 0.00056 / 2 * 100.0)
+
+function _negative_r_raw(rate_a::AbstractString)
+    raw = read_fixture(FOURTEEN_BUS_FIXTURE)
+    @test occursin(NEGATIVE_R_RECORD, raw)
+    return replace(
+        raw,
+        NEGATIVE_R_RECORD => "   107,   108,'1 ',-7.98000E-3, 5.01000E-2,   0.00056,$rate_a  300.00,  350.00,  0.00100,",
+    )
+end
+
+function _write_negative_r_raw(rate_a::AbstractString)
+    path = joinpath(mktempdir(), "negative_r.raw")
+    write(path, _negative_r_raw(rate_a))
+    return path
+end
+
+function _charging_shunt(sys, branch_name::AbstractString, end_label::AbstractString)
+    return only(
+        c for c in PFP.get_components(sys, "FixedAdmittance") if
+        PFP.get_value(c, :name) == "$branch_name-$end_label-charging"
+    )
+end
+
+@testset "a branch with R < 0 becomes a GenericArcImpedance with charging shunts" begin
+    # `correct_thermal_limits!` replaces a zero RATEA with an impedance-derived rating, so
+    # a flow limit is present either way; only its value differs.
+    for (rate_a, expected_limit) in
+        (("    0.00,", :impedance_derived), ("  250.00,", 250.0))
+        path = _write_negative_r_raw(rate_a)
+        sys = Test.@test_logs (
+            :warn,
+            r"negative resistance.*split into FixedAdmittance .*-from-charging, .*-to-charging",
+        ) match_mode = :any PFP.build_openapi_system(PFP.PowerModelsData(path))
+        branch = _component_between(sys, "GenericArcImpedance", 107, 108)
+        name = PFP.get_value(branch, :name)
+        @test endswith(name, "-i_1")
+        @test PFP.get_value(branch, :available)
+        @test PFP.get_value(branch, :r) == -0.00798
+        @test PFP.get_value(branch, :x) == 0.0501
+        @test PFP.get_value(branch, :parameter_units) == "COMPONENT_BASE"
+        @test PFP.get_value(branch, :base_power) == 100.0
+        @test PFP.get_value(branch, :active_power_flow) == 0.0
+        @test PFP.get_value(branch, :reactive_power_flow) == 0.0
+        limit = PFP.get_value(branch, :operational_flow_limit)
+        if expected_limit == :impedance_derived
+            @test limit.from_to_max > 0.0
+            @test _matches_nt(
+                limit,
+                (from_to_min = 0.0, to_from_min = 0.0, to_from_max = limit.from_to_max),
+            )
+        else
+            @test _matches_nt(
+                limit,
+                (from_to_min = 0.0, from_to_max = expected_limit,
+                    to_from_min = 0.0, to_from_max = expected_limit),
+            )
+        end
+        # rate_b/rate_c have no field on the type and are kept in ext, in MVA, beside the
+        # branch's own LEN.
+        ext = PFP.get_ext(sys, PFP.get_value(branch, :id))
+        @test ext["rate_b"] == 300.0
+        @test ext["rate_c"] == 350.0
+        @test ext["LEN"] == 0.0
+        @test_throws ErrorException _component_between(sys, "Line", 107, 108)
+
+        # The line charging lands on one FixedAdmittance per end bus, scaled to MVAr the way
+        # the fixed-shunt reader does, and names its source branch.
+        reg = PFP.get_registry(sys)
+        for (end_label, bus_number, y) in
+            (("from", 107, NEGATIVE_R_FROM_Y), ("to", 108, NEGATIVE_R_TO_Y))
+            shunt = _charging_shunt(sys, name, end_label)
+            @test PFP.get_value(shunt, :available)
+            @test PFP.get_value(shunt, :bus) == PFP.get_bus_id(reg, bus_number)
+            @test PFP.get_value(shunt, :admittance_units) == "COMPONENT_MVAR"
+            @test PFP.get_value(shunt, :base_power) == 100.0
+            @test _matches_nt(PFP.get_value(shunt, :y), y)
+            @test PFP.get_ext(sys, PFP.get_value(shunt, :id)) ==
+                  Dict{String, Any}("source_branch" => name)
+        end
+        @test isfile(PFP.to_json(sys, joinpath(mktempdir(), "negative_r.json")))
+    end
+end
+
+@testset "a GenericArcImpedance with an uncorrected zero RATEA has no flow limit" begin
+    path = _write_negative_r_raw("    0.00,")
+    sys =
+        Test.@test_logs (:warn, r"negative resistance") match_mode = :any PFP.build_openapi_system(
+            PFP.PowerModelsData(path; correct_branch_rating = false),
+        )
+    branch = _component_between(sys, "GenericArcImpedance", 107, 108)
+    @test PFP.get_value(branch, :operational_flow_limit) isa PFP.IC.Absent
+end
+
+@testset "SeriesAdmittance and GenericArcImpedance build under COMPONENT_BASE" begin
+    # Both types carry `parameter_units`-discriminated r/x, which the COMPONENT_BASE pass
+    # must know to leave alone; their power fields rescale onto the system base.
+    raw = _negative_r_raw("  250.00,")
+    record = "   109,   401,'1 ', 1.23000E-3, 7.10000E-3,   0.00340,    0.00,"
+    @test occursin(record, raw)
+    path = joinpath(mktempdir(), "component_base.raw")
+    write(
+        path,
+        replace(
+            raw,
+            record => "   109,   401,'1 ', 0.00000E+0,-7.10000E-3,   0.00000,  150.00,",
+        ),
+    )
+    sys =
+        Test.@test_logs (:warn, r"negative resistance") match_mode = :any PFP.build_openapi_system(
+            PFP.PowerModelsData(path); power_units = "COMPONENT_BASE",
+        )
+    arc = _component_between(sys, "GenericArcImpedance", 107, 108)
+    @test PFP.get_value(arc, :power_units) == "COMPONENT_BASE"
+    @test PFP.get_value(arc, :r) == -0.00798
+    @test PFP.get_value(arc, :x) == 0.0501
+    @test _matches_nt(
+        PFP.get_value(arc, :operational_flow_limit),
+        (from_to_min = 0.0, from_to_max = 2.5, to_from_min = 0.0, to_from_max = 2.5),
+    )
+    compensator = _component_between(sys, "SeriesAdmittance", 109, 401)
+    @test PFP.get_value(compensator, :power_units) == "COMPONENT_BASE"
+    @test PFP.get_value(compensator, :r) == 0.0
+    @test PFP.get_value(compensator, :x) == -0.0071
+    @test PFP.get_value(compensator, :rating) ≈ 1.5
+end
+
+@testset "make_generic_arc_impedance! leaves the flow limit unset without a rating" begin
+    sys = PFP.OpenAPISystem(100.0)
+    reg = PFP.get_registry(sys)
+    _register_bus!(sys, 1, "b1")
+    _register_bus!(sys, 2, "b2")
+    # Only the to end carries charging, so only one shunt is built; a rate_b of 1.5 (pu)
+    # lands in ext as MVA beside the branch's own ext.
+    d = Dict{String, Any}(
+        "br_r" => -0.02, "br_x" => 0.1, "br_status" => 1, "pf" => 0.5, "qf" => -0.1,
+        "g_fr" => 0.0, "b_fr" => 0.0, "g_to" => 0.0, "b_to" => 0.004, "rate_b" => 1.5,
+        "ext" => Dict{String, Any}("LEN" => 3.0),
+    )
+    Test.@test_logs (:warn, r"split into FixedAdmittance g1-to-charging\.$") PFP.make_generic_arc_impedance!(
+        sys, reg, "g1", d, PFP.get_bus_id(reg, 1), PFP.get_bus_id(reg, 2), false, false,
+        100.0)
+    branch = only(PFP.get_components(sys, "GenericArcImpedance"))
+    @test PFP.get_value(branch, :operational_flow_limit) isa PFP.IC.Absent
+    @test PFP.get_value(branch, :r) == -0.02
+    @test PFP.get_value(branch, :x) == 0.1
+    @test PFP.get_value(branch, :active_power_flow) == 50.0
+    @test PFP.get_value(branch, :reactive_power_flow) == -10.0
+    @test PFP.get_value(branch, :available)
+    @test PFP.get_ext(sys, PFP.get_value(branch, :id)) ==
+          Dict{String, Any}("LEN" => 3.0, "rate_b" => 150.0)
+    shunt = only(PFP.get_components(sys, "FixedAdmittance"))
+    @test PFP.get_value(shunt, :name) == "g1-to-charging"
+    @test PFP.get_value(shunt, :bus) == PFP.get_bus_id(reg, 2)
+    @test _matches_nt(PFP.get_value(shunt, :y), (real = 0.0, imag = 0.4))
+end
+
+@testset "make_generic_arc_impedance! skips the shunts of an uncharged branch and follows isolation" begin
+    sys = PFP.OpenAPISystem(100.0)
+    reg = PFP.get_registry(sys)
+    _register_bus!(sys, 1, "b1")
+    _register_bus!(sys, 2, "b2")
+    d = Dict{String, Any}(
+        "br_r" => -0.02, "br_x" => 0.1, "br_status" => 1,
+        "g_fr" => 0.0, "b_fr" => 0.0, "g_to" => 0.0, "b_to" => 0.0,
+    )
+    Test.@test_logs (:warn, r"angle limits are dropped\.$") PFP.make_generic_arc_impedance!(
+        sys, reg, "g1", d, PFP.get_bus_id(reg, 1), PFP.get_bus_id(reg, 2), false, false,
+        100.0)
+    @test isempty(PFP.get_components(sys, "FixedAdmittance"))
+    @test isempty(
+        PFP.get_ext(
+            sys,
+            PFP.get_value(
+                only(PFP.get_components(sys, "GenericArcImpedance")), :id),
+        ),
+    )
+
+    # An integer rating from JSON input is scaled like a float; with the to bus isolated,
+    # the branch and the to shunt are unavailable while the from shunt stays in service.
+    charged = merge(d, Dict("b_fr" => 0.001, "b_to" => 0.002, "rate_a" => 2))
+    Test.@test_logs (:warn, r"negative resistance") PFP.make_generic_arc_impedance!(
+        sys, reg, "g2", charged, PFP.get_bus_id(reg, 1), PFP.get_bus_id(reg, 2), false,
+        true, 100.0)
+    branch = only(
+        c for c in PFP.get_components(sys, "GenericArcImpedance") if
+        PFP.get_value(c, :name) == "g2"
+    )
+    @test !PFP.get_value(branch, :available)
+    @test _matches_nt(
+        PFP.get_value(branch, :operational_flow_limit),
+        (from_to_min = 0.0, from_to_max = 200.0, to_from_min = 0.0, to_from_max = 200.0),
+    )
+    @test PFP.get_value(_charging_shunt(sys, "g2", "from"), :available)
+    @test !PFP.get_value(_charging_shunt(sys, "g2", "to"), :available)
+end
+
 @testset "_branch_type_psse: only R = 0, X < 0 and no charging is a series admittance" begin
     d = Dict{String, Any}(
         "transformer" => false,

@@ -432,6 +432,116 @@ function _add_series_admittance!(
     return
 end
 
+# A bounded `rate_a` (system-base pu) becomes a symmetric natural-unit flow limit; an
+# unbounded one leaves the optional field unset rather than writing `INFINITE_BOUND`.
+function _generic_arc_flow_limit(rating::Real, sys_mbase::Float64)
+    if rating == INFINITE_BOUND
+        return nothing
+    end
+    limit = (from_to_min = 0.0, from_to_max = rating, to_from_min = 0.0,
+        to_from_max = rating)
+    return _natural_value(limit, sys_mbase)
+end
+
+"""The branch's own `ext` plus its bounded `rate_b`/`rate_c` in natural MVA, which a
+`GenericArcImpedance` has no field for."""
+function _generic_arc_ext(name::AbstractString, d::Dict, sys_mbase::Float64)
+    ext = Dict{String, Any}(get(d, "ext", Dict{String, Any}()))
+    for key in ("rate_b", "rate_c")
+        rating = _get_rating(name, d, key)
+        if !isnothing(rating) && rating != INFINITE_BOUND
+            ext[key] = _natural_value(rating, sys_mbase)
+        end
+    end
+    return ext
+end
+
+"""One end's line charging (`g + jb`, system-base pu) of a branch that became a
+`GenericArcImpedance`, as a `FixedAdmittance` at that end's bus. Nothing is built for a
+zero admittance. The shunt follows the branch status and its own bus's isolation, and
+names the source branch in `ext`. Returns the shunt's name, or `nothing`."""
+function _make_charging_shunt!(
+    sys::OpenAPISystem,
+    reg::IdRegistry,
+    branch_name::AbstractString,
+    end_label::AbstractString,
+    bus_id::Int,
+    g::Real,
+    b::Real,
+    available::Bool,
+)
+    if iszero(g) && iszero(b)
+        return nothing
+    end
+    name = "$branch_name-$end_label-charging"
+    shunt = Dict{String, Any}("status" => available, "gs" => g, "bs" => b)
+    make_fixed_admittance!(sys, reg, name, shunt, bus_id;
+        ext = Dict{String, Any}("source_branch" => String(branch_name)))
+    return name
+end
+
+"""A `GenericArcImpedance` from a non-transformer branch with a negative resistance, which
+is not a valid `Line`. The branch's series `r`/`x` stay system-base pu. The type has no
+shunt elements, so the line charging (`g_fr + j b_fr`, `g_to + j b_to`) goes into a
+`FixedAdmittance` at each end bus — the pi-model split, as reduced-network equivalents are
+usually represented. Taking the branch out of service in a contingency study does not
+remove those shunts.
+
+The type also has no thermal rating: `rate_a` becomes the operational flow limit, symmetric
+in both directions; a bounded `rate_b`/`rate_c` is kept in `ext` (natural MVA); the angle
+limits are dropped.
+"""
+function make_generic_arc_impedance!(
+    sys::OpenAPISystem,
+    reg::IdRegistry,
+    name::AbstractString,
+    d::Dict,
+    from_id::Int,
+    to_id::Int,
+    from_isolated::Bool,
+    to_isolated::Bool,
+    sys_mbase::Float64,
+)
+    raw_status = d["br_status"] == 1
+    available = _branch_available(raw_status, from_isolated, to_isolated)
+    arc_id = add_arc!(sys, from_id, to_id)
+
+    component = stage(PO.GenericArcImpedance)
+    set_value!(component, :id, register!(reg, "GenericArcImpedance", name))
+    set_value!(component, :name, name)
+    set_value!(component, :available, available)
+    set_value!(component, :active_power_flow, get(d, "pf", 0.0) * sys_mbase, "MW")
+    set_value!(component, :reactive_power_flow, get(d, "qf", 0.0) * sys_mbase, "MVAr")
+    set_optional_value!(component, :operational_flow_limit,
+        _generic_arc_flow_limit(_get_rating(name, d, "rate_a"), sys_mbase), "MW")
+    set_value!(component, :arc, arc_id)
+    set_value!(component, :parameter_units, "COMPONENT_BASE")
+    set_value!(component, :r, d["br_r"], "pu")
+    set_value!(component, :x, d["br_x"], "pu")
+    set_value!(component, :base_power, sys_mbase, "MVA")
+    add_component!(sys, component)
+    set_component_ext!(sys, component, _generic_arc_ext(name, d, sys_mbase))
+
+    shunts = filter(
+        !isnothing,
+        [
+            _make_charging_shunt!(sys, reg, name, "from", from_id, d["g_fr"], d["b_fr"],
+                raw_status && !from_isolated),
+            _make_charging_shunt!(sys, reg, name, "to", to_id, d["g_to"], d["b_to"],
+                raw_status && !to_isolated),
+        ],
+    )
+    message =
+        "Branch $name has negative resistance $(d["br_r"]); converting to a " *
+        "GenericArcImpedance: rate_a becomes operational_flow_limit, rate_b/rate_c " *
+        "are kept in ext and the angle limits are dropped."
+    if !isempty(shunts)
+        message *= " Its line charging is split into FixedAdmittance $(join(shunts, ", "))."
+    end
+    @warn message
+    return
+end
+
 function _branch_type_matpower(d::Dict)
     tap = d["tap"]
     shift = d["shift"]
@@ -442,6 +552,9 @@ function _branch_type_matpower(d::Dict)
     if is_transformer
         return :transformer
     end
+    if d["br_r"] < 0
+        return :generic_arc_impedance
+    end
     return :line
 end
 
@@ -450,6 +563,10 @@ function _branch_type_psse(d::Dict, name::AbstractString)
     # with no impedance is the modeled switching device this shortcut is looking for.
     if !d["transformer"] && iszero(d["br_r"]) && iszero(d["br_x"])
         return :switch
+    end
+    # A negative series resistance is not a valid Line; it is kept as a generic impedance.
+    if !d["transformer"] && d["br_r"] < 0
+        return :generic_arc_impedance
     end
     # PSS/E's series compensation: R = 0 and X < 0. A SeriesAdmittance has no line
     # charging, so a record that carries some stays a Line with a negative reactance.
@@ -542,8 +659,8 @@ function make_3w_transformer!(
         rating = _get_rating(name, d, "rating_primary"), rating_b = nothing,
         rating_c = nothing,
         base_power = d["base_power_12"],
-        base_voltage_primary = d["base_voltage_primary"],
-        base_voltage_secondary = d["base_voltage_primary"],
+        base_voltage_primary = _base_voltage_or_nothing(d["base_voltage_primary"]),
+        base_voltage_secondary = _base_voltage_or_nothing(d["base_voltage_primary"]),
         active_power_flow = d["active_power_flow_primary"],
         reactive_power_flow = d["reactive_power_flow_primary"],
     )
@@ -556,8 +673,8 @@ function make_3w_transformer!(
         rating = _get_rating(name, d, "rating_secondary"), rating_b = nothing,
         rating_c = nothing,
         base_power = d["base_power_23"],
-        base_voltage_primary = d["base_voltage_secondary"],
-        base_voltage_secondary = d["base_voltage_secondary"],
+        base_voltage_primary = _base_voltage_or_nothing(d["base_voltage_secondary"]),
+        base_voltage_secondary = _base_voltage_or_nothing(d["base_voltage_secondary"]),
         active_power_flow = d["active_power_flow_secondary"],
         reactive_power_flow = d["reactive_power_flow_secondary"],
     )
@@ -570,8 +687,8 @@ function make_3w_transformer!(
         rating = _get_rating(name, d, "rating_tertiary"), rating_b = nothing,
         rating_c = nothing,
         base_power = d["base_power_31"],
-        base_voltage_primary = d["base_voltage_tertiary"],
-        base_voltage_secondary = d["base_voltage_tertiary"],
+        base_voltage_primary = _base_voltage_or_nothing(d["base_voltage_tertiary"]),
+        base_voltage_secondary = _base_voltage_or_nothing(d["base_voltage_tertiary"]),
         active_power_flow = d["active_power_flow_tertiary"],
         reactive_power_flow = d["reactive_power_flow_tertiary"],
     )
@@ -601,11 +718,12 @@ function make_3w_transformer!(
 end
 
 """
-Create a `Line`, `TwoWindingTransformer`, `DiscreteControlledACBranch`, or
-`SeriesAdmittance` per `data["branch"]` entry. `data["branch"]` carries both
-untransformed lines and 2W transformers — PowerModels represents both as "branch" rows,
-discriminated by `tap`/`shift`/`"transformer"` (MATPOWER) or by zero impedance, R = 0 with
-X < 0, or the `"transformer"` flag (PSS/E).
+Create a `Line`, `TwoWindingTransformer`, `DiscreteControlledACBranch`,
+`SeriesAdmittance`, or `GenericArcImpedance` per `data["branch"]` entry. `data["branch"]`
+carries both untransformed lines and 2W transformers — PowerModels represents both as
+"branch" rows, discriminated by `tap`/`shift`/`"transformer"` (MATPOWER) or by zero
+impedance, R = 0 with X < 0, or the `"transformer"` flag (PSS/E). A non-transformer row
+with R < 0 is a `GenericArcImpedance` for either source.
 """
 function read_branches!(sys::OpenAPISystem, data::Dict; kwargs...)
     if !haskey(data, "branch")
@@ -644,6 +762,9 @@ function read_branches!(sys::OpenAPISystem, data::Dict; kwargs...)
                 from_isolated, to_isolated, sys_mbase)
         elseif branch_type == :series_admittance
             make_series_admittance!(sys, reg, name, d, from_id, to_id, from_isolated,
+                to_isolated, sys_mbase)
+        elseif branch_type == :generic_arc_impedance
+            make_generic_arc_impedance!(sys, reg, name, d, from_id, to_id, from_isolated,
                 to_isolated, sys_mbase)
         elseif branch_type == :transformer
             make_transformer_2w!(sys, reg, name, d, from_id, to_id, from_isolated,

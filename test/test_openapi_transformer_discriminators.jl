@@ -2,9 +2,12 @@
 # `base_power == sys_mbase == 100.0`, so nothing on hand exercised CZ∈{2,3}, CW∈{2,3},
 # CM=2, or a 2W transformer whose device base differs from the system base — exactly the
 # condition under which a completely missing device-base conversion passes silently.
-# `synthetic_v35_transformer_discriminators.raw` covers it: two 2W transformers with
-# SBASE1-2 != the 100 MVA system base, plus a two-terminal DC line with MDC=2
-# (current-controlled, vs. every other fixture's MDC=1).
+# Nor did anything set NOMV1: it is 0.0 in every transformer record in this repo, so
+# `base_voltage_from` always fell back to bus I's base_kv and the winding-one nominal
+# voltage could not affect any base conversion even in principle.
+# `synthetic_v35_transformer_discriminators.raw` covers all of it: 2W and 3W transformers
+# with SBASE1-2 != the 100 MVA system base, NOMV != the bus base_kv, and BASKV = 0, plus
+# a two-terminal DC line with MDC=2 (current-controlled, vs. every other fixture's MDC=1).
 #
 # The discriminator arithmetic below is transcribed from `pm_io/psse.jl`'s
 # `_psse2pm_transformer!` (CZ/CW/CM branches) and `_psse2pm_dcline!` (MDC branch) — the
@@ -16,6 +19,25 @@ const TRANSFORMER_DISCRIMINATOR_FIXTURE =
 
 _transformer_discriminator_pm_data() =
     PFP.PowerModelsData(TRANSFORMER_DISCRIMINATOR_FIXTURE)
+
+_transformer_3w(pm, bus_primary) =
+    only(v for v in values(pm.data["3w_transformer"]) if v["bus_primary"] == bus_primary)
+
+_transformer_3w_component(sys, d) = only(
+    t for t in PFP.get_components(sys, "ThreeWindingTransformer") if
+    PFP.get_value(t, :star_bus) == PFP.get_value(
+        only(
+            b for b in PFP.get_components(sys, "ACBus") if
+            PFP.get_value(b, :number) == d["star_bus"]
+        ),
+        :id,
+    )
+)
+
+_transformer_circuit(sys, t, field) = only(
+    c for c in PFP.get_components(sys, "TransformerCircuit") if
+    PFP.get_value(c, :id) == PFP.get_value(t, field)
+)
 
 @testset "T1 (CZ=2, CW=2, CM=1, SBASE1-2=50 != sys_mbase=100): hand-derived br_r/br_x/g_fr/b_fr/rating" begin
     pm = _transformer_discriminator_pm_data()
@@ -159,6 +181,170 @@ end
     @test PFP.get_value(circuit, :rating) ≈ 64.0
 end
 
+@testset "T3 (CZ=1, CW=1, CM=2, NOMV1=145 != bus_I base_kv=138): NOMV1 rebases only the CM=2 magnetizing admittance" begin
+    pm = _transformer_discriminator_pm_data()
+    data = pm.data
+    sys_mbase = data["baseMVA"]
+
+    d = only(v for v in values(data["branch"]) if v["f_bus"] == 205 && v["t_bus"] == 206)
+    @test d["transformer"]
+    @test d["base_power"] == 40.0
+
+    # T1/T2 both carry NOMV1 = 0.0, as does every transformer in `modified_14bus_system.raw`.
+    # T3 sets NOMV1 = 145.0 against a 138.0 kV bus I. CW=1 is deliberate: it keeps NOMV1 out
+    # of the tap (only CW=3 consults it there), so whatever NOMV1 does is isolated.
+    mva_ratio = d["base_power"] / sys_mbase
+    @test mva_ratio == 0.4
+
+    # CZ=1: impedance is on system MVA base and the winding-one bus voltage base, which is
+    # also the TransformerCircuit's voltage base, so only the power ratio applies; NOMV1
+    # does not enter.
+    @test d["br_r"] ≈ 0.02 * mva_ratio
+    @test d["br_x"] ≈ 0.06 * mva_ratio
+    @test d["br_r"] ≈ 0.008
+    @test d["br_x"] ≈ 0.024
+    # CW=1 scales Zeq by WINDV2^2 = 1.0, so nothing above is disturbed.
+
+    # CM=2: MAG1 (40000.0 W) is no-load loss, MAG2 (0.004 pu) is exciting current, both on
+    # SBASE1-2 and winding-one NOMINAL voltage (NOMV1). Rebasing an admittance from NOMV1 to
+    # the bus base voltage scales it by (V_bus/NOMV1)^2 (issue #49).
+    g_pu = 1e-6 * 40000.0 / d["base_power"]
+    @test g_pu ≈ 0.001
+    b_pu = -sqrt(0.004^2 - g_pu^2)
+    @test b_pu ≈ -0.003872983346207417
+    voltage_factor = (138.0 / 145.0)^2
+    @test voltage_factor ≈ 0.9057788347205707
+    @test d["g_fr"] ≈ g_pu * voltage_factor
+    @test d["b_fr"] ≈ b_pu * voltage_factor
+    @test d["b_fr"] < 0
+
+    # tap: CW=1 -> WINDV1/WINDV2 = 1.0/1.0, with no bus-kV factor and no NOMV1 term.
+    @test d["tap"] == 1.0
+    @test d["rate_a"] ≈ 32.0 / sys_mbase
+
+    sys = PFP.build_openapi_system(pm)
+    two_w = only(
+        t for t in PFP.get_components(sys, "TwoWindingTransformer") if
+        PFP.get_value(t, :name) == "T3_HV-T3_LV-i_1"
+    )
+    circuit = only(
+        c for c in PFP.get_components(sys, "TransformerCircuit") if
+        PFP.get_value(c, :id) == PFP.get_value(two_w, :circuit)
+    )
+    @test PFP.get_value(circuit, :r) == d["br_r"]
+    @test PFP.get_value(circuit, :x) == d["br_x"]
+    magnetizing = PFP.get_value(two_w, :magnetizing_shunt)
+    @test PFP.get_value(magnetizing, :real) == d["g_fr"]
+    @test PFP.get_value(magnetizing, :imag) == d["b_fr"]
+    @test PFP.get_value(circuit, :base_power) == 40.0
+    @test PFP.get_value(circuit, :rating) ≈ d["rate_a"] * sys_mbase
+    @test PFP.get_value(circuit, :rating) ≈ 32.0
+    # r/x and the magnetizing shunt are on bus I's base voltage, so that is the declared
+    # base; NOMV1 survives in ext.
+    @test PFP.get_value(circuit, :base_voltage_primary) == 138.0
+    @test PFP.get_value(circuit, :base_voltage_secondary) == 13.8
+    @test d["ext"]["NOMV1"] == 145.0
+end
+
+@testset "T4 3W (CZ=1, CW=1, CM=2, NOMV1=145 != bus_I base_kv=138): magnetizing admittance rebased to the bus base" begin
+    pm = _transformer_discriminator_pm_data()
+    d = _transformer_3w(pm, 207)
+    @test d["base_power_12"] == 30.0
+
+    # CM=2 on SBASE1-2 and NOMV1: G = 1e-6*MAG1/SBASE1-2, B = -sqrt(MAG2^2 - G^2), then
+    # rebased from NOMV1 to the 138 kV bus base by (138/145)^2.
+    g_pu = 1e-6 * 30000.0 / 30.0
+    b_pu = -sqrt(0.003^2 - g_pu^2)
+    voltage_factor = (138.0 / 145.0)^2
+    @test d["g"] ≈ g_pu * voltage_factor
+    @test d["b"] ≈ b_pu * voltage_factor
+    @test d["b"] < 0
+    @test d["base_voltage_primary"] == 138.0
+    @test d["ext"]["NOMV1"] == 145.0
+
+    # CZ=1, equal winding bases: each pair impedance is 0.01+j0.05 sys pu -> x0.3 device
+    # pu, and every star leg is half that.
+    @test d["r_primary"] ≈ 0.5 * 0.01 * 0.3
+    @test d["x_primary"] ≈ 0.5 * 0.05 * 0.3
+
+    sys = PFP.build_openapi_system(pm)
+    t = _transformer_3w_component(sys, d)
+    primary = _transformer_circuit(sys, t, :primary_circuit)
+    magnetizing = PFP.get_value(t, :magnetizing_shunt)
+    @test PFP.get_value(magnetizing, :real) == d["g"]
+    @test PFP.get_value(magnetizing, :imag) == d["b"]
+    @test PFP.get_value(primary, :base_voltage_primary) == 138.0
+    @test PFP.get_value(primary, :r) == d["r_primary"]
+end
+
+@testset "T5 3W (CZ=1, CW=3, CM=1): WINDV and RMA/RMI are pu of NOMV, rescaled to the bus base" begin
+    pm = _transformer_discriminator_pm_data()
+    d = _transformer_3w(pm, 210)
+
+    # The declared bases are the bus bases, so the nominal voltages reach the turns ratio
+    # only from the record: WINDV * NOMV/V_bus, with NOMV = 0 meaning NOMV = V_bus.
+    @test d["base_voltage_primary"] == 138.0
+    @test d["base_voltage_secondary"] == 13.8
+    @test d["primary_turns_ratio"] ≈ 1.02 * 145.0 / 138.0
+    @test d["secondary_turns_ratio"] ≈ 1.01 * 14.4 / 13.8
+    @test d["tertiary_turns_ratio"] ≈ 0.98
+    @test d["RMA1"] ≈ 1.1 * 145.0 / 138.0
+    @test d["RMI1"] ≈ 0.9 * 145.0 / 138.0
+    @test d["RMA2"] ≈ 1.1 * 14.4 / 13.8
+    @test d["RMI2"] ≈ 0.9 * 14.4 / 13.8
+    @test d["RMA3"] ≈ 1.1
+    @test d["RMI3"] ≈ 0.9
+
+    sys = PFP.build_openapi_system(pm)
+    t = _transformer_3w_component(sys, d)
+    primary = _transformer_circuit(sys, t, :primary_circuit)
+    @test PFP.get_value(primary, :tap) == d["primary_turns_ratio"]
+    @test _matches_nt(
+        PFP.get_value(primary, :tap_ratio_limits),
+        (min = d["RMI1"], max = d["RMA1"]),
+    )
+end
+
+@testset "T6 3W (CM=2, NOMV1=145, BASKV=0): admittance kept, base voltages left unset" begin
+    pm = _transformer_discriminator_pm_data()
+    d = _transformer_3w(pm, 213)
+
+    # No bus base to rebase onto, so the admittance stays as the record gives it.
+    g_pu = 1e-6 * 30000.0 / 30.0
+    @test d["g"] ≈ g_pu
+    @test d["b"] ≈ -sqrt(0.003^2 - g_pu^2)
+
+    sys = PFP.build_openapi_system(pm)
+    t = _transformer_3w_component(sys, d)
+    magnetizing = PFP.get_value(t, :magnetizing_shunt)
+    @test PFP.get_value(magnetizing, :real) == d["g"]
+    @test PFP.get_value(magnetizing, :imag) == d["b"]
+    for field in (:primary_circuit, :secondary_circuit, :tertiary_circuit)
+        circuit = _transformer_circuit(sys, t, field)
+        @test PFP.get_value(circuit, :base_voltage_primary) === PFP.ABSENT
+        @test PFP.get_value(circuit, :base_voltage_secondary) === PFP.ABSENT
+    end
+end
+
+@testset "T7 2W (CM=2, NOMV1=145, BASKV=0): admittance kept, base voltages left unset" begin
+    pm = _transformer_discriminator_pm_data()
+    d = only(
+        v for v in values(pm.data["branch"]) if v["f_bus"] == 216 && v["t_bus"] == 217
+    )
+    g_pu = 1e-6 * 40000.0 / 40.0
+    @test d["g_fr"] ≈ g_pu
+    @test d["b_fr"] ≈ -sqrt(0.004^2 - g_pu^2)
+
+    sys = PFP.build_openapi_system(pm)
+    two_w = only(
+        t for t in PFP.get_components(sys, "TwoWindingTransformer") if
+        PFP.get_value(t, :name) == "T7_HV-T7_LV-i_1"
+    )
+    circuit = _transformer_circuit(sys, two_w, :circuit)
+    @test PFP.get_value(circuit, :base_voltage_primary) === PFP.ABSENT
+    @test PFP.get_value(circuit, :base_voltage_secondary) === PFP.ABSENT
+end
+
 @testset "two-terminal DC line MDC=2 (current-controlled): control_mode=CURRENT, hand-derived power_demand" begin
     pm = _transformer_discriminator_pm_data()
     data = pm.data
@@ -195,12 +381,23 @@ end
     path = joinpath(mktempdir(), "transformer_discriminators.json")
     PFP.to_json(sys, path)
     doc = PFP.PC.read_document(path)
-    # 3, not 2: bus 2 (200 kV) -> bus 3 (138 kV) is a plain `Line` record in the raw file,
+    # 5, not 4: bus 2 (200 kV) -> bus 3 (138 kV) is a plain `Line` record in the raw file,
     # but PFFP's own >1%-voltage-mismatch detection (`power_models_data.jl`) reclassifies
-    # it as a third (CZ=1/CW=1/CM=1, unremarkable) transformer — incidental to this
+    # it as a fourth (CZ=1/CW=1/CM=1, unremarkable) transformer — incidental to this
     # fixture's DC-line buses, borrowed from `synthetic_v35_two_terminal_dc.raw`'s
-    # template, not one of T1/T2.
-    @test length(PFP.PC.get_components(doc, "TwoWindingTransformer")) == 3
+    # template, not one of T1/T2/T3/T7.
+    @test length(PFP.PC.get_components(doc, "TwoWindingTransformer")) == 5
+    @test length(PFP.PC.get_components(doc, "ThreeWindingTransformer")) == 3
     @test length(PFP.PC.get_components(doc, "TwoTerminalLCCLine")) == 1
     PFP.PC.validate_document(doc)
+end
+
+@testset "CW=2 or CW=3 on a BASKV=0 bus is an error" begin
+    fixture = "synthetic_v35_transformer_discriminators.raw"
+    raw = read(joinpath(@__DIR__, "fixtures", fixture), String)
+    for record in ("213, 214, 215, '1 ', ", "216, 217, 0, '1 ', "), cw in (2, 3)
+        edited = replace(raw, record * "1, 1, 2," => record * "$cw, 1, 2,")
+        @test edited != raw
+        @test_throws PFP.IS.DataFormatError PFP.parse_psse(IOBuffer(edited))
+    end
 end
