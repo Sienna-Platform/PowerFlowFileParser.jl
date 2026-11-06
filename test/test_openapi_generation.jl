@@ -287,6 +287,25 @@ end
     end
 end
 
+@testset "hydro ramp limits convert with the system base, off the device base" begin
+    d = Dict{String, Any}(
+        "mbase" => 50.0, "gen_status" => true, "pg" => 0.2, "qg" => 0.0,
+        "pmax" => 0.8, "pmin" => 0.0, "qmax" => 0.3, "qmin" => -0.3,
+        "ramp_agc" => 0.05,  # 5 MW/min on the 100 MVA system base
+    )
+    # 5 MW/min, then stated on the generator's own 50 MVA base.
+    for (power_units, expected) in (("NATURAL_UNITS", 5.0), ("COMPONENT_BASE", 0.1))
+        sys = PFP.OpenAPISystem(100.0; power_units = power_units)
+        reg = PFP.get_registry(sys)
+        bus = _register_test_bus!(sys)
+        PFP.make_hydro_dispatch!(sys, reg, bus, d, "hy1", 100.0)
+        PFP.apply_device_base_conversion!(sys)
+        hydro = only(PFP.get_components(sys, "HydroDispatch"))
+        @test PFP.get_value(hydro, :ramp_limits).up ≈ expected
+        @test PFP.get_value(hydro, :ramp_limits).down ≈ expected
+    end
+end
+
 @testset "calculate_ramp_limit prefers ramp_agc, then ramp_10, then ramp_30, then pmax" begin
     @test PFP.calculate_ramp_limit(Dict("ramp_agc" => 1.0, "pmax" => 9.0), "g") ==
           (up = 1.0, down = 1.0)
