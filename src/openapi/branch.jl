@@ -542,8 +542,8 @@ function make_3w_transformer!(
         rating = _get_rating(name, d, "rating_primary"), rating_b = nothing,
         rating_c = nothing,
         base_power = d["base_power_12"],
-        base_voltage_primary = d["base_voltage_primary"],
-        base_voltage_secondary = d["base_voltage_primary"],
+        base_voltage_primary = _base_voltage_or_nothing(d["base_voltage_primary"]),
+        base_voltage_secondary = _base_voltage_or_nothing(d["base_voltage_primary"]),
         active_power_flow = d["active_power_flow_primary"],
         reactive_power_flow = d["reactive_power_flow_primary"],
     )
@@ -556,8 +556,8 @@ function make_3w_transformer!(
         rating = _get_rating(name, d, "rating_secondary"), rating_b = nothing,
         rating_c = nothing,
         base_power = d["base_power_23"],
-        base_voltage_primary = d["base_voltage_secondary"],
-        base_voltage_secondary = d["base_voltage_secondary"],
+        base_voltage_primary = _base_voltage_or_nothing(d["base_voltage_secondary"]),
+        base_voltage_secondary = _base_voltage_or_nothing(d["base_voltage_secondary"]),
         active_power_flow = d["active_power_flow_secondary"],
         reactive_power_flow = d["reactive_power_flow_secondary"],
     )
@@ -570,8 +570,8 @@ function make_3w_transformer!(
         rating = _get_rating(name, d, "rating_tertiary"), rating_b = nothing,
         rating_c = nothing,
         base_power = d["base_power_31"],
-        base_voltage_primary = d["base_voltage_tertiary"],
-        base_voltage_secondary = d["base_voltage_tertiary"],
+        base_voltage_primary = _base_voltage_or_nothing(d["base_voltage_tertiary"]),
+        base_voltage_secondary = _base_voltage_or_nothing(d["base_voltage_tertiary"]),
         active_power_flow = d["active_power_flow_tertiary"],
         reactive_power_flow = d["reactive_power_flow_tertiary"],
     )

@@ -1094,12 +1094,19 @@ function _transformer_bus_label(sub_data::Dict)
     )
 end
 
-# Base Power has a different key in sub_data depending on the number of windings
+# Base Power has a different key in sub_data depending on the number of windings.
+# CM=2 gives MAG1/MAG2 on SBASE1-2 and winding-one nominal voltage NOMV1; the series
+# impedance is on winding-one bus base voltage, so rebase the admittance by
+# (V_bus/NOMV1)^2. No correction if NOMV1 = 0 (it is then the bus base voltage) or
+# BASKV = 0 (PSS/E's default: there is no bus base to rebase onto).
 function _transformer_mag_pu_conversion(
     transformer::Dict,
     sub_data::Dict,
     base_power::Float64,
+    bus_kv::Float64,
 )
+    nomv1 = transformer["NOMV1"]
+    voltage_factor = (iszero(nomv1) || iszero(bus_kv)) ? 1.0 : (bus_kv / nomv1)^2
     if isapprox(transformer["MAG1"], 0.0; atol = ZERO_IMPEDANCE_REACTANCE_THRESHOLD) &&
        isapprox(transformer["MAG2"], 0.0; atol = ZERO_IMPEDANCE_REACTANCE_THRESHOLD)
         @warn "Transformer $(_transformer_bus_label(sub_data)) has zero MAG1 and MAG2 values."
@@ -1112,7 +1119,7 @@ function _transformer_mag_pu_conversion(
         # magnitude (positive by convention), so the susceptance it implies is the
         # negative root, matching the already-negative MAG2 a CM=1 record supplies.
         B_pu = -sqrt(max(0.0, mag_diff))
-        return G_pu, B_pu
+        return G_pu * voltage_factor, B_pu * voltage_factor
     end
 end
 
@@ -1170,6 +1177,21 @@ function _psse2pm_transformer!(pm_data::Dict, pti_data::Dict, import_all::Bool, 
                 transformer["CM"] = 1
             end
 
+            # A turns ratio in kV or on NOMV is defined against the winding bus base.
+            if transformer["CW"] != 1
+                for bus in (transformer["I"], transformer["J"], transformer["K"])
+                    if bus != 0 && iszero(_get_bus_value(bus, "base_kv", pm_data))
+                        throw(
+                            IS.DataFormatError(
+                                "Transformer $(_transformer_identity_label(identity)) " *
+                                "circuit '$(identity[4])' has CW=$(transformer["CW"]) " *
+                                "but bus $bus has BASKV=0, so its turns ratio is undefined.",
+                            ),
+                        )
+                    end
+                end
+            end
+
             if transformer["K"] == 0  # Two-winding Transformers
                 sub_data = Dict{String, Any}()
 
@@ -1214,28 +1236,19 @@ function _psse2pm_transformer!(pm_data::Dict, pti_data::Dict, import_all::Bool, 
                 else
                     sub_data["base_power"] = transformer["SBASE1-2"]
                 end
-                if iszero(transformer["NOMV1"])
-                    sub_data["base_voltage_from"] =
-                        _get_bus_value(transformer["I"], "base_kv", pm_data)
-                else
-                    sub_data["base_voltage_from"] = transformer["NOMV1"]
-                end
-                if iszero(transformer["NOMV2"])
-                    sub_data["base_voltage_to"] =
-                        _get_bus_value(transformer["J"], "base_kv", pm_data)
-                else
-                    sub_data["base_voltage_to"] = transformer["NOMV2"]
-                end
+                # Impedance and admittance are converted onto the winding bus base
+                # voltages (PSS/E uses NOMV only for CM=2 magnetizing data and the CW=3
+                # tap), so those are the declared bases; NOMV1/NOMV2 stay in "ext".
+                sub_data["base_voltage_from"] =
+                    _get_bus_value(transformer["I"], "base_kv", pm_data)
+                sub_data["base_voltage_to"] =
+                    _get_bus_value(transformer["J"], "base_kv", pm_data)
 
                 # Unit Transformations
-                # Data must be stored in the DEVICE_BASE
-                # Z_base_device = (V_device)^2 / S_device, Z_base_sys = (V_device)^2 / S_sys
-                # Z_ohms = Z_pu_sys * Z_base_sys, Z_pu_device = Z_ohms / Z_device = Z_pu_sys * S_device / S_sys
+                # Data must be stored in the DEVICE_BASE. The voltage base is the winding
+                # bus's on both sides, so system pu -> device pu is the power ratio alone:
+                # Z_pu_device = Z_pu_sys * S_device / S_sys
                 mva_ratio = sub_data["base_power"] / pm_data["baseMVA"]
-                Z_base_device = sub_data["base_voltage_from"]^2 / sub_data["base_power"]
-                Z_base_sys = sub_data["base_voltage_from"]^2 / pm_data["baseMVA"]
-                #_get_bus_value(transformer["I"], "base_kv", pm_data)^2 /
-                #pm_data["baseMVA"]
                 if transformer["CZ"] == 2  # "for resistance and reactance in pu on system MVA base and winding voltage base"
                     # Compute br_r and br_x in pu of device base
                     br_r, br_x = transformer["R1-2"], transformer["X1-2"]
@@ -1247,14 +1260,8 @@ function _psse2pm_transformer!(pm_data::Dict, pti_data::Dict, import_all::Bool, 
                         br_x = sqrt(transformer["X1-2"]^2 - br_r^2) # device pu
                     else # "CZ" = 1 in system base pu
                         @assert transformer["CZ"] == 1
-                        br_r, br_x = transformer["R1-2"], transformer["X1-2"] # sys pu
-                        if iszero(Z_base_device) # NOMV1 = 0.0: use the power ratios
-                            br_r = transformer["R1-2"] * mva_ratio
-                            br_x = transformer["X1-2"] * mva_ratio
-                        else # NOMV1 could potentially be different than the bus_voltage, use impedance ratios
-                            br_r = (transformer["R1-2"] * Z_base_sys) / Z_base_device
-                            br_x = (transformer["X1-2"] * Z_base_sys) / Z_base_device
-                        end
+                        br_r = transformer["R1-2"] * mva_ratio
+                        br_x = transformer["X1-2"] * mva_ratio
                     end
                 end
 
@@ -1313,6 +1320,7 @@ function _psse2pm_transformer!(pm_data::Dict, pti_data::Dict, import_all::Bool, 
                         transformer,
                         sub_data,
                         sub_data["base_power"],
+                        _get_bus_value(transformer["I"], "base_kv", pm_data),
                     )
                     sub_data["g_fr"] = G_pu
                     sub_data["b_fr"] = B_pu
@@ -1539,36 +1547,17 @@ function _psse2pm_transformer!(pm_data::Dict, pti_data::Dict, import_all::Bool, 
                     end
                 end
 
-                if iszero(transformer["NOMV1"])
-                    sub_data["base_voltage_primary"] =
-                        _get_bus_value(transformer["I"], "base_kv", pm_data)
-                else
-                    sub_data["base_voltage_primary"] = transformer["NOMV1"]
-                end
-                if iszero(transformer["NOMV2"])
-                    sub_data["base_voltage_secondary"] =
-                        _get_bus_value(transformer["J"], "base_kv", pm_data)
-                else
-                    sub_data["base_voltage_secondary"] = transformer["NOMV2"]
-                end
-                if iszero(transformer["NOMV3"])
-                    sub_data["base_voltage_tertiary"] =
-                        _get_bus_value(transformer["K"], "base_kv", pm_data)
-                else
-                    sub_data["base_voltage_tertiary"] = transformer["NOMV3"]
-                end
+                # Bus base voltages, as for 2W; NOMV1-3 stay in "ext".
+                sub_data["base_voltage_primary"] =
+                    _get_bus_value(transformer["I"], "base_kv", pm_data)
+                sub_data["base_voltage_secondary"] =
+                    _get_bus_value(transformer["J"], "base_kv", pm_data)
+                sub_data["base_voltage_tertiary"] =
+                    _get_bus_value(transformer["K"], "base_kv", pm_data)
 
                 mva_ratio_12 = sub_data["base_power_12"] / pm_data["baseMVA"]
                 mva_ratio_23 = sub_data["base_power_23"] / pm_data["baseMVA"]
                 mva_ratio_31 = sub_data["base_power_31"] / pm_data["baseMVA"]
-                Z_base_device_1 = transformer["NOMV1"]^2 / sub_data["base_power_12"]
-                Z_base_device_2 = transformer["NOMV2"]^2 / sub_data["base_power_23"]
-                Z_base_device_3 = transformer["NOMV3"]^2 / sub_data["base_power_31"]
-                Z_base_sys_1 = (sub_data["base_voltage_primary"])^2 / pm_data["baseMVA"]
-                Z_base_sys_2 =
-                    (sub_data["base_voltage_secondary"])^2 / pm_data["baseMVA"]
-                Z_base_sys_3 =
-                    (sub_data["base_voltage_tertiary"])^2 / pm_data["baseMVA"]
                 # Create 3 branches from a three winding transformer (one for each winding, which will each connect to the starbus)
                 br_r12, br_r23, br_r31 =
                     transformer["R1-2"], transformer["R2-3"], transformer["R3-1"]
@@ -1587,54 +1576,25 @@ function _psse2pm_transformer!(pm_data::Dict, pti_data::Dict, import_all::Bool, 
                     br_x31 = sqrt(br_x31^2 - br_r31^2)
                     # Unit Transformations
                 elseif transformer["CZ"] == 1  # "for resistance and reactance in pu on system MVA base (transform to device base)"
-                    if iszero(Z_base_device_1) # NOMV1 = 0.0: use the power ratios
-                        br_r12 *= mva_ratio_12
-                        br_x12 *= mva_ratio_12
-                    else # NOMV1 could potentially be different than the bus_voltage, use impedance ratios
-                        br_r12 *= Z_base_sys_1 / Z_base_device_1
-                        br_x12 *= Z_base_sys_1 / Z_base_device_1
-                    end
-                    if iszero(Z_base_device_2) # NOMV2 = 0.0: use the power ratios
-                        br_r23 *= mva_ratio_23
-                        br_x23 *= mva_ratio_23
-                    else # NOMV2 could potentially be different than the bus_voltage, use impedance ratios
-                        br_r23 *= Z_base_sys_2 / Z_base_device_2
-                        br_x23 *= Z_base_sys_2 / Z_base_device_2
-                    end
-                    if iszero(Z_base_device_3) # NOMV3 = 0.0: use the power ratios
-                        br_r31 *= mva_ratio_31
-                        br_x31 *= mva_ratio_31
-                    else # NOMV3 could potentially be different than the bus_voltage, use impedance ratios
-                        br_r31 *= Z_base_sys_3 / Z_base_device_3
-                        br_x31 *= Z_base_sys_3 / Z_base_device_3
-                    end
+                    # Winding bus voltage base on both sides: the power ratio alone.
+                    br_r12 *= mva_ratio_12
+                    br_x12 *= mva_ratio_12
+                    br_r23 *= mva_ratio_23
+                    br_x23 *= mva_ratio_23
+                    br_r31 *= mva_ratio_31
+                    br_x31 *= mva_ratio_31
                 end
                 # CZ == 2: "for resistance and reactance in pu on winding base"; the
                 # impedance is already expressed on the winding-pair base, so no
                 # conversion is applied (passthrough is correct per the PSS/E convention).
 
                 # Compute primary,secondary, tertiary impedances in system base, then convert to base power of appropriate winding
-                if iszero(Z_base_device_1)
-                    br_r12_sysbase = br_r12 / mva_ratio_12
-                    br_x12_sysbase = br_x12 / mva_ratio_12
-                else
-                    br_r12_sysbase = br_r12 * (Z_base_device_1 / Z_base_sys_1)
-                    br_x12_sysbase = br_x12 * (Z_base_device_1 / Z_base_sys_1)
-                end
-                if iszero(Z_base_device_2)
-                    br_r23_sysbase = br_r23 / mva_ratio_23
-                    br_x23_sysbase = br_x23 / mva_ratio_23
-                else
-                    br_r23_sysbase = br_r23 * (Z_base_device_2 / Z_base_sys_2)
-                    br_x23_sysbase = br_x23 * (Z_base_device_2 / Z_base_sys_2)
-                end
-                if iszero(Z_base_device_3)
-                    br_r31_sysbase = br_r31 / mva_ratio_31
-                    br_x31_sysbase = br_x31 / mva_ratio_31
-                else
-                    br_r31_sysbase = br_r31 * (Z_base_device_3 / Z_base_sys_3)
-                    br_x31_sysbase = br_x31 * (Z_base_device_3 / Z_base_sys_3)
-                end
+                br_r12_sysbase = br_r12 / mva_ratio_12
+                br_x12_sysbase = br_x12 / mva_ratio_12
+                br_r23_sysbase = br_r23 / mva_ratio_23
+                br_x23_sysbase = br_x23 / mva_ratio_23
+                br_r31_sysbase = br_r31 / mva_ratio_31
+                br_x31_sysbase = br_x31 / mva_ratio_31
                 # See "Power System Stability and Control", ISBN: 0-07-035958-X, Eq. 6.72
                 Zr_p = 1 / 2 * (br_r12_sysbase - br_r23_sysbase + br_r31_sysbase)
                 Zr_s = 1 / 2 * (br_r23_sysbase - br_r31_sysbase + br_r12_sysbase)
@@ -1661,27 +1621,12 @@ function _psse2pm_transformer!(pm_data::Dict, pti_data::Dict, import_all::Bool, 
                     @info "Zero impedance reactance detected in 3W Transformer $(transformer["NAME"]) for winding(s): $(join(zero_names, ", ")). Setting to threshold value $(ZERO_IMPEDANCE_REACTANCE_THRESHOLD)."
                 end
 
-                if iszero(Z_base_device_1)
-                    Zr_p *= mva_ratio_12
-                    Zx_p *= mva_ratio_12
-                else
-                    Zr_p *= Z_base_sys_1 / Z_base_device_1
-                    Zx_p *= Z_base_sys_1 / Z_base_device_1
-                end
-                if iszero(Z_base_device_2)
-                    Zr_s *= mva_ratio_23
-                    Zx_s *= mva_ratio_23
-                else
-                    Zr_s *= Z_base_sys_2 / Z_base_device_2
-                    Zx_s *= Z_base_sys_2 / Z_base_device_2
-                end
-                if iszero(Z_base_device_3)
-                    Zr_t *= mva_ratio_31
-                    Zx_t *= mva_ratio_31
-                else
-                    Zr_t *= Z_base_sys_3 / Z_base_device_3
-                    Zx_t *= Z_base_sys_3 / Z_base_device_3
-                end
+                Zr_p *= mva_ratio_12
+                Zx_p *= mva_ratio_12
+                Zr_s *= mva_ratio_23
+                Zx_s *= mva_ratio_23
+                Zr_t *= mva_ratio_31
+                Zx_t *= mva_ratio_31
 
                 sub_data["name"] = transformer["NAME"]
                 sub_data["bus_primary"] = bus_id1
@@ -1809,6 +1754,7 @@ function _psse2pm_transformer!(pm_data::Dict, pti_data::Dict, import_all::Bool, 
                         transformer,
                         sub_data,
                         sub_data["base_power_12"],
+                        _get_bus_value(transformer["I"], "base_kv", pm_data),
                     )
                     sub_data["g"] = G_pu
                     sub_data["b"] = B_pu
@@ -1867,7 +1813,8 @@ function _psse2pm_transformer!(pm_data::Dict, pti_data::Dict, import_all::Bool, 
                     bus_base_kv = _get_bus_value(winding_buses[i], "base_kv", pm_data)
                     transformer["CW"] == 2 && return 1.0 / bus_base_kv
                     @assert transformer["CW"] == 3
-                    return sub_data["base_voltage_$(WINDING_NAMES[i])"] / bus_base_kv
+                    nomv = transformer["NOMV$i"]
+                    return iszero(nomv) ? 1.0 : nomv / bus_base_kv
                 end
                 for (i, windv) in enumerate((windv1, windv2, windv3))
                     sub_data["$(WINDING_NAMES[i])_turns_ratio"] =
@@ -1897,6 +1844,9 @@ function _psse2pm_transformer!(pm_data::Dict, pti_data::Dict, import_all::Bool, 
                     "MAG2" => transformer["MAG2"],
                     "VMSTAR" => transformer["VMSTAR"],
                     "ANSTAR" => transformer["ANSTAR"],
+                    "NOMV1" => transformer["NOMV1"],
+                    "NOMV2" => transformer["NOMV2"],
+                    "NOMV3" => transformer["NOMV3"],
                 )
 
                 for prefix in TRANSFORMER3W_PARAMETER_NAMES
