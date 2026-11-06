@@ -136,7 +136,7 @@ end
     @test length(y_increase) == length(d["y_increment"])
     @test all(
         y_increase[i].real == real(d["y_increment"][i]) * base &&
-            y_increase[i].imag == imag(d["y_increment"][i]) * base for
+        y_increase[i].imag == imag(d["y_increment"][i]) * base for
         i in eachindex(d["y_increment"])
     )
     # The fixture's bus-101 SWITCHED SHUNT record declares BINIT = 50.00 and B1 = 100.00,

@@ -442,9 +442,13 @@ end
     raw = read(joinpath(@__DIR__, "modified_14bus_system.raw"), String)
     record = "   107,   108,'1 ', 7.98000E-3, 5.01000E-2,   0.00056,"
     @test occursin(record, raw)
-    for (charging, type_name) in (("   0.00000,", "SeriesCompensator"), ("   0.00056,", "Line"))
+    for (charging, type_name) in
+        (("   0.00000,", "SeriesCompensator"), ("   0.00056,", "Line"))
         path = joinpath(mktempdir(), "compensated.raw")
-        write(path, replace(raw, record => "   107,   108,'1 ', 0.00000E+0,-2.00000E-2,$charging"))
+        write(
+            path,
+            replace(raw, record => "   107,   108,'1 ', 0.00000E+0,-2.00000E-2,$charging"),
+        )
         sys = if type_name == "Line"
             Test.@test_logs (:warn, r"represented as a Line with negative reactance") match_mode =
                 :any PFP.build_openapi_system(PFP.PowerModelsData(path))
@@ -463,6 +467,94 @@ end
             @test isempty(PFP.get_components(sys, "SeriesCompensator"))
         end
     end
+end
+
+@testset "a branch with R < 0 becomes a GenericArcImpedance" begin
+    raw = read_fixture(joinpath(@__DIR__, "modified_14bus_system.raw"))
+    record = "   107,   108,'1 ', 7.98000E-3, 5.01000E-2,   0.00056,    0.00,"
+    @test occursin(record, raw)
+    # A zero RATEA is replaced by an impedance-derived rating in `correct_thermal_limits!`,
+    # so the flow limit is present either way; only its value differs.
+    for (rate_a, flow_limit) in (("    0.00,", nothing), ("  250.00,", 250.0))
+        path = joinpath(mktempdir(), "negative_r.raw")
+        write(
+            path,
+            replace(raw,
+                record => "   107,   108,'1 ',-7.98000E-3, 5.01000E-2,   0.00056,$rate_a"),
+        )
+        sys =
+            Test.@test_logs (:warn, r"negative resistance") match_mode = :any PFP.build_openapi_system(
+                PFP.PowerModelsData(path),
+            )
+        branch = _component_between(sys, "GenericArcImpedance", 107, 108)
+        @test endswith(PFP.get_value(branch, :name), "-i_1")
+        @test PFP.get_value(branch, :available)
+        @test PFP.get_value(branch, :r) == -0.00798
+        @test PFP.get_value(branch, :x) == 0.0501
+        @test PFP.get_value(branch, :parameter_units) == "COMPONENT_BASE"
+        @test PFP.get_value(branch, :base_power) == 100.0
+        @test PFP.get_value(branch, :active_power_flow) == 0.0
+        @test PFP.get_value(branch, :reactive_power_flow) == 0.0
+        limit = PFP.get_value(branch, :operational_flow_limit)
+        if isnothing(flow_limit)
+            @test limit.from_to_max > 0.0
+            @test _matches_nt(
+                limit,
+                (from_to_min = 0.0, to_from_min = 0.0,
+                    to_from_max = limit.from_to_max),
+            )
+        else
+            @test _matches_nt(
+                limit,
+                (from_to_min = 0.0, from_to_max = flow_limit,
+                    to_from_min = 0.0, to_from_max = flow_limit),
+            )
+        end
+        @test_throws ErrorException _component_between(sys, "Line", 107, 108)
+        @test isfile(PFP.to_json(sys, joinpath(mktempdir(), "negative_r.json")))
+    end
+end
+
+@testset "make_generic_arc_impedance! leaves the flow limit unset without a rating" begin
+    sys = PFP.OpenAPISystem(100.0)
+    reg = PFP.get_registry(sys)
+    _register_bus!(sys, 1, "b1")
+    _register_bus!(sys, 2, "b2")
+    d = Dict{String, Any}(
+        "br_r" => -0.02, "br_x" => 0.1, "br_status" => 1, "pf" => 0.5, "qf" => -0.1,
+        "ext" => Dict{String, Any}("LEN" => 3.0),
+    )
+    Test.@test_logs (:warn, r"negative resistance") PFP.make_generic_arc_impedance!(
+        sys, reg, "g1", d, PFP.get_bus_id(reg, 1), PFP.get_bus_id(reg, 2), false, false,
+        100.0)
+    branch = only(PFP.get_components(sys, "GenericArcImpedance"))
+    @test PFP.get_value(branch, :operational_flow_limit) isa PFP.IC.Absent
+    @test PFP.get_value(branch, :r) == -0.02
+    @test PFP.get_value(branch, :x) == 0.1
+    @test PFP.get_value(branch, :active_power_flow) == 50.0
+    @test PFP.get_value(branch, :reactive_power_flow) == -10.0
+    @test PFP.get_value(branch, :available)
+end
+
+@testset "_branch_type_psse and _branch_type_matpower route R < 0 to a GenericArcImpedance" begin
+    d = Dict{String, Any}(
+        "transformer" => false,
+        "br_r" => -0.01,
+        "br_x" => 0.05,
+        "tap" => 1.0,
+        "shift" => 0.0,
+        "b_fr" => 0.0,
+        "b_to" => 0.0,
+        "g_fr" => 0.0,
+        "g_to" => 0.0,
+    )
+    @test PFP._branch_type_psse(d, "negative_r") == :generic_arc_impedance
+    @test PFP._branch_type_matpower(d) == :generic_arc_impedance
+    # A transformer keeps its type whatever the sign of R.
+    @test PFP._branch_type_psse(merge(d, Dict("transformer" => true)), "xfmr") ==
+          :transformer
+    @test PFP._branch_type_matpower(merge(d, Dict("tap" => 1.05))) == :transformer
+    @test PFP._branch_type_psse(merge(d, Dict("br_r" => 0.01)), "lossy") == :line
 end
 
 @testset "_branch_type_psse: only R = 0, X < 0 and no charging is a series compensator" begin

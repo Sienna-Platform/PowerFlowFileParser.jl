@@ -432,6 +432,52 @@ function _add_series_compensator!(
     return
 end
 
+# A bounded `rate_a` (system-base pu) becomes a symmetric natural-unit flow limit; an
+# unbounded one leaves the optional field unset rather than writing `INFINITE_BOUND`.
+function _generic_arc_flow_limit(rating::Float64, sys_mbase::Float64)
+    if rating == INFINITE_BOUND
+        return nothing
+    end
+    max_flow = rating * sys_mbase
+    return (from_to_min = 0.0, from_to_max = max_flow, to_from_min = 0.0,
+        to_from_max = max_flow)
+end
+
+"""A `GenericArcImpedance` from a non-transformer branch with a negative resistance, which
+is not a valid `Line`. `r`/`x` stay system-base pu; `rate_a` becomes the flow limit."""
+function make_generic_arc_impedance!(
+    sys::OpenAPISystem,
+    reg::IdRegistry,
+    name::AbstractString,
+    d::Dict,
+    from_id::Int,
+    to_id::Int,
+    from_isolated::Bool,
+    to_isolated::Bool,
+    sys_mbase::Float64,
+)
+    available = _branch_available(d["br_status"] == 1, from_isolated, to_isolated)
+    arc_id = add_arc!(sys, from_id, to_id)
+    @warn "Branch $name has negative resistance $(d["br_r"]); converting to a GenericArcImpedance"
+
+    component = stage(PO.GenericArcImpedance)
+    set_value!(component, :id, register!(reg, "GenericArcImpedance", name))
+    set_value!(component, :name, name)
+    set_value!(component, :available, available)
+    set_value!(component, :active_power_flow, get(d, "pf", 0.0) * sys_mbase, "MW")
+    set_value!(component, :reactive_power_flow, get(d, "qf", 0.0) * sys_mbase, "MVAr")
+    set_optional_value!(component, :operational_flow_limit,
+        _generic_arc_flow_limit(_get_rating(name, d, "rate_a"), sys_mbase), "MW")
+    set_value!(component, :arc, arc_id)
+    set_value!(component, :parameter_units, "COMPONENT_BASE")
+    set_value!(component, :r, d["br_r"], "pu")
+    set_value!(component, :x, d["br_x"], "pu")
+    set_value!(component, :base_power, sys_mbase, "MVA")
+    add_component!(sys, component)
+    set_component_ext!(sys, component, get(d, "ext", Dict{String, Any}()))
+    return
+end
+
 function _branch_type_matpower(d::Dict)
     tap = d["tap"]
     shift = d["shift"]
@@ -442,6 +488,9 @@ function _branch_type_matpower(d::Dict)
     if is_transformer
         return :transformer
     end
+    if d["br_r"] < 0
+        return :generic_arc_impedance
+    end
     return :line
 end
 
@@ -450,6 +499,10 @@ function _branch_type_psse(d::Dict, name::AbstractString)
     # with no impedance is the modeled switching device this shortcut is looking for.
     if !d["transformer"] && iszero(d["br_r"]) && iszero(d["br_x"])
         return :switch
+    end
+    # A negative series resistance is not a valid Line; it is kept as a generic impedance.
+    if !d["transformer"] && d["br_r"] < 0
+        return :generic_arc_impedance
     end
     # PSS/E's series compensation: R = 0 and X < 0. A SeriesCompensator has no line
     # charging, so a record that carries some stays a Line with a negative reactance.
@@ -601,11 +654,12 @@ function make_3w_transformer!(
 end
 
 """
-Create a `Line`, `TwoWindingTransformer`, `DiscreteControlledACBranch`, or
-`SeriesCompensator` per `data["branch"]` entry. `data["branch"]` carries both
-untransformed lines and 2W transformers — PowerModels represents both as "branch" rows,
-discriminated by `tap`/`shift`/`"transformer"` (MATPOWER) or by zero impedance, R = 0 with
-X < 0, or the `"transformer"` flag (PSS/E).
+Create a `Line`, `TwoWindingTransformer`, `DiscreteControlledACBranch`,
+`SeriesCompensator`, or `GenericArcImpedance` per `data["branch"]` entry. `data["branch"]`
+carries both untransformed lines and 2W transformers — PowerModels represents both as
+"branch" rows, discriminated by `tap`/`shift`/`"transformer"` (MATPOWER) or by zero
+impedance, R = 0 with X < 0, or the `"transformer"` flag (PSS/E). A non-transformer row
+with R < 0 is a `GenericArcImpedance` for either source.
 """
 function read_branches!(sys::OpenAPISystem, data::Dict; kwargs...)
     if !haskey(data, "branch")
@@ -644,6 +698,9 @@ function read_branches!(sys::OpenAPISystem, data::Dict; kwargs...)
                 from_isolated, to_isolated, sys_mbase)
         elseif branch_type == :series_compensator
             make_series_compensator!(sys, reg, name, d, from_id, to_id, from_isolated,
+                to_isolated, sys_mbase)
+        elseif branch_type == :generic_arc_impedance
+            make_generic_arc_impedance!(sys, reg, name, d, from_id, to_id, from_isolated,
                 to_isolated, sys_mbase)
         elseif branch_type == :transformer
             make_transformer_2w!(sys, reg, name, d, from_id, to_id, from_isolated,
