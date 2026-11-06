@@ -679,3 +679,27 @@ end
         @test occursin("102 -> 104 -> 103", sprint(showerror, err))
     end
 end
+
+@testset "generator ext carries the same control fields in every RAW version" begin
+    for file in (
+        joinpath(PSSE_RAW_DIR, "psse_controlled_tap_test_v33.raw"),
+        joinpath(@__DIR__, "fixtures", "synthetic_v34_full.raw"),
+        joinpath(PSSE_RAW_DIR, "psse_controlled_tap_test_v35.raw"),
+    )
+        for gen in values(PowerFlowFileParser.parse_file(file)["gen"])
+            @test issubset(("IREG", "VS", "WPF", "WMOD", "GTAP", "RMPCT"), keys(gen["ext"]))
+            @test gen["ext"]["VS"] == gen["vg"]
+        end
+    end
+
+    raw = read(joinpath(PSSE_RAW_DIR, "psse_v35_substation.raw"), String)
+    edited = replace(
+        raw,
+        "1.00000,   0,   0,   100.000" => "1.03000,   2,   0,   100.000";
+        count = 1,
+    )
+    @test edited != raw
+    gens = values(PowerFlowFileParser.parse_psse(IOBuffer(edited))["gen"])
+    gen = only(g for g in gens if g["ext"]["VS"] == 1.03)
+    @test gen["ext"]["IREG"] == 2
+end

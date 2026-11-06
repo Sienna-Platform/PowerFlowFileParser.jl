@@ -506,23 +506,21 @@ function _psse2pm_generator!(pm_data::Dict, pti_data::Dict, import_all::Bool, nb
                 sub_data["type"] = "SYNC_COND"
             end
 
+            sub_data["ext"] = Dict{String, Any}(
+                "IREG" => pop!(gen, "IREG"),
+                "VS" => sub_data["vg"],
+                "WPF" => pop!(gen, "WPF"),
+                "WMOD" => sub_data["m_control_mode"],
+                "GTAP" => pop!(gen, "GTAP"),
+                "RMPCT" => pop!(gen, "RMPCT"),
+            )
             if pm_data["source_version"] == "35"
-                sub_data["ext"] = Dict{String, Any}(
-                    "NREG" => pop!(gen, "NREG"),
-                    "BASLOD" => pop!(gen, "BASLOD"),
-                )
+                sub_data["ext"]["NREG"] = pop!(gen, "NREG")
+                sub_data["ext"]["BASLOD"] = pop!(gen, "BASLOD")
             elseif pm_data["source_version"] == "34"
                 # v34 has NREG but not yet BASLOD
-                sub_data["ext"] = Dict{String, Any}("NREG" => pop!(gen, "NREG"))
-            elseif pm_data["source_version"] ∈ PSSE_LEGACY_RATING_VERSIONS
-                sub_data["ext"] = Dict{String, Any}(
-                    "IREG" => pop!(gen, "IREG"),
-                    "WPF" => pop!(gen, "WPF"),
-                    "WMOD" => sub_data["m_control_mode"],
-                    "GTAP" => pop!(gen, "GTAP"),
-                    "RMPCT" => pop!(gen, "RMPCT"),
-                )
-            else
+                sub_data["ext"]["NREG"] = pop!(gen, "NREG")
+            elseif pm_data["source_version"] ∉ PSSE_LEGACY_RATING_VERSIONS
                 error("Unsupported PSS(R)E source version: $(pm_data["source_version"])")
             end
 
