@@ -116,22 +116,22 @@ function calculate_gen_rating(
 end
 
 """
-Ramp limits from whichever of `"ramp_agc"`/`"ramp_10"`/`"ramp_30"` is present, falling
-back to `abs(pmax)`, or `nothing` if `pmax` is also zero.
+Ramp limits per minute from whichever of `"ramp_agc"`/`"ramp_10"`/`"ramp_30"` is present,
+falling back to `abs(pmax)`, or `nothing` if `pmax` is also zero.
 
-Ported verbatim from PSCB's `calculate_ramp_limit`, including its own inconsistency: both
-branches use the source value exactly as pm states it (no `base_conversion`), unlike every
-other `calculate_*`/`make_*` field in this file.
+The result is system-base per-unit, like the pm values it comes from, so convert it with
+`sys_mbase`. MATPOWER gives `ramp_agc` per minute, but `ramp_10`/`ramp_30` as the change
+possible in 10/30 minutes.
 """
 function calculate_ramp_limit(d::Dict, gen_name::AbstractString)
     if haskey(d, "ramp_agc")
         return (up = d["ramp_agc"], down = d["ramp_agc"])
     end
     if haskey(d, "ramp_10")
-        return (up = d["ramp_10"], down = d["ramp_10"])
+        return (up = d["ramp_10"] / 10, down = d["ramp_10"] / 10)
     end
     if haskey(d, "ramp_30")
-        return (up = d["ramp_30"], down = d["ramp_30"])
+        return (up = d["ramp_30"] / 30, down = d["ramp_30"] / 30)
     end
     if abs(d["pmax"]) > 0.0
         return (up = abs(d["pmax"]), down = abs(d["pmax"]))
@@ -242,7 +242,7 @@ function make_thermal_generator!(
         "MW")
     set_value!(component, :reactive_power_limits,
         _natural_value(reactive_power_limits, mbase), "MVAr")
-    set_optional_value!(component, :ramp_limits, _natural_value(ramp_limits, mbase),
+    set_optional_value!(component, :ramp_limits, _natural_value(ramp_limits, sys_mbase),
         "MW/min")
     set_value!(component, :base_power, mbase, "MVA")
     set_value!(component, :prime_mover_type, prime_mover_type(get(pm_gen, "type", "OT")))
@@ -285,7 +285,7 @@ function _make_hydro_dispatch_body!(
         "MW")
     set_value!(component, :reactive_power_limits,
         _natural_value(reactive_power_limits, mbase), "MVAr")
-    set_optional_value!(component, :ramp_limits, _natural_value(ramp_limits, mbase),
+    set_optional_value!(component, :ramp_limits, _natural_value(ramp_limits, sys_mbase),
         "MW/min")
     set_value!(component, :base_power, mbase, "MVA")
     add_component!(sys, component)
