@@ -507,12 +507,9 @@ function _psse2pm_generator!(pm_data::Dict, pti_data::Dict, import_all::Bool, nb
             end
 
             sub_data["ext"] = Dict{String, Any}(
-                "IREG" => pop!(gen, "IREG"),
-                "VS" => sub_data["vg"],
                 "WPF" => pop!(gen, "WPF"),
                 "WMOD" => sub_data["m_control_mode"],
                 "GTAP" => pop!(gen, "GTAP"),
-                "RMPCT" => pop!(gen, "RMPCT"),
             )
             if pm_data["source_version"] == "35"
                 sub_data["ext"]["NREG"] = pop!(gen, "NREG")
@@ -520,7 +517,10 @@ function _psse2pm_generator!(pm_data::Dict, pti_data::Dict, import_all::Bool, nb
             elseif pm_data["source_version"] == "34"
                 # v34 has NREG but not yet BASLOD
                 sub_data["ext"]["NREG"] = pop!(gen, "NREG")
-            elseif pm_data["source_version"] ∉ PSSE_LEGACY_RATING_VERSIONS
+            elseif pm_data["source_version"] ∈ PSSE_LEGACY_RATING_VERSIONS
+                sub_data["ext"]["IREG"] = pop!(gen, "IREG")
+                sub_data["ext"]["RMPCT"] = pop!(gen, "RMPCT")
+            else
                 error("Unsupported PSS(R)E source version: $(pm_data["source_version"])")
             end
 
