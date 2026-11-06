@@ -9,13 +9,15 @@
 # own psse.jl parser wrote it: `switched_shunt`'s VSWLO/VSWHI band (see
 # `make_switched_admittance!`) and all of `facts`.
 
-"""Fixed admittance (PSS/E `FIXED SHUNT`)."""
+"""Fixed admittance (PSS/E `FIXED SHUNT`). `ext` is recorded against the component when
+non-empty."""
 function make_fixed_admittance!(
     sys::OpenAPISystem,
     reg::IdRegistry,
     name::AbstractString,
     d::Dict,
-    bus_id::Int,
+    bus_id::Int;
+    ext::Dict{String, Any} = Dict{String, Any}(),
 )
     base_power = get_base_power(sys)
 
@@ -33,6 +35,7 @@ function make_fixed_admittance!(
         "MVAr",
     )
     add_component!(sys, component)
+    set_component_ext!(sys, component, ext)
     return
 end
 
