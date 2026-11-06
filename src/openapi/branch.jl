@@ -15,8 +15,9 @@
 #
 # `data["3w_transformer"]` is NOT a native PowerModels section — `_make_per_unit!` never
 # touches it. Its per-winding ratings/flows come straight from raw PSS/E fields
-# (`rating_primary = min(RATA1, RATB1, RATC1)`; the flows are hardcoded `0.0`, PowerModels
-# having no 3W flow data), so they are ALREADY natural units and get no further scaling.
+# (`rating_primary = RATA1`, `rating_b_primary = RATB1`, ...; the flows are hardcoded `0.0`,
+# PowerModels having no 3W flow data), so they are ALREADY natural units and get no further
+# scaling.
 # Its `r_primary`/`x_primary`/... and pairwise `r_12`/`x_12`/... are, like the 2W case,
 # rebased by `psse.jl` onto their own winding base and passed through as device-base pu.
 
@@ -539,8 +540,9 @@ function make_3w_transformer!(
         control_suffix = 1,
         available = Bool(d["available_primary"]),
         r = d["r_primary"], x = d["x_primary"],
-        rating = _get_rating(name, d, "rating_primary"), rating_b = nothing,
-        rating_c = nothing,
+        rating = _get_rating(name, d, "rating_primary"),
+        rating_b = _get_rating(name, d, "rating_b_primary"),
+        rating_c = _get_rating(name, d, "rating_c_primary"),
         base_power = d["base_power_12"],
         base_voltage_primary = d["base_voltage_primary"],
         base_voltage_secondary = d["base_voltage_primary"],
@@ -553,8 +555,9 @@ function make_3w_transformer!(
         control_suffix = 2,
         available = Bool(d["available_secondary"]),
         r = d["r_secondary"], x = d["x_secondary"],
-        rating = _get_rating(name, d, "rating_secondary"), rating_b = nothing,
-        rating_c = nothing,
+        rating = _get_rating(name, d, "rating_secondary"),
+        rating_b = _get_rating(name, d, "rating_b_secondary"),
+        rating_c = _get_rating(name, d, "rating_c_secondary"),
         base_power = d["base_power_23"],
         base_voltage_primary = d["base_voltage_secondary"],
         base_voltage_secondary = d["base_voltage_secondary"],
@@ -567,8 +570,9 @@ function make_3w_transformer!(
         control_suffix = 3,
         available = Bool(d["available_tertiary"]),
         r = d["r_tertiary"], x = d["x_tertiary"],
-        rating = _get_rating(name, d, "rating_tertiary"), rating_b = nothing,
-        rating_c = nothing,
+        rating = _get_rating(name, d, "rating_tertiary"),
+        rating_b = _get_rating(name, d, "rating_b_tertiary"),
+        rating_c = _get_rating(name, d, "rating_c_tertiary"),
         base_power = d["base_power_31"],
         base_voltage_primary = d["base_voltage_tertiary"],
         base_voltage_secondary = d["base_voltage_tertiary"],

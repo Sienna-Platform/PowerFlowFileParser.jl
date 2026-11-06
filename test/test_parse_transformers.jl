@@ -203,3 +203,31 @@ end
     @test t3w["RMA1"] == 1.1002
     @test t3w["CONT1"] == 110
 end
+
+@testset "3W winding ratings map to rating/rating_b/rating_c, and zero means unset" begin
+    for (file, rate_keys) in (
+        ("frankenstein_70.raw", i -> ("RATA$i", "RATB$i", "RATC$i")),
+        ("case25_v35_savnwb.raw", i -> ("RATE$(i)1", "RATE$(i)2", "RATE$(i)3")),
+    )
+        path = joinpath(PSSE_RAW_DIR, file)
+        raw = only(
+            t for t in open(PowerFlowFileParser._parse_pti_data, path)["TRANSFORMER"]
+            if t["K"] != 0
+        )
+        d = only(values(PowerFlowFileParser.parse_file(path)["3w_transformer"]))
+        for (i, winding) in PowerFlowFileParser.WINDING_NAMES
+            rate_a, rate_b, rate_c = (raw[k] for k in rate_keys(i))
+            @test d["rating_$winding"] == rate_a
+            @test get(d, "rating_b_$winding", 0.0) == rate_b
+            @test get(d, "rating_c_$winding", 0.0) == rate_c
+        end
+    end
+
+    # RATCn = 0 on every winding must not erase the RATAn limits.
+    pm = PowerFlowFileParser.PowerModelsData(joinpath(PSSE_RAW_DIR, "frankenstein_70.raw"))
+    sys = PowerFlowFileParser.build_openapi_system(pm; power_units = "NATURAL_UNITS")
+    circuits = PowerFlowFileParser.get_components(sys, "TransformerCircuit")
+    ratings = [PowerFlowFileParser.get_value(c, :rating) for c in circuits]
+    @test issubset([336.0, 268.0, 84.0], ratings)
+    @test !(PowerFlowFileParser.INFINITE_BOUND in ratings)
+end
