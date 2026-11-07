@@ -1684,57 +1684,22 @@ function _psse2pm_transformer!(pm_data::Dict, pti_data::Dict, import_all::Bool, 
                 sub_data["x_tertiary"] = Zx_t
 
                 if pm_data["source_version"] ∈ PSSE_LEGACY_RATING_VERSIONS
-                    sub_data["rating_primary"] =
-                        min(
-                            transformer["RATA1"],
-                            transformer["RATB1"],
-                            transformer["RATC1"],
-                        )
-                    sub_data["rating_secondary"] =
-                        min(
-                            transformer["RATA2"],
-                            transformer["RATB2"],
-                            transformer["RATC2"],
-                        )
-                    sub_data["rating_tertiary"] =
-                        min(
-                            transformer["RATA3"],
-                            transformer["RATB3"],
-                            transformer["RATC3"],
-                        )
-                    sub_data["rating"] = min(
-                        sub_data["rating_primary"],
-                        sub_data["rating_secondary"],
-                        sub_data["rating_tertiary"],
-                    )
+                    rating_keys = i -> ("RATA$i", "RATB$i", "RATC$i")
                 elseif pm_data["source_version"] ∈ PSSE_TWELVE_RATING_VERSIONS
-                    sub_data["rating_primary"] =
-                        min(
-                            transformer["RATE11"],
-                            transformer["RATE12"],
-                            transformer["RATE13"],
-                        )
-                    sub_data["rating_secondary"] =
-                        min(
-                            transformer["RATE21"],
-                            transformer["RATE22"],
-                            transformer["RATE23"],
-                        )
-                    sub_data["rating_tertiary"] =
-                        min(
-                            transformer["RATE31"],
-                            transformer["RATE32"],
-                            transformer["RATE33"],
-                        )
-                    sub_data["rating"] = min(
-                        sub_data["rating_primary"],
-                        sub_data["rating_secondary"],
-                        sub_data["rating_tertiary"],
-                    )
+                    rating_keys = i -> ("RATE$(i)1", "RATE$(i)2", "RATE$(i)3")
                 else
                     error(
                         "Unsupported PSS(R)E source version: $(pm_data["source_version"])",
                     )
+                end
+                # Each winding's A/B/C ratings map to `rating`/`rating_b`/`rating_c`, as they
+                # do to `rate_a`/`rate_b`/`rate_c` on a 2W transformer. A zero B or C rating
+                # means no limit, so its key is left out.
+                for (i, winding) in WINDING_NAMES
+                    rate_a, rate_b, rate_c = (transformer[key] for key in rating_keys(i))
+                    sub_data["rating_$winding"] = rate_a
+                    iszero(rate_b) || (sub_data["rating_b_$winding"] = rate_b)
+                    iszero(rate_c) || (sub_data["rating_c_$winding"] = rate_c)
                 end
 
                 sub_data["r_12"] = br_r12
@@ -1863,6 +1828,13 @@ function _psse2pm_transformer!(pm_data::Dict, pti_data::Dict, import_all::Bool, 
                 for suffix in ["1-2", "2-3", "3-1"]
                     sub_data["ext"]["R$suffix"] = transformer["R$suffix"]
                     sub_data["ext"]["X$suffix"] = transformer["X$suffix"]
+                end
+
+                for winding in 1:3, i in 4:12
+                    rate_key = "RATE$winding$i"
+                    if haskey(transformer, rate_key)
+                        sub_data["ext"][rate_key] = pop!(transformer, rate_key)
+                    end
                 end
 
                 sub_data["index"] = length(pm_data["3w_transformer"]) + 1

@@ -203,3 +203,67 @@ end
     @test t3w["RMA1"] == 1.1002
     @test t3w["CONT1"] == 110
 end
+
+@testset "3W winding ratings map to rating/rating_b/rating_c, and zero means unset" begin
+    for (file, rate_keys) in (
+        ("frankenstein_70.raw", i -> ("RATA$i", "RATB$i", "RATC$i")),
+        ("case25_v35_savnwb.raw", i -> ("RATE$(i)1", "RATE$(i)2", "RATE$(i)3")),
+    )
+        path = joinpath(PSSE_RAW_DIR, file)
+        raw = only(
+            t for t in open(PowerFlowFileParser._parse_pti_data, path)["TRANSFORMER"]
+            if t["K"] != 0
+        )
+        d = only(values(PowerFlowFileParser.parse_file(path)["3w_transformer"]))
+        for (i, winding) in PowerFlowFileParser.WINDING_NAMES
+            rate_a, rate_b, rate_c = (raw[k] for k in rate_keys(i))
+            @test d["rating_$winding"] == rate_a
+            @test get(d, "rating_b_$winding", 0.0) == rate_b
+            @test get(d, "rating_c_$winding", 0.0) == rate_c
+        end
+    end
+
+    # Twelve-rating versions keep ratings 4-12 in ext, as lines and 2W transformers do.
+    path = joinpath(PSSE_RAW_DIR, "case25_v35_savnwb.raw")
+    raw = only(
+        t for t in open(PowerFlowFileParser._parse_pti_data, path)["TRANSFORMER"]
+        if t["K"] != 0
+    )
+    ext = only(values(PowerFlowFileParser.parse_file(path)["3w_transformer"]))["ext"]
+    for winding in 1:3, rating in 4:12
+        key = "RATE$winding$rating"
+        @test ext[key] == raw[key]
+    end
+
+    # (rating, rating_b, rating_c) on each winding's own circuit.
+    function winding_ratings(file)
+        pm = PowerFlowFileParser.PowerModelsData(joinpath(PSSE_RAW_DIR, file))
+        sys = PowerFlowFileParser.build_openapi_system(pm; power_units = "NATURAL_UNITS")
+        circuits = Dict(
+            PowerFlowFileParser.get_value(c, :id) => c for
+            c in PowerFlowFileParser.get_components(sys, "TransformerCircuit")
+        )
+        transformer = only(
+            PowerFlowFileParser.get_components(sys, "ThreeWindingTransformer"),
+        )
+        return [
+            [
+                PowerFlowFileParser.get_value(
+                    circuits[PowerFlowFileParser.get_value(transformer, winding)],
+                    field,
+                ) for field in (:rating, :rating_b, :rating_c)
+            ] for winding in (:primary_circuit, :secondary_circuit, :tertiary_circuit)
+        ]
+    end
+
+    # RATCn = 0 stays unset and must not erase the RATAn and RATBn limits.
+    absent = PowerFlowFileParser.ABSENT
+    @test winding_ratings("frankenstein_70.raw") ==
+          [[336.0, 336.0, absent], [268.0, 268.0, absent], [84.0, 84.0, absent]]
+    # Every rating here is distinct, so a swapped rating or winding can't pass.
+    @test winding_ratings("case25_v35_savnwb.raw") == [
+        [1200.0, 1202.12, 1203.13],
+        [1250.0, 1252.12, 1253.13],
+        [1280.0, 1282.12, 1283.13],
+    ]
+end
