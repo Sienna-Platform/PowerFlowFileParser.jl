@@ -16,7 +16,8 @@ const _NB_SWITCH = NamedTuple{
 }
 
 # The node-breaker tables `_prepare_node_breaker!` produces. Routing reads
-# `terminal_node` (a PSS(R)E TERMINAL key -> the node-bus it selects) and
+# `terminal_node` (a PSS(R)E TERMINAL key -> the node-bus it selects),
+# `terminal_node_3w` (the same for three-winding terminals, keyed on both sibling buses) and
 # `nb_bus_numbers` (the source bus numbers that were split, a fast path that skips the
 # lookup for untouched buses); `_create_node_breaker_switch_entries!` reads `switches`.
 # `node_number` maps (substation index, NI) -> assigned bus number and has no
@@ -24,6 +25,7 @@ const _NB_SWITCH = NamedTuple{
 _new_node_breaker() = (;
     node_number = Dict{Tuple{Int, Int}, Int}(),
     terminal_node = Dict{Tuple{Int, String, Int, String}, Int}(),
+    terminal_node_3w = Dict{Tuple{Int, Int, Int, String}, Int}(),
     nb_bus_numbers = Set{Int}(),
     switches = _NB_SWITCH[],
 )
@@ -164,22 +166,18 @@ function _prepare_node_breaker!(pm_data::Dict)
             # A negative bus number in the secondary-bus column marks the metered end,
             # the same convention the BRANCH and TRANSFORMER sections use; the bus is
             # its magnitude, and routing compares against those normalized endpoints.
-            key = (
-                t["bus"],
-                String(t["type"]),
-                abs(something(get(t, "secondary_bus", 0), 0)),
-                String(t["id"]),
-            )
+            secondary = abs(something(get(t, "secondary_bus", 0), 0))
+            tertiary = abs(something(get(t, "tertiary_bus", 0), 0))
             target = ni_to_no[t["node"]]
-            # Two sections can legitimately share a terminal type (fixed and switched
-            # shunts both use "S"), so the RAW identifier is what separates them. When
-            # two records collide on the same identifier the later one wins, which
-            # silently misroutes one of them.
-            previous = get(nb.terminal_node, key, nothing)
-            if previous !== nothing && previous != target
-                @warn "Substation $idx has two TERMINAL records with key $key selecting different nodes (bus $previous and bus $target). The later record wins; the device matching the earlier one will be attached to bus $target."
+            # A three-winding terminal names both sibling buses. Two transformers can share
+            # I, J and CKT and differ only in K, so the key holds the sibling pair.
+            if String(t["type"]) == "3" && tertiary != 0
+                key3 = (t["bus"], minmax(secondary, tertiary)..., String(t["id"]))
+                _record_terminal!(nb.terminal_node_3w, key3, target, idx)
+                continue
             end
-            nb.terminal_node[key] = target
+            key = (t["bus"], String(t["type"]), secondary, String(t["id"]))
+            _record_terminal!(nb.terminal_node, key, target, idx)
         end
         for d in get(sub, "switching_devices", [])
             (haskey(ni_to_no, d["from_node"]) && haskey(ni_to_no, d["to_node"])) ||
@@ -203,6 +201,18 @@ function _prepare_node_breaker!(pm_data::Dict)
     return nb
 end
 
+# Two sections can legitimately share a terminal type (fixed and switched shunts both
+# use "S"), so the RAW identifier is what separates them. When two records collide on
+# the same key the later one wins, which silently misroutes one of them.
+function _record_terminal!(table::Dict, key, target::Int, substation::Int)
+    previous = get(table, key, nothing)
+    if previous !== nothing && previous != target
+        @warn "Substation $substation has two TERMINAL records with key $key selecting different nodes (bus $previous and bus $target). The later record wins; the device matching the earlier one will be attached to bus $target."
+    end
+    table[key] = target
+    return
+end
+
 _nb_id(id) = String(strip(string(id)))
 
 """
@@ -217,12 +227,14 @@ function _nb_target(nb, busno::Int, typ::String, other, id)
     return something(ni, busno)
 end
 
-# A type-"3" terminal's key carries only one of the winding's two sibling buses
-# (whichever the RAW stored in its secondary-bus column); try both siblings and
-# take whichever hits.
+# A type-"3" terminal that names both sibling buses is keyed on the pair. One that
+# carries only a secondary bus keeps the per-sibling key, so try both siblings there
+# and take whichever hits.
 function _nb_target_3w(nb, busno::Int, ckt, others)
     busno in nb.nb_bus_numbers || return busno
     id = _nb_id(ckt)
+    ni = get(nb.terminal_node_3w, (busno, minmax(others...)..., id), nothing)
+    ni !== nothing && return ni
     for other in others
         ni = get(nb.terminal_node, (busno, "3", other, id), nothing)
         ni !== nothing && return ni

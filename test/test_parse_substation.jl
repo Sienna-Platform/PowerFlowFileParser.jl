@@ -1340,3 +1340,25 @@ end
     )
     @test sort([s["number"] for s in values(pm.data["substation"])]) == [1, 2]
 end
+
+@testset "three-winding transformers that differ only in K land on their own nodes" begin
+    # TWIN_A (2-1-3) and TWIN_B (2-1-4) share I, J and CKT. Their TERMINAL records at bus 2
+    # differ only in K, so the terminal key must carry both sibling buses to tell them apart.
+    file = joinpath(@__DIR__, "fixtures", "synthetic_v35_node_breaker_twin_3w.raw")
+    logs, pm_data = Test.collect_test_logs() do
+        PowerModelsData(file).data
+    end
+    @test !any(r -> occursin("two TERMINAL records", string(r.message)), logs)
+
+    node_bus(ni) = only([
+        b for b in values(pm_data["bus"])
+        if get(get(b, "ext", Dict{String, Any}()), "nb_node", nothing) == ni
+    ])["bus_i"]
+    primary(name) = only([
+        t for t in values(pm_data["3w_transformer"])
+        if strip(t["ext"]["psse_name"]) == name
+    ])["bus_primary"]
+    @test primary("TWIN_A") == node_bus(2)
+    @test primary("TWIN_B") == node_bus(3)
+    @test node_bus(2) != node_bus(3)
+end
