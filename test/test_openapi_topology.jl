@@ -303,3 +303,35 @@ end
     @test isnothing(PFP.get_value(areas["Area2"], :scheduled_net_interchange))
     @test PFP.get_ext(sys, PFP.get_value(areas["Area1"], :id))["ISW"] == "2"
 end
+
+@testset "an off-area load may belong to an area that has no buses" begin
+    # The load's area holds no bus. The Area is created from the load, with its AREA
+    # INTERCHANGE schedule when a record exists and without one when it does not.
+    raw = read_fixture(joinpath(@__DIR__, "fixtures", "v35_off_area_load.raw"))
+    load_record = "     3,'1 ',   1,   1,   1,"
+    area_record = "     1,     2,    25.500,    10.000,'AREA1       '\n"
+    @test occursin(load_record, raw) && occursin(area_record, raw)
+    busless = replace(raw, load_record => "     3,'1 ',   1,   9,   1,")
+    for (label, text, schedule) in (
+        ("with an AREA record",
+            replace(busless,
+                area_record =>
+                    area_record *
+                    "     9,     1,    12.000,    10.000,'AREA9       '\n"),
+            12.0),
+        ("without an AREA record", busless, nothing),
+    )
+        @testset "$label" begin
+            path = joinpath(mktempdir(), "busless_area.raw")
+            write(path, text)
+            sys = PFP.build_openapi_system(PFP.PowerModelsData(path))
+            areas =
+                Dict(PFP.get_value(a, :name) => a for a in PFP.get_components(sys, "Area"))
+            load = only(PFP.get_components(sys, "StandardLoad"))
+            @test PFP.get_value(areas["9"], :out_of_area_load_ids) ==
+                  [PFP.get_value(load, :id)]
+            @test PFP.get_value(areas["9"], :scheduled_net_interchange) == schedule
+            @test isempty(PFP.get_value(areas["1"], :out_of_area_load_ids))
+        end
+    end
+end

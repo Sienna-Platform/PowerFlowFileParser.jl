@@ -218,14 +218,9 @@ function read_loads!(sys::OpenAPISystem, data::Dict; kwargs...)
         bus_area = data["bus"][d["load_bus"]]["area"]
         load_area = get(d, "area", bus_area)
         if load_area != bus_area
-            push!(
-                get!(
-                    off_area_load_ids,
-                    get_id(reg, "Area", _get_area_name(load_area)),
-                    Int[],
-                ),
-                load_id,
-            )
+            # The load's area may hold no bus, so it is created here when no bus made it.
+            area_id = _ensure_area!(sys, data, _get_area_name(load_area), _get_area_name)
+            push!(get!(off_area_load_ids, area_id, Int[]), load_id)
         end
         record_source!(reg, "load", d_key)
 
