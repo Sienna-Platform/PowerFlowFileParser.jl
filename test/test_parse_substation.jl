@@ -289,7 +289,7 @@ end
     # This pass runs before per-unit conversion, so angles stay in degrees.
     @test data["bus"][new_no]["va"] == 5.0
     @test data["bus"][new_no]["bus_type"] == 1
-    @test nb.terminal_node[(10, "B", 30, "1")] == new_no
+    @test nb.terminal_node[(10, "B", 0, 30, "1")] == new_no
     @test length(nb.switches) == 1 && nb.switches[1].closed
     @test nb.switches[1].from == 10 && nb.switches[1].to == new_no
 end
@@ -562,7 +562,7 @@ Q
     end
 end
 
-@testset "_nb_target_3w probes both sibling buses of a 3W winding terminal" begin
+@testset "_nb_target_3w matches a 3W winding terminal whatever its sibling order" begin
     data = Dict{String, Any}(
         "source_type" => "pti",
         "bus" => Dict{Int, Any}(
@@ -595,8 +595,8 @@ end
                         "bus" => 10, "status" => 0),
                 ],
                 "switching_devices" => Dict{String, Any}[],
-                # The RAW stored only the tertiary bus in this terminal's secondary-bus
-                # column, so matching has to try both siblings.
+                # The terminal lists the siblings in the opposite order from the
+                # transformer record, which must not matter.
                 "terminals" => [
                     Dict{String, Any}("bus" => 10, "node" => 2, "type" => "3",
                         "secondary_bus" => 30, "tertiary_bus" => 20,
