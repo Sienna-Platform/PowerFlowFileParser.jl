@@ -215,6 +215,10 @@ function _psse2pm_branch!(pm_data::Dict, pti_data::Dict, import_all::Bool, nb)
                 sub_data["ext"] = Dict{String, Any}(
                     "LEN" => pop!(branch, "LEN"),
                 )
+                # Records from v34 on carry a NAME; it is kept verbatim, like a transformer's.
+                if haskey(branch, "NAME")
+                    sub_data["ext"]["psse_name"] = pop!(branch, "NAME")
+                end
 
                 if pm_data["source_version"] ∈ PSSE_LEGACY_RATING_VERSIONS
                     sub_data["rate_a"] = pop!(branch, "RATEA")
