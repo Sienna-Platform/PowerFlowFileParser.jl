@@ -911,7 +911,7 @@ function _psse2pm_shunt!(
 
             bus_number = pop!(shunt, "I")
             shunt_id = pop!(shunt, "ID")
-            sub_data["shunt_bus"] = _nb_target(nb, bus_number, "S", nothing, shunt_id)
+            sub_data["shunt_bus"] = _nb_target(nb, bus_number, "F", nothing, shunt_id)
             sub_data["gs"] = pop!(shunt, "GL")
             sub_data["bs"] = pop!(shunt, "BL")
             sub_data["status"] = _determine_injector_status(
@@ -1964,7 +1964,7 @@ function _lcc_dc_impedance_base(
 end
 
 """
-    _psse2pm_dcline!(pm_data, pti_data)
+    _psse2pm_dcline!(pm_data, pti_data, import_all, nb)
 
 Parses PSS(R)E-style Two-Terminal and VSC DC Lines data into a PowerModels
 compatible Dict structure by first converting them to a simple DC Line Model.
@@ -1975,7 +1975,7 @@ converter bus, and "IBUS2" is the "IBUS" of the second converter bus, in the
 PSS(R)E Voltage Source Converter specification.
 
 """
-function _psse2pm_dcline!(pm_data::Dict, pti_data::Dict, import_all::Bool)
+function _psse2pm_dcline!(pm_data::Dict, pti_data::Dict, import_all::Bool, nb)
     @info "Parsing PSS(R)E Two-Terminal and VSC DC line data into a PowerModels Dict..."
     pm_data["dcline"] = []
     pm_data["vscline"] = []
@@ -2002,8 +2002,11 @@ function _psse2pm_dcline!(pm_data::Dict, pti_data::Dict, import_all::Bool)
             else
                 strip(dcline["NAME"], ['"', '\''])
             end
-            sub_data["f_bus"] = dcline["IPR"]
-            sub_data["t_bus"] = dcline["IPI"]
+            rectifier_bus = dcline["IPR"]
+            inverter_bus = dcline["IPI"]
+            sub_data["f_bus"] =
+                _nb_target(nb, rectifier_bus, "D", nothing, sub_data["name"])
+            sub_data["t_bus"] = _nb_target(nb, inverter_bus, "D", nothing, sub_data["name"])
             if !haskey(pm_data["bus"], sub_data["f_bus"]) ||
                !haskey(pm_data["bus"], sub_data["t_bus"])
                 @warn "Two-terminal DC line between buses $(sub_data["f_bus"]) and $(sub_data["t_bus"]) references a bus not present in the BUS data. Skipping."
@@ -2077,8 +2080,10 @@ function _psse2pm_dcline!(pm_data::Dict, pti_data::Dict, import_all::Bool)
             sub_data["pt"] = power_demand
             sub_data["qf"] = 0.0
             sub_data["qt"] = 0.0
-            sub_data["vf"] = _get_bus_value(pop!(dcline, "IPR"), "vm", pm_data)
-            sub_data["vt"] = _get_bus_value(pop!(dcline, "IPI"), "vm", pm_data)
+            delete!(dcline, "IPR")
+            delete!(dcline, "IPI")
+            sub_data["vf"] = _get_bus_value(sub_data["f_bus"], "vm", pm_data)
+            sub_data["vt"] = _get_bus_value(sub_data["t_bus"], "vm", pm_data)
 
             sub_data["pminf"] = 0.0
             sub_data["pmaxf"] = dcline["SETVL"] > 0 ? power_demand : -power_demand
@@ -2143,8 +2148,8 @@ function _psse2pm_dcline!(pm_data::Dict, pti_data::Dict, import_all::Bool)
 
             sub_data["source_id"] = [
                 "two-terminal dc",
-                sub_data["f_bus"],
-                sub_data["t_bus"],
+                rectifier_bus,
+                inverter_bus,
                 if pm_data["source_version"] == "30"
                     pop!(dcline, "I")
                 else
@@ -2173,8 +2178,10 @@ function _psse2pm_dcline!(pm_data::Dict, pti_data::Dict, import_all::Bool)
             sub_data["name"] = strip(dcline["NAME"], ['"', '\''])
 
             # VSC intended to be one or bi-directional?
-            sub_data["f_bus"] = from_bus["IBUS"]
-            sub_data["t_bus"] = to_bus["IBUS"]
+            sub_data["f_bus"] =
+                _nb_target(nb, from_bus["IBUS"], "V", nothing, sub_data["name"])
+            sub_data["t_bus"] =
+                _nb_target(nb, to_bus["IBUS"], "V", nothing, sub_data["name"])
             sub_data["base_voltage_from"] =
                 _get_bus_value(sub_data["f_bus"], "base_kv", pm_data)
             sub_data["base_voltage_to"] =
@@ -2295,7 +2302,7 @@ function _psse2pm_dcline!(pm_data::Dict, pti_data::Dict, import_all::Bool)
             )
 
             sub_data["source_id"] =
-                ["vsc dc", sub_data["f_bus"], sub_data["t_bus"], dcline["NAME"]]
+                ["vsc dc", from_bus["IBUS"], to_bus["IBUS"], dcline["NAME"]]
             sub_data["index"] = length(pm_data["vscline"]) + 1
 
             if import_all
@@ -2314,7 +2321,7 @@ function _psse2pm_dcline!(pm_data::Dict, pti_data::Dict, import_all::Bool)
     end
 end
 
-function _psse2pm_facts!(pm_data::Dict, pti_data::Dict, import_all::Bool)
+function _psse2pm_facts!(pm_data::Dict, pti_data::Dict, import_all::Bool, nb)
     @info "Parsing PSS(R)E FACTs devices data into a PowerModels Dict..."
     pm_data["facts"] = []
 
@@ -2330,7 +2337,9 @@ function _psse2pm_facts!(pm_data::Dict, pti_data::Dict, import_all::Bool)
             end
             sub_data["control_mode"] = facts["MODE"]
 
-            sub_data["bus"] = facts["I"]  # Sending end bus number
+            # Sending end bus. The PSS(R)E TERMINAL record of a FACTS device names only
+            # this bus, so the terminal end J keeps its bus number.
+            sub_data["bus"] = _nb_target(nb, facts["I"], "A", nothing, sub_data["name"])
             sub_data["tbus"] = facts["J"] # Terminal end bus number
             sub_data["available"] = _determine_injector_status(
                 facts,
@@ -2370,8 +2379,7 @@ function _psse2pm_facts!(pm_data::Dict, pti_data::Dict, import_all::Bool)
                 error("Unsupported PSS(R)E source version: $(pm_data["source_version"])")
             end
 
-            sub_data["source_id"] =
-                ["facts", sub_data["bus"], sub_data["name"]]
+            sub_data["source_id"] = ["facts", facts["I"], sub_data["name"]]
             sub_data["index"] = length(pm_data["facts"]) + 1
 
             if import_all
@@ -2827,9 +2835,10 @@ function _pti_to_powermodels!(
     _psse2pm_shunt!(pm_data, pti_data, import_all, nb, solved_case)
     _psse2pm_generator!(pm_data, pti_data, import_all, nb)
     _migrate_node_breaker_gen_bus_type!(pm_data, nb)
-    _psse2pm_facts!(pm_data, pti_data, import_all)
+    _psse2pm_facts!(pm_data, pti_data, import_all, nb)
 
-    _psse2pm_dcline!(pm_data, pti_data, import_all)
+    _psse2pm_dcline!(pm_data, pti_data, import_all, nb)
+    _warn_unmatched_terminals(nb)
     _psse2pm_impedance_correction!(pm_data, pti_data, import_all)
     _psse2pm_storage!(pm_data, pti_data, import_all)
 

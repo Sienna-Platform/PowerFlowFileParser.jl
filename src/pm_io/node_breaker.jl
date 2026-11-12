@@ -16,7 +16,8 @@ const _NB_SWITCH = NamedTuple{
 }
 
 # The node-breaker tables `_prepare_node_breaker!` produces. Routing reads
-# `terminal_node` (a PSS(R)E TERMINAL key -> the node-bus it selects) and
+# `terminal_node` (a PSS(R)E TERMINAL key -> the node-bus it selects), records each key
+# it resolves in `matched_terminals`, and reads
 # `nb_bus_numbers` (the source bus numbers that were split, a fast path that skips the
 # lookup for untouched buses); `_create_node_breaker_switch_entries!` reads `switches`.
 # `node_number` maps (substation index, NI) -> assigned bus number and has no
@@ -24,6 +25,7 @@ const _NB_SWITCH = NamedTuple{
 _new_node_breaker() = (;
     node_number = Dict{Tuple{Int, Int}, Int}(),
     terminal_node = Dict{Tuple{Int, String, Int, String}, Int}(),
+    matched_terminals = Set{Tuple{Int, String, Int, String}}(),
     nb_bus_numbers = Set{Int}(),
     switches = _NB_SWITCH[],
 )
@@ -171,10 +173,9 @@ function _prepare_node_breaker!(pm_data::Dict)
                 String(t["id"]),
             )
             target = ni_to_no[t["node"]]
-            # Two sections can legitimately share a terminal type (fixed and switched
-            # shunts both use "S"), so the RAW identifier is what separates them. When
-            # two records collide on the same identifier the later one wins, which
-            # silently misroutes one of them.
+            # Several devices of one type can sit on the same bus, so the RAW identifier
+            # is what separates them. When two records collide on the same identifier
+            # the later one wins, which silently misroutes one of them.
             previous = get(nb.terminal_node, key, nothing)
             if previous !== nothing && previous != target
                 @warn "Substation $idx has two TERMINAL records with key $key selecting different nodes (bus $previous and bus $target). The later record wins; the device matching the earlier one will be attached to bus $target."
@@ -213,8 +214,11 @@ identifier. Falls back to the declared bus number when no terminal claims it.
 """
 function _nb_target(nb, busno::Int, typ::String, other, id)
     busno in nb.nb_bus_numbers || return busno
-    ni = get(nb.terminal_node, (busno, typ, something(other, 0), _nb_id(id)), nothing)
-    return something(ni, busno)
+    key = (busno, typ, something(other, 0), _nb_id(id))
+    ni = get(nb.terminal_node, key, nothing)
+    ni === nothing && return busno
+    push!(nb.matched_terminals, key)
+    return ni
 end
 
 # A type-"3" terminal's key carries only one of the winding's two sibling buses
@@ -224,10 +228,28 @@ function _nb_target_3w(nb, busno::Int, ckt, others)
     busno in nb.nb_bus_numbers || return busno
     id = _nb_id(ckt)
     for other in others
-        ni = get(nb.terminal_node, (busno, "3", other, id), nothing)
-        ni !== nothing && return ni
+        key = (busno, "3", other, id)
+        ni = get(nb.terminal_node, key, nothing)
+        ni === nothing && continue
+        push!(nb.matched_terminals, key)
+        return ni
     end
     return busno
+end
+
+# A TERMINAL record no device looked up leaves that device on its source bus, or
+# belongs to a section the parser does not convert. Either way the substation wiring is
+# not what the file declares, so report it once per case.
+function _warn_unmatched_terminals(nb)
+    unmatched = sort!(collect(setdiff(keys(nb.terminal_node), nb.matched_terminals)))
+    isempty(unmatched) && return
+    counts = Dict{String, Int}()
+    for (_, typ, _, _) in unmatched
+        counts[typ] = get(counts, typ, 0) + 1
+    end
+    by_type = join(("$n of type \"$typ\"" for (typ, n) in sort!(collect(counts))), ", ")
+    @warn "$(length(unmatched)) substation TERMINAL records match no parsed device ($by_type), e.g. (bus, type, other bus, id) = $(first(unmatched)). Devices they describe stay on their source bus."
+    return
 end
 
 """

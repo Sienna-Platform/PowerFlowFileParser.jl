@@ -1,0 +1,75 @@
+@!IC,SBASE,REV,XFRRAT,NXFRAT,BASFRQ
+0,  100.00, 35,     0,     1, 60.00
+Synthetic fictional v35 case with one device of each shunt, DC and FACTS terminal type
+on its own node of a node-breaker substation
+0 / END OF SYSTEM-WIDE DATA, BEGIN BUS DATA
+@!   I,'NAME        ', BASKV, IDE,AREA,ZONE,OWNER, VM,        VA,    NVHI,   NVLO,   EVHI,   EVLO
+     1,'BUSONE      ', 138.0000,3,   1,   1,   1,1.00000,   0.0000,1.10000,0.90000,1.10000,0.90000
+     2,'BUSTWO      ', 138.0000,1,   1,   1,   1,1.00000,   0.0000,1.10000,0.90000,1.10000,0.90000
+     3,'BUSTHREE    ', 138.0000,1,   1,   1,   1,1.00000,   0.0000,1.10000,0.90000,1.10000,0.90000
+     4,'BUSFOUR     ', 138.0000,1,   1,   1,   1,1.00000,   0.0000,1.10000,0.90000,1.10000,0.90000
+0 / END OF BUS DATA, BEGIN LOAD DATA
+     3,'1 ',   1,   1,   1,    50.000,    10.000,     0.000,     0.000,     0.000,     0.000,   1,    1,  0,     0.000,     0.000,    0,'           V'
+0 / END OF LOAD DATA, BEGIN FIXED SHUNT DATA
+@!   I,'ID',STATUS,   GL,        BL
+     2,'1 ',1,     0.000,    10.000
+0 / END OF FIXED SHUNT DATA, BEGIN GENERATOR DATA
+     1,'1 ',    80.000,     0.000,    80.000,   -80.000,1.00000,   0,   0,   100.000, 0.00000E+0, 1.00000E-1, 0.00000E+0, 0.00000E+0,1.00000,1,  100.0,   120.000,     0.000, 0,1,1.0000
+0 / END OF GENERATOR DATA, BEGIN BRANCH DATA
+     2,     1,'1 ', 1.00000E-02, 1.00000E-01,0.02000,'BRANCH_2_1                              ', 500.00, 500.00, 500.00,   0.00,   0.00,   0.00,   0.00,   0.00,   0.00,   0.00,   0.00,   0.00, 0.00000, 0.00000, 0.00000, 0.00000,1,1,  1.00,   1,1.0000
+     1,     3,'1 ', 1.00000E-02, 1.00000E-01,0.02000,'BRANCH_1_3                              ', 500.00, 500.00, 500.00,   0.00,   0.00,   0.00,   0.00,   0.00,   0.00,   0.00,   0.00,   0.00, 0.00000, 0.00000, 0.00000, 0.00000,1,1,  1.00,   1,1.0000
+     1,     4,'1 ', 1.00000E-02, 1.00000E-01,0.02000,'BRANCH_1_4                              ', 500.00, 500.00, 500.00,   0.00,   0.00,   0.00,   0.00,   0.00,   0.00,   0.00,   0.00,   0.00, 0.00000, 0.00000, 0.00000, 0.00000,1,1,  1.00,   1,1.0000
+0 / END OF BRANCH DATA, BEGIN SYSTEM SWITCHING DEVICE DATA
+0 / END OF SYSTEM SWITCHING DEVICE DATA, BEGIN TRANSFORMER DATA
+0 / END OF TRANSFORMER DATA, BEGIN AREA DATA
+0 / END OF AREA DATA, BEGIN TWO-TERMINAL DC DATA
+"DCLINE1     ",1,   5.0000,   100.00,   400.00,   0.0000,  0.00000,  0.00000,'I',     0.00,  20,  1.00000
+     2,  1, 15.000, 10.000, 0.0000, 5.0000, 138.00,1.00000,1.00000,1.10000,0.90000,0.00625,     0,  0,     0,     0,'1 ', 0.0000
+     3,  1, 15.000, 10.000, 0.0000, 5.0000, 138.00,1.00000,1.00000,1.10000,0.90000,0.00625,     0,  0,     0,     0,'1 ', 0.0000
+0 / END OF TWO-TERMINAL DC DATA, BEGIN VSC DC LINE DATA
+'VSCLINE1    ', 1, 0.0000, 1, 1.0, 0, 1.0, 0, 1.0, 0, 1.0
+     2, 1, 1, 150.000,1.05000,1000.0000,1.5000,  0.00, 250.00, 1000.00,0.5000, 100.00,-100.00,   0,   0,100.00
+     4, 2, 1, -20.000,1.02500,1000.0000,1.5000,  0.00, 250.00, 1000.00,0.5000, 100.00,-100.00,   0,   0,100.00
+0 / END OF VSC DC LINE DATA, BEGIN IMPEDANCE CORRECTION DATA
+0 / END OF IMPEDANCE CORRECTION DATA, BEGIN MULTI-TERMINAL DC DATA
+0 / END OF MULTI-TERMINAL DC DATA, BEGIN MULTI-SECTION LINE DATA
+0 / END OF MULTI-SECTION LINE DATA, BEGIN ZONE DATA
+0 / END OF ZONE DATA, BEGIN INTER-AREA TRANSFER DATA
+0 / END OF INTER-AREA TRANSFER DATA, BEGIN OWNER DATA
+0 / END OF OWNER DATA, BEGIN FACTS DEVICE DATA
+"FACTS1      ",     2,     0,1,     0.000,     0.000,1.00000,    50.000,  9999.000,0.90000,1.10000,1.00000,     0.000, 0.05000,  100.0,   1,   0.00000,   0.00000,   0,     2,     0,"            "
+0 / END OF FACTS DEVICE DATA, BEGIN SWITCHED SHUNT DATA
+@!   I,'ID',MODSW,ADJM,STAT,   VSWHI,   VSWLO, SWREG, NREG, RMPCT,'RMIDNT',    BINIT, S1, N1,        B1
+     2,'1 ',    1,   0,   1, 1.05000, 0.95000,     0,    0, 100.0,'        ',   25.000,  1,  5,    10.000
+0 / END OF SWITCHED SHUNT DATA, BEGIN GNE DATA
+0 / END OF GNE DATA, BEGIN INDUCTION MACHINE DATA
+0 / END OF INDUCTION MACHINE DATA, BEGIN SUBSTATION DATA
+@! BEGIN SUBSTATION DATA BLOCK
+@!  IS,                'N A M E'                 ,    LATITUDE,   LONGITUDE,    SGR
+     1,'TERMSUB                                 ',   0.0000000,   0.0000000, 0.0000
+@! BEGIN SUBSTATION NODE DATA
+@!  NI,                'N A M E'                 ,     I,STATUS
+     1,'TERMSUB$NODE1                           ',     2,     1
+     2,'TERMSUB$NODE2                           ',     2,     1
+     3,'TERMSUB$NODE3                           ',     2,     1
+     4,'TERMSUB$NODE4                           ',     2,     1
+     5,'TERMSUB$NODE5                           ',     2,     1
+     6,'TERMSUB$NODE6                           ',     2,     1
+     0 / END OF SUBSTATION NODE DATA, BEGIN SUBSTATION SWITCHING DEVICE DATA
+@!  NI, NJ,CKTID,                'N A M E'                 ,  TYPE,STATUS, NSTAT,     X  ,  RATE1,  RATE2,  RATE3
+     1,  2, '1 ','TERMSUB$CB$12                           ',     2,     1,     1, 0.00010,   0.00,   0.00,   0.00
+     1,  3, '1 ','TERMSUB$CB$13                           ',     2,     1,     1, 0.00010,   0.00,   0.00,   0.00
+     1,  4, '1 ','TERMSUB$CB$14                           ',     2,     1,     1, 0.00010,   0.00,   0.00,   0.00
+     1,  5, '1 ','TERMSUB$CB$15                           ',     2,     1,     1, 0.00010,   0.00,   0.00,   0.00
+     1,  6, '1 ','TERMSUB$CB$16                           ',     2,     1,     1, 0.00010,   0.00,   0.00,   0.00
+     0 / END OF SUBSTATION SWITCHING DEVICE DATA, BEGIN SUBSTATION TERMINAL DATA
+@!   I, NI, TYP,     J,     K, ID
+     2,  1, 'B',     1,       '1 '
+     2,  2, 'F',              '1 '
+     2,  3, 'S',              '1 '
+     2,  4, 'D',              'DCLINE1     '
+     2,  5, 'V',              'VSCLINE1    '
+     2,  6, 'A',              'FACTS1      '
+     0 / END OF SUBSTATION TERMINAL DATA
+0 / END OF SUBSTATION DATA
+Q

@@ -447,7 +447,7 @@ Bus 2 hosts substation nodes 1 and 2; node 2 is out of service and carries the d
      0 / END OF SUBSTATION NODE DATA, BEGIN SUBSTATION SWITCHING DEVICE DATA
      0 / END OF SUBSTATION SWITCHING DEVICE DATA, BEGIN SUBSTATION TERMINAL DATA
      2,  2, 'L',              '1 '
-     2,  2, 'S',              '1 '
+     2,  2, 'F',              '1 '
      2,  2, 'S',              'A '
      2,  2, 'M',              '1 '
      2,  2, 'B',     3,       '1 '
@@ -727,8 +727,8 @@ end
                         "bus" => 10, "status" => 1, "vm" => 1.02, "va" => 0.0),
                 ],
                 "switching_devices" => Dict{String, Any}[],
-                # A fixed shunt and a switched shunt sharing terminal type "S" are only
-                # told apart by their RAW identifier, so the same id on both collides.
+                # Two switched-shunt terminals on one bus with the same RAW identifier
+                # share a key.
                 "terminals" => [
                     Dict{String, Any}("bus" => 10, "node" => 1, "type" => "S",
                         "id" => "1"),
@@ -1339,4 +1339,57 @@ end
         PowerModelsData(path)
     )
     @test sort([s["number"] for s in values(pm.data["substation"])]) == [1, 2]
+end
+
+@testset "fixed shunt, DC line and FACTS terminals route their devices onto their nodes" begin
+    # Bus 2 is split into six nodes. Each device sits on its own node, and the fixed and
+    # switched shunts share ID 1, so the shunt terminal type is what tells them apart.
+    file = joinpath(@__DIR__, "fixtures", "synthetic_v35_node_breaker_terminal_types.raw")
+    logs, pm_data = Test.collect_test_logs() do
+        PowerModelsData(file).data
+    end
+    @test !any(r -> occursin("TERMINAL", string(r.message)), logs)
+
+    node_bus(ni) = only([
+        b for b in values(pm_data["bus"])
+        if get(get(b, "ext", Dict{String, Any}()), "nb_node", nothing) == ni
+    ])["bus_i"]
+    @test allunique(node_bus.(1:6))
+
+    fixed = only(values(pm_data["shunt"]))
+    switched = only(values(pm_data["switched_shunt"]))
+    dc = only(values(pm_data["dcline"]))
+    vsc = only(values(pm_data["vscline"]))
+    facts = only(values(pm_data["facts"]))
+    @test fixed["shunt_bus"] == node_bus(2)
+    @test switched["shunt_bus"] == node_bus(3)
+    # The second converter bus of each line is not split, so it keeps its number.
+    @test (dc["f_bus"], dc["t_bus"]) == (node_bus(4), 3)
+    @test (vsc["f_bus"], vsc["t_bus"]) == (node_bus(5), 4)
+    @test facts["bus"] == node_bus(6)
+    @test dc["vf"] == pm_data["bus"][node_bus(4)]["vm"]
+
+    # Identifiers keep the RAW bus numbers.
+    @test dc["source_id"][2:3] == [2, 3]
+    @test vsc["source_id"][2:3] == [2, 4]
+    @test facts["source_id"][2] == 2
+
+    @test PFP.build_openapi_system(PowerModelsData(file)) isa PFP.OpenAPISystem
+end
+
+@testset "a TERMINAL record that matches no device is reported" begin
+    raw = read_fixture(
+        joinpath(@__DIR__, "fixtures", "synthetic_v35_node_breaker_terminal_types.raw"),
+    )
+    # A load terminal for a load the file does not contain.
+    patched = replace(
+        raw,
+        "     0 / END OF SUBSTATION TERMINAL DATA" => "     2,  2, 'L',              '9 '\n     0 / END OF SUBSTATION TERMINAL DATA",
+    )
+    @test patched != raw
+    @test_logs (
+        :warn,
+        r"1 substation TERMINAL records match no parsed device \(1 of type \"L\"\)",
+    ) match_mode =
+        :any parse_file(IOBuffer(patched); filetype = "raw")
 end
