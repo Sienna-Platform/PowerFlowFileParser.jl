@@ -173,9 +173,9 @@ function _prepare_node_breaker!(pm_data::Dict)
                 String(t["id"]),
             )
             target = ni_to_no[t["node"]]
-            # Several devices of one type can sit on the same bus, so the RAW identifier
-            # is what separates them. When two records collide on the same identifier
-            # the later one wins, which silently misroutes one of them.
+            # PSS(R)E requires a device identifier to be unique among devices of its type
+            # at a bus, so two records on one key point to malformed data. The later
+            # record wins, and the warning names both nodes.
             previous = get(nb.terminal_node, key, nothing)
             if previous !== nothing && previous != target
                 @warn "Substation $idx has two TERMINAL records with key $key selecting different nodes (bus $previous and bus $target). The later record wins; the device matching the earlier one will be attached to bus $target."
