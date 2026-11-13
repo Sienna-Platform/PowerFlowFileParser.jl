@@ -322,13 +322,13 @@ function _con_unique(table::Dict, key, a::ConAction, what::String)
 end
 
 function _con_resolve_3w(pm::Dict, index::_PsseIndex, a::ConAction, action::String)
-    key = (_triple(a.buses[1], a.buses[2], a.buses[3]), _segment_ckt(a.id))
+    key = (_triple(a.buses[1], a.buses[2], a.buses[3]), _psse_id(a.id))
     targets, reason = _con_unique(index.transformer3w, key, a, "three-winding transformer")
     return _con_elements(pm, a, action, targets), reason
 end
 
 function _con_resolve_2w(pm::Dict, index::_PsseIndex, a::ConAction, action::String)
-    key = (_pair(a.buses[1], a.buses[2]), _segment_ckt(a.id))
+    key = (_pair(a.buses[1], a.buses[2]), _psse_id(a.id))
     segments = get(index.multisection, key, Vector{_Target}[])
     if length(segments) > 1
         return Dict{String, Any}[],
@@ -354,7 +354,7 @@ function _con_resolve_injector(
     action::String,
     what::String,
 )
-    targets, reason = _con_unique(table, (only(a.buses), _segment_ckt(a.id)), a, what)
+    targets, reason = _con_unique(table, (only(a.buses), _psse_id(a.id)), a, what)
     return _con_elements(pm, a, action, targets), reason
 end
 
