@@ -390,7 +390,7 @@ function make_series_compensator!(
         rating_b = _natural_value(_get_rating(name, d, "rate_b"), sys_mbase),
         rating_c = _natural_value(_get_rating(name, d, "rate_c"), sys_mbase))
     _add_series_compensator!(sys, reg, name, available, add_arc!(sys, from_id, to_id),
-        (r = d["br_r"], x = d["br_x"]), "FIXED", rating, sys_mbase;
+        (r = d["br_r"], x = d["br_x"]), false, rating, sys_mbase;
         active_power_flow = get(d, "pf", 0.0) * sys_mbase,
         reactive_power_flow = get(d, "qf", 0.0) * sys_mbase,
         ext = get(d, "ext", Dict{String, Any}()))
@@ -406,7 +406,7 @@ function _add_series_compensator!(
     available::Bool,
     arc_id::Int,
     impedance::NamedTuple,
-    control_mode::AbstractString,
+    bypassed::Bool,
     rating::NamedTuple,
     sys_mbase::Float64;
     active_power_flow = 0.0,
@@ -426,7 +426,7 @@ function _add_series_compensator!(
     set_value!(component, :rating, rating.rating, "MVA")
     set_optional_value!(component, :rating_b, get(rating, :rating_b, nothing), "MVA")
     set_optional_value!(component, :rating_c, get(rating, :rating_c, nothing), "MVA")
-    set_value!(component, :control_mode, control_mode)
+    set_value!(component, :bypassed, bypassed)
     set_value!(component, :base_power, sys_mbase, "MVA")
     add_component!(sys, component)
     set_component_ext!(sys, component, ext)

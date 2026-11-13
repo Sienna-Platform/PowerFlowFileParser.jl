@@ -104,7 +104,6 @@ const _DEVICEBASE_INSTANCE_DISPATCHED = Dict{Tuple{String, Symbol}, Symbol}(
     ("Line", :g) => :skip,
     ("SeriesCompensator", :r) => :skip,
     ("SeriesCompensator", :x) => :skip,
-    ("SeriesCompensator", :reactance_limits) => :skip,
     ("GenericArcImpedance", :r) => :skip,
     ("GenericArcImpedance", :x) => :skip,
     ("ThreeWindingTransformer", :r_12) => :skip,

@@ -175,8 +175,9 @@ mapping."""
 const FACTS_CONTROL_MODE_NAMES =
     Dict(0 => "OOS", 1 => "NML", 2 => "BYP", 3 => "NML", 4 => "NML")
 
-# FACTS MODEs whose series link is a `SeriesCompensator`: bypassed, or at constant impedance.
-const FACTS_SERIES_COMPENSATOR_MODES = Dict(2 => "BYPASSED", 3 => "FIXED")
+# FACTS MODEs whose series link is a `SeriesCompensator`, mapped to its `bypassed` flag:
+# MODE 2 bypassed, MODE 3 at constant impedance.
+const FACTS_SERIES_COMPENSATOR_BYPASSED = Dict(2 => true, 3 => false)
 
 function _facts_control_mode(code::Integer)
     if !haskey(FACTS_CONTROL_MODE_NAMES, code)
@@ -231,10 +232,10 @@ function _make_facts_series_link!(
     from_id::Int,
 )
     mode = Int(d["control_mode"])
-    control_mode = get(FACTS_SERIES_COMPENSATOR_MODES, mode, nothing)
-    if isnothing(control_mode)
+    bypassed = get(FACTS_SERIES_COMPENSATOR_BYPASSED, mode, nothing)
+    if isnothing(bypassed)
         mode == 0 ||
-            @warn "Series link of FACTS $name in MODE $mode is not supported; dropping it"
+            @warn "Series link of FACTS $name in MODE $mode is not supported; dropping it. A controlled series link awaits a UPFC type"
         return
     end
     sys_mbase = get_base_power(sys)
@@ -244,7 +245,7 @@ function _make_facts_series_link!(
     rating = (rating = iszero(imx) ? INFINITE_BOUND * sys_mbase : imx,)
     to_id = get_bus_id(reg, Int(d["tbus"]))
     _add_series_compensator!(sys, reg, name, Bool(d["available"]),
-        add_arc!(sys, from_id, to_id), impedance, control_mode, rating, sys_mbase)
+        add_arc!(sys, from_id, to_id), impedance, bypassed, rating, sys_mbase)
     return
 end
 

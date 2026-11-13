@@ -438,7 +438,7 @@ end
     )
 end
 
-@testset "a PSS/E branch with R = 0, X < 0 and no charging becomes a FIXED SeriesCompensator" begin
+@testset "a PSS/E branch with R = 0, X < 0 and no charging becomes a SeriesCompensator" begin
     raw = read(joinpath(@__DIR__, "modified_14bus_system.raw"), String)
     record = "   107,   108,'1 ', 7.98000E-3, 5.01000E-2,   0.00056,"
     @test occursin(record, raw)
@@ -458,7 +458,7 @@ end
         branch = _component_between(sys, type_name, 107, 108)
         @test PFP.get_value(branch, :x) == -0.02
         if type_name == "SeriesCompensator"
-            @test PFP.get_value(branch, :control_mode) == "FIXED"
+            @test PFP.get_value(branch, :bypassed) == false
             @test PFP.get_value(branch, :parameter_units) == "COMPONENT_BASE"
             @test PFP.get_value(branch, :r) == 0.0
             @test_throws ErrorException _component_between(sys, "Line", 107, 108)
