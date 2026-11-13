@@ -99,12 +99,10 @@ end
     @test PFP.get_value(gen, :reactive_power_limits).max ≈ d["qmax"] * base_conversion
     @test PFP.get_value(gen, :base_power) == 50.0
     # ramp_limits (quantity ActivePowerChangeRate, MW/min) belongs to this pass's
-    # power-family quantity set: with no ramp_agc/ramp_10/ramp_30 in `d`,
-    # calculate_ramp_limit falls back to (up = down = abs(pmax)) *without* base_conversion
-    # (`calculate_ramp_limit`'s own documented inconsistency) -- natural_MW = pmax * mbase,
-    # so COMPONENT_BASE's pu = natural_MW / mbase collapses back to plain `pmax`.
-    @test PFP.get_value(gen, :ramp_limits).up ≈ d["pmax"]
-    @test PFP.get_value(gen, :ramp_limits).down ≈ d["pmax"]
+    # power-family quantity set: with no ramp_agc/ramp_10/ramp_30 in `d`, it falls back to
+    # abs(pmax) per minute, which COMPONENT_BASE then states on the device base.
+    @test PFP.get_value(gen, :ramp_limits).up ≈ d["pmax"] * base_conversion
+    @test PFP.get_value(gen, :ramp_limits).down ≈ d["pmax"] * base_conversion
 end
 
 @testset "an out-of-service Matpower generator maps to OFFLINE, an in-service one to ONLINE" begin
@@ -278,13 +276,43 @@ end
           1.0
 end
 
+@testset "MATPOWER ramp_agc is the file's MW/min, on or off the system base" begin
+    pm = PFP.PowerModelsData(joinpath(@__DIR__, "fixtures", "matpower_ramps.m"))
+    sys = PFP.build_openapi_system(pm; power_units = "NATURAL_UNITS")
+    gens = collect(PFP.get_components(sys, "ThermalStandard"))
+    @test sort([PFP.get_value(g, :base_power) for g in gens]) == [50.0, 100.0]
+    for gen in gens
+        @test PFP.get_value(gen, :ramp_limits).up ≈ 5.0
+        @test PFP.get_value(gen, :ramp_limits).down ≈ 5.0
+    end
+end
+
+@testset "hydro ramp limits convert with the system base, off the device base" begin
+    d = Dict{String, Any}(
+        "mbase" => 50.0, "gen_status" => true, "pg" => 0.2, "qg" => 0.0,
+        "pmax" => 0.8, "pmin" => 0.0, "qmax" => 0.3, "qmin" => -0.3,
+        "ramp_agc" => 0.05,  # 5 MW/min on the 100 MVA system base
+    )
+    # 5 MW/min, then stated on the generator's own 50 MVA base.
+    for (power_units, expected) in (("NATURAL_UNITS", 5.0), ("COMPONENT_BASE", 0.1))
+        sys = PFP.OpenAPISystem(100.0; power_units = power_units)
+        reg = PFP.get_registry(sys)
+        bus = _register_test_bus!(sys)
+        PFP.make_hydro_dispatch!(sys, reg, bus, d, "hy1", 100.0)
+        PFP.apply_device_base_conversion!(sys)
+        hydro = only(PFP.get_components(sys, "HydroDispatch"))
+        @test PFP.get_value(hydro, :ramp_limits).up ≈ expected
+        @test PFP.get_value(hydro, :ramp_limits).down ≈ expected
+    end
+end
+
 @testset "calculate_ramp_limit prefers ramp_agc, then ramp_10, then ramp_30, then pmax" begin
     @test PFP.calculate_ramp_limit(Dict("ramp_agc" => 1.0, "pmax" => 9.0), "g") ==
           (up = 1.0, down = 1.0)
     @test PFP.calculate_ramp_limit(Dict("ramp_10" => 2.0, "pmax" => 9.0), "g") ==
-          (up = 2.0, down = 2.0)
+          (up = 0.2, down = 0.2)
     @test PFP.calculate_ramp_limit(Dict("ramp_30" => 3.0, "pmax" => 9.0), "g") ==
-          (up = 3.0, down = 3.0)
+          (up = 0.1, down = 0.1)
     @test PFP.calculate_ramp_limit(Dict("pmax" => 9.0), "g") == (up = 9.0, down = 9.0)
     @test isnothing(
         (@test_logs (:warn, r"Returning nothing") PFP.calculate_ramp_limit(
