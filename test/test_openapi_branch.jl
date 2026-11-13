@@ -708,3 +708,13 @@ end
     @test (@test_logs (:warn, r"negative reactance") PFP._branch_type_psse(
         merge(d, Dict("b_fr" => 0.001)), "charged")) == :line
 end
+
+@testset "Line: the PSS/E branch NAME reaches the component's ext" begin
+    file = joinpath(@__DIR__, "fixtures", "synthetic_v35_node_breaker.raw")
+    sys = PFP.build_openapi_system(PFP.PowerModelsData(file))
+    names = sort([
+        strip(PFP.get_ext(sys, PFP.get_value(c, :id))["psse_name"]) for
+        c in PFP.get_components(sys, "Line")
+    ])
+    @test names == ["BRANCH_2_1", "BRANCH_2_3"]
+end
