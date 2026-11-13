@@ -289,7 +289,7 @@ end
     # This pass runs before per-unit conversion, so angles stay in degrees.
     @test data["bus"][new_no]["va"] == 5.0
     @test data["bus"][new_no]["bus_type"] == 1
-    @test nb.terminal_node[(10, "B", 30, "1")] == new_no
+    @test nb.terminal_node[(10, "B", 0, 30, "1")] == new_no
     @test length(nb.switches) == 1 && nb.switches[1].closed
     @test nb.switches[1].from == 10 && nb.switches[1].to == new_no
 end
@@ -562,7 +562,7 @@ Q
     end
 end
 
-@testset "_nb_target_3w probes both sibling buses of a 3W winding terminal" begin
+@testset "_nb_target_3w matches a 3W winding terminal whatever its sibling order" begin
     data = Dict{String, Any}(
         "source_type" => "pti",
         "bus" => Dict{Int, Any}(
@@ -595,8 +595,8 @@ end
                         "bus" => 10, "status" => 0),
                 ],
                 "switching_devices" => Dict{String, Any}[],
-                # The RAW stored only the tertiary bus in this terminal's secondary-bus
-                # column, so matching has to try both siblings.
+                # The terminal lists the siblings in the opposite order from the
+                # transformer record, which must not matter.
                 "terminals" => [
                     Dict{String, Any}("bus" => 10, "node" => 2, "type" => "3",
                         "secondary_bus" => 30, "tertiary_bus" => 20,
@@ -1339,6 +1339,28 @@ end
         PowerModelsData(path)
     )
     @test sort([s["number"] for s in values(pm.data["substation"])]) == [1, 2]
+end
+
+@testset "three-winding transformers that differ only in K land on their own nodes" begin
+    # TWIN_A (2-1-3) and TWIN_B (2-1-4) share I, J and CKT. Their TERMINAL records at bus 2
+    # differ only in K, so the terminal key must carry both sibling buses to tell them apart.
+    file = joinpath(@__DIR__, "fixtures", "synthetic_v35_node_breaker_twin_3w.raw")
+    logs, pm_data = Test.collect_test_logs() do
+        PowerModelsData(file).data
+    end
+    @test !any(r -> occursin("two TERMINAL records", string(r.message)), logs)
+
+    node_bus(ni) = only([
+        b for b in values(pm_data["bus"])
+        if get(get(b, "ext", Dict{String, Any}()), "nb_node", nothing) == ni
+    ])["bus_i"]
+    primary(name) = only([
+        t for t in values(pm_data["3w_transformer"])
+        if strip(t["ext"]["psse_name"]) == name
+    ])["bus_primary"]
+    @test primary("TWIN_A") == node_bus(2)
+    @test primary("TWIN_B") == node_bus(3)
+    @test node_bus(2) != node_bus(3)
 end
 
 @testset "fixed shunt, DC line and FACTS terminals route their devices onto their nodes" begin

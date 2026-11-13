@@ -24,9 +24,9 @@ const _NB_SWITCH = NamedTuple{
 # production consumer: it exists for tests and debugging.
 _new_node_breaker() = (;
     node_number = Dict{Tuple{Int, Int}, Int}(),
-    terminal_node = Dict{Tuple{Int, String, Int, String}, Int}(),
-    matched_terminals = Set{Tuple{Int, String, Int, String}}(),
-    unplaced_terminals = Tuple{Int, String, Int, String}[],
+    terminal_node = Dict{Tuple{Int, String, Int, Int, String}, Int}(),
+    matched_terminals = Set{Tuple{Int, String, Int, Int, String}}(),
+    unplaced_terminals = Tuple{Int, String, Int, Int, String}[],
     nb_bus_numbers = Set{Int}(),
     switches = _NB_SWITCH[],
 )
@@ -166,10 +166,15 @@ function _prepare_node_breaker!(pm_data::Dict)
             # A negative bus number in the secondary-bus column marks the metered end,
             # the same convention the BRANCH and TRANSFORMER sections use; the bus is
             # its magnitude, and routing compares against those normalized endpoints.
+            # A three-winding terminal names both sibling buses, and two transformers can
+            # share I, J and CKT and differ only in K, so the key holds the sorted pair
+            # (the tertiary bus is 0 for every other terminal type).
+            secondary = abs(something(get(t, "secondary_bus", 0), 0))
+            tertiary = abs(something(get(t, "tertiary_bus", 0), 0))
             key = (
                 t["bus"],
                 String(t["type"]),
-                abs(something(get(t, "secondary_bus", 0), 0)),
+                minmax(secondary, tertiary)...,
                 _psse_id(t["id"]),
             )
             # The node is missing from the substation, or sits on a bus with no BUS
@@ -223,7 +228,7 @@ end
 function _nb_target(nb, busno::Int, typs::Tuple, other, id)
     busno in nb.nb_bus_numbers || return busno
     for typ in typs
-        key = (busno, typ, something(other, 0), _psse_id(id))
+        key = (busno, typ, minmax(something(other, 0), 0)..., _psse_id(id))
         ni = get(nb.terminal_node, key, nothing)
         ni === nothing && continue
         push!(nb.matched_terminals, key)
@@ -232,25 +237,19 @@ function _nb_target(nb, busno::Int, typs::Tuple, other, id)
     return busno
 end
 
-# A type-"3" terminal's key carries only one of the winding's two sibling buses
-# (whichever the RAW stored in its secondary-bus column); try both siblings and
-# take whichever hits.
+# A type-"3" terminal is keyed on its winding's two sibling buses, in sorted order.
 function _nb_target_3w(nb, busno::Int, ckt, others)
     busno in nb.nb_bus_numbers || return busno
-    id = _psse_id(ckt)
-    for other in others
-        key = (busno, "3", other, id)
-        ni = get(nb.terminal_node, key, nothing)
-        ni === nothing && continue
-        push!(nb.matched_terminals, key)
-        return ni
-    end
-    return busno
+    key = (busno, "3", minmax(others...)..., _psse_id(ckt))
+    ni = get(nb.terminal_node, key, nothing)
+    ni === nothing && return busno
+    push!(nb.matched_terminals, key)
+    return ni
 end
 
 function _terminal_counts_by_type(keys)
     counts = Dict{String, Int}()
-    for (_, typ, _, _) in keys
+    for (_, typ, _, _, _) in keys
         counts[typ] = get(counts, typ, 0) + 1
     end
     return join(("$n of type \"$typ\"" for (typ, n) in sort!(collect(counts))), ", ")
@@ -263,11 +262,11 @@ end
 function _warn_unmatched_terminals(nb)
     unplaced = sort(nb.unplaced_terminals)
     if !isempty(unplaced)
-        @warn "$(length(unplaced)) substation TERMINAL records name a node that is not in their substation or lies on a bus with no BUS record ($(_terminal_counts_by_type(unplaced))), e.g. (bus, type, other bus, id) = $(first(unplaced)). Devices they describe stay on their source bus."
+        @warn "$(length(unplaced)) substation TERMINAL records name a node that is not in their substation or lies on a bus with no BUS record ($(_terminal_counts_by_type(unplaced))), e.g. (bus, type, sorted other buses, id) = $(first(unplaced)). Devices they describe stay on their source bus."
     end
     unmatched = sort!(collect(setdiff(keys(nb.terminal_node), nb.matched_terminals)))
     if !isempty(unmatched)
-        @warn "$(length(unmatched)) substation TERMINAL records match no parsed device ($(_terminal_counts_by_type(unmatched))), e.g. (bus, type, other bus, id) = $(first(unmatched)). Devices they describe stay on their source bus."
+        @warn "$(length(unmatched)) substation TERMINAL records match no parsed device ($(_terminal_counts_by_type(unmatched))), e.g. (bus, type, sorted other buses, id) = $(first(unmatched)). Devices they describe stay on their source bus."
     end
     return
 end
