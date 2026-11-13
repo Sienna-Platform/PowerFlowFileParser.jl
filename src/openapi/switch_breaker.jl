@@ -3,8 +3,10 @@
 #
 # None of "switch"/"breaker"/"generic_connector" are native PowerModels sections —
 # `_psse2pm_switch_breaker!` (`pm_io/psse.jl`) writes their fields directly from PSS/E
-# records with no `_make_per_unit!` pass, so every value here is used exactly as parsed:
-# no `sys_mbase` scaling anywhere in this file, matching the oracle.
+# records with no `_make_per_unit!` pass, so every parsed value is already natural units
+# and is used as parsed. The one scaled value is the unbounded placeholder for an unset
+# `rating`: `INFINITE_BOUND * sys_mbase` MVA, the same MVA a `Line` gets from
+# `_get_rating` (whose per-unit result `make_line!` multiplies by `sys_mbase`).
 #
 # `state`'s isolated-bus zeroing already happened while parsing
 # (`branch_isolated_bus_modifications!`, `pm_io/psse.jl`), so unlike `make_line!`/
@@ -40,6 +42,32 @@ function _discrete_branch_status(code::Integer)
     throw(IS.DataFormatError("unsupported discrete branch status=$code"))
 end
 
+_unset_switch_rating(d::Dict, key::AbstractString) =
+    !haskey(d, key) || isapprox(d[key], 0.0)
+
+"""
+Switch `rating` in MVA. PSS/E writes 0 for an unset rating, so a missing or zero value
+becomes the unbounded placeholder, matching `_get_rating` for lines.
+"""
+function _switch_rating(name::AbstractString, d::Dict, sys_mbase::Float64)
+    if _unset_switch_rating(d, "rating")
+        @info "$name rating value: $(get(d, "rating", nothing)). Unbounded value implied as per PSS/E manual."
+        return INFINITE_BOUND * sys_mbase
+    end
+    return Float64(d["rating"])
+end
+
+"""
+Optional switch `rating_b`/`rating_c` in MVA: a missing or zero value means unset
+(`nothing`), so a consumer of the emergency rating falls back to `rating`. Lines follow the
+same rule: the PSS/E parser deletes a zero `rate_b`/`rate_c` (`pm_io/psse.jl`), and
+`_get_rating` returns `nothing` for a missing optional rating.
+"""
+function _optional_switch_rating(d::Dict, key::AbstractString)
+    _unset_switch_rating(d, key) && return nothing
+    return Float64(d[key])
+end
+
 """
 A switch, breaker, or generic connector as a `DiscreteControlledACBranch`. Ported from
 PSCB's `make_switch_breaker`. `base_power` is set explicitly here because
@@ -68,9 +96,9 @@ function make_switch_breaker!(
     set_value!(component, :base_power, sys_mbase, "MVA")
     set_value!(component, :r, d["r"], "pu")
     set_value!(component, :x, d["x"], "pu")
-    # Verbatim-oracle passthrough: unlike `_get_rating` (Line/TransformerCircuit), PSCB's
-    # own `make_switch_breaker` never treats a zero rating as INFINITE_BOUND here.
-    set_value!(component, :rating, d["rating"], "MVA")
+    set_value!(component, :rating, _switch_rating(name, d, sys_mbase), "MVA")
+    set_optional_value!(component, :rating_b, _optional_switch_rating(d, "rating_b"), "MVA")
+    set_optional_value!(component, :rating_c, _optional_switch_rating(d, "rating_c"), "MVA")
     set_value!(
         component,
         :discrete_branch_type,
