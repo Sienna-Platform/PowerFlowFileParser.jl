@@ -458,7 +458,7 @@ end
         branch = _component_between(sys, type_name, 107, 108)
         @test PFP.get_value(branch, :x) == -0.02
         if type_name == "SeriesCompensator"
-            @test PFP.get_value(branch, :control_mode) == "FIXED"
+            @test PFP.get_value(branch, :bypassed) === false
             @test PFP.get_value(branch, :parameter_units) == "COMPONENT_BASE"
             @test PFP.get_value(branch, :r) == 0.0
             @test_throws ErrorException _component_between(sys, "Line", 107, 108)

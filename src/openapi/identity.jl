@@ -11,7 +11,8 @@ number cannot double as an id.
 
 Id allocation is delegated to `document` rather than kept in a second counter that could
 drift from the document's own. Not serialized: every lookup index here is recoverable
-from the emitted document.
+from the emitted document. `dynamic_injectors` maps a static generator name to the id of its
+dynamic injection, set before the generator is staged so the generator can name it.
 """
 struct IdRegistry
     document::PC.SystemDocument
@@ -20,6 +21,7 @@ struct IdRegistry
     arcs::Dict{Tuple{Int, Int}, Int}
     by_source::Dict{Tuple{String, Any}, Int}
     last_registered::Base.RefValue{Int}
+    dynamic_injectors::Dict{String, Int}
 end
 
 function IdRegistry(document::PC.SystemDocument)
@@ -30,6 +32,7 @@ function IdRegistry(document::PC.SystemDocument)
         Dict{Tuple{Int, Int}, Int}(),
         Dict{Tuple{String, Any}, Int}(),
         Ref(0),
+        Dict{String, Int}(),
     )
 end
 
@@ -149,4 +152,25 @@ function find_by_name(reg::IdRegistry, type_names, name::AbstractString)
         throw(IS.DataFormatError("ambiguous name=$name matches types [$found]"))
     end
     return matches[1]
+end
+
+"""
+Bus id for a regulated-bus reference stated as a bus number, or `nothing` for the device's
+own bus. Zero (PSS/E's "local") and the device's own bus both mean the own bus: the schemas
+reject a `remote_regulated_bus` equal to the connection bus. A bus number that is not a bus of
+the case warns and gives `nothing`.
+"""
+function _remote_regulated_bus(reg::IdRegistry, bus_number::Int, own_bus_id::Int)
+    if iszero(bus_number)
+        return nothing
+    end
+    if !has_bus_id(reg, bus_number)
+        @warn "Regulated bus $bus_number is not a bus of the case. The device is taken to regulate its own bus."
+        return nothing
+    end
+    regulated_id = get_bus_id(reg, bus_number)
+    if regulated_id == own_bus_id
+        return nothing
+    end
+    return regulated_id
 end

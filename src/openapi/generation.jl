@@ -158,6 +158,20 @@ function _is_likely_motor_load(d::Dict, gen_name::AbstractString)
     return
 end
 
+"""
+`remote_regulated_bus` from PSS/E `IREG`: the id of the regulated bus, or null for the
+generator's own bus (`IREG = 0`, or `IREG` equal to the connection bus).
+"""
+function _set_remote_regulated_bus!(component, reg::IdRegistry, pm_gen::Dict, bus_id::Int)
+    ireg = Int(get(get(pm_gen, "ext", Dict{String, Any}()), "IREG", 0))
+    _set_nullable!(
+        component,
+        :remote_regulated_bus,
+        _remote_regulated_bus(reg, ireg, bus_id),
+    )
+    return
+end
+
 """Copy a generator's PSS/E `ext` blob, folding in the source-impedance fields PSCB
 stashes there under `"r"`/`"x"`/`"rt"`/`"xt"` when present. Ported from the `ext`-merging
 block shared by PSCB's `make_thermal_gen` and `make_synchronous_condenser`."""
@@ -231,6 +245,8 @@ function make_thermal_generator!(
     set_value!(component, :available, Bool(pm_gen["gen_status"]))
     set_value!(component, :status, _thermal_status(gen_name, pm_gen["gen_status"]))
     set_value!(component, :bus, bus_id)
+    _set_remote_regulated_bus!(component, reg, pm_gen, bus_id)
+    _set_dynamic_injector!(component, reg, gen_name)
     set_value!(component, :operation_cost, make_thermal_cost(gen_name, pm_gen, sys_mbase))
     set_value!(component, :active_power,
         _natural_value(pm_gen["pg"] * base_conversion, mbase),
@@ -273,6 +289,7 @@ function _make_hydro_dispatch_body!(
     set_value!(component, :name, gen_name)
     set_value!(component, :available, Bool(pm_gen["gen_status"]))
     set_value!(component, :bus, bus_id)
+    _set_remote_regulated_bus!(component, reg, pm_gen, bus_id)
     set_value!(component, :operation_cost, make_hydro_cost())
     set_value!(component, :prime_mover_type, prime_mover_type(get(pm_gen, "type", "OT")))
     set_value!(component, :active_power,
@@ -341,6 +358,7 @@ function make_renewable_dispatch!(
     set_value!(component, :name, gen_name)
     set_value!(component, :available, Bool(pm_gen["gen_status"]))
     set_value!(component, :bus, bus_id)
+    _set_remote_regulated_bus!(component, reg, pm_gen, bus_id)
     set_value!(component, :operation_cost, make_renewable_cost())
     set_value!(component, :prime_mover_type, prime_mover_type(get(pm_gen, "type", "OT")))
     set_value!(component, :active_power,
@@ -413,6 +431,8 @@ function make_synchronous_condenser!(
     set_value!(component, :name, gen_name)
     set_value!(component, :available, Bool(pm_gen["gen_status"]))
     set_value!(component, :bus, bus_id)
+    _set_remote_regulated_bus!(component, reg, pm_gen, bus_id)
+    _set_dynamic_injector!(component, reg, gen_name)
     set_value!(component, :reactive_power,
         _natural_value(pm_gen["qg"] * base_conversion, mbase), "MVAr")
     set_value!(component, :rating, _natural_value(rating, mbase), "MVA")
@@ -654,6 +674,9 @@ function read_generation!(sys::OpenAPISystem, data::Dict; kwargs...)
     reg = get_registry(sys)
     sys_mbase = get_base_power(sys)
     _get_name = get(kwargs, :gen_name_formatter, _get_pm_dict_name)
+    records = get(kwargs, :dyr, DynamicRecords())
+    used = Set{Tuple{Int, String}}()
+    frequency = _dynamics_frequency(data, records)
 
     for (gen_key, pm_gen) in _sorted_pm_entries(data["gen"])
         gen_name = String(_get_name(pm_gen))
@@ -661,10 +684,19 @@ function read_generation!(sys::OpenAPISystem, data::Dict; kwargs...)
         fuel = get(pm_gen, "fuel", "OTHER")
         unit_type = get(pm_gen, "type", "OT")
         type_name = get_generator_type(fuel, unit_type, GENERATOR_MAPPING_PM)
+        if !isempty(records) &&
+           _apply_generator_dynamics!(
+            sys, reg, records, used, type_name, bus_id, pm_gen, gen_name, sys_mbase,
+            frequency,
+        )
+            record_source!(reg, "gen", gen_key)
+            continue
+        end
         _make_generator!(Val(Symbol(type_name)), sys, reg, bus_id, pm_gen, gen_name,
             sys_mbase)
         record_source!(reg, "gen", gen_key)
     end
+    _report_unused_dynamics(records, used)
 
     for (_, pm_storage) in _sorted_pm_entries(get(data, "storage", Dict{String, Any}()))
         storage_name = String(_get_name(pm_storage))

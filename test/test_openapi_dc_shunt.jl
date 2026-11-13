@@ -229,11 +229,17 @@ end
     facts = only(PFP.get_components(sys, "FACTSControlDevice"))
     @test PFP.get_value(facts, :control_mode) == "NML"
     @test PFP.get_value(facts, :available) == d["available"]
-    @test PFP.get_value(facts, :voltage_setpoint_units) == "COMPONENT_BASE"
-    @test PFP.get_value(facts, :voltage_setpoint) == d["voltage_setpoint"]
     @test PFP.get_value(facts, :max_shunt_current) == d["max_shunt_current"]
     @test PFP.get_value(facts, :reactive_power_required) == 0.0
-    @test PFP.get_value(facts, :regulated_bus_number) == d["regulated_bus_number"]
+    # FCREG = 0 regulates the sending end bus: null `remote_regulated_bus`, and the FACTS
+    # VSET lands on that bus.
+    @test d["regulated_bus_number"] == 0
+    @test PFP.get_value(facts, :remote_regulated_bus) === nothing
+    bus = only(
+        b for
+        b in PFP.get_components(sys, "ACBus") if PFP.get_value(b, :number) == d["bus"]
+    )
+    @test PFP.get_value(bus, :voltage_setpoint) == d["voltage_setpoint"]
 end
 
 @testset "_facts_control_mode: series MODEs 3/4 keep a normal shunt link; IPFC MODEs fail" begin
@@ -247,13 +253,13 @@ end
     record = "'FACTS      1',   108,     0,1,"
     series = "     0.000, 0.05000,  100.0,   1,   0.00000,   0.00000,"
     @test occursin(record, raw) && occursin(series, raw)
-    for (mode, control_mode) in ((2, "BYPASSED"), (3, "FIXED"), (1, nothing))
+    for (mode, bypassed) in ((2, true), (3, false), (1, nothing))
         # IMX = 500 MVA, SET1 = 0.001 pu, SET2 = -0.02 pu.
         edited = replace(raw, record => "'FACTS      1',   108,   107,$mode,",
             series => "   500.000, 0.05000,  100.0,   1,   0.00100,  -0.02000,")
         path = joinpath(mktempdir(), "facts_mode_$mode.raw")
         write(path, edited)
-        if isnothing(control_mode)
+        if isnothing(bypassed)
             sys =
                 Test.@test_logs (:warn, r"MODE 1 is not supported") match_mode = :any PFP.build_openapi_system(
                     PFP.PowerModelsData(path))
@@ -262,7 +268,7 @@ end
         end
         sys = PFP.build_openapi_system(PFP.PowerModelsData(path))
         compensator = only(PFP.get_components(sys, "SeriesCompensator"))
-        @test PFP.get_value(compensator, :control_mode) == control_mode
+        @test PFP.get_value(compensator, :bypassed) == bypassed
         @test PFP.get_value(compensator, :rating) == 500.0
         @test PFP.get_value(compensator, :r) == (mode == 3 ? 0.001 : 0.0)
         @test PFP.get_value(compensator, :x) == (mode == 3 ? -0.02 : 0.0)
@@ -405,7 +411,7 @@ end
     @test PFP.get_value(vsc, :dc_power_setpoint_from) ≈ 0.02 * 100.0
     @test PFP.get_value(vsc, :dc_voltage_setpoint_from) === PFP.ABSENT
     @test PFP.get_value(vsc, :power_factor_setpoint_from) == 1.0
-    @test PFP.get_value(vsc, :ac_voltage_setpoint_from) === PFP.ABSENT
+    @test PFP.get_value(vsc, :remote_regulated_bus_from) === nothing
     # The RAW records currents in A; the schema stores kA.
     @test PFP.get_value(vsc, :dc_current) ≈ 10.0 / 1000
     # The pm dict keeps the RAW's RDC in ohms: r = 0.5 ohm, so g = 2 S.
@@ -484,7 +490,8 @@ end
         ),
     )
     @test PFP.get_value(vsc_ac, :ac_control_from) == "AC_VOLTAGE"
-    @test PFP.get_value(vsc_ac, :ac_voltage_setpoint_from) ≈ 140.76
+    # The AC voltage setpoint is the regulated bus's `voltage_setpoint`, not a converter field.
+    @test PFP.get_value(vsc_ac, :remote_regulated_bus_from) === nothing
     @test PFP.get_value(vsc_ac, :power_factor_setpoint_from) === PFP.ABSENT
     # See the vsc_dc case above: voltage_limits_to has no pm dict source.
     @test PFP.get_value(vsc_ac, :voltage_limits_to) === PFP.ABSENT
@@ -507,10 +514,6 @@ end
     PFP.set_value!(vsc, :dc_control_to, "DC_VOLTAGE")
     PFP.set_value!(vsc, :dc_voltage_setpoint_to, 515.0, "kV")
     @test PFP.get_value(vsc, :dc_voltage_setpoint_to) == 515.0
-
-    PFP.set_value!(vsc, :ac_control_from, "AC_VOLTAGE")
-    PFP.set_value!(vsc, :ac_voltage_setpoint_from, 1.02 * 138.0, "kV")
-    @test PFP.get_value(vsc, :ac_voltage_setpoint_from) == 140.76
 
     PFP.set_value!(vsc, :dc_power_setpoint_to, 40.0, "MW")
     @test PFP.get_value(vsc, :dc_power_setpoint_to) == 40.0
