@@ -68,9 +68,10 @@ function make_switch_breaker!(
     set_value!(component, :base_power, sys_mbase, "MVA")
     set_value!(component, :r, d["r"], "pu")
     set_value!(component, :x, d["x"], "pu")
-    # Verbatim-oracle passthrough: unlike `_get_rating` (Line/TransformerCircuit), PSCB's
-    # own `make_switch_breaker` never treats a zero rating as INFINITE_BOUND here.
-    set_value!(component, :rating, d["rating"], "MVA")
+    # A zero rating means the device's rating check is bypassed (PSS/E DataFormats,
+    # Switching Device Rating Table), so it is unbounded, as for a `Line`.
+    rating = iszero(d["rating"]) ? INFINITE_BOUND * sys_mbase : d["rating"]
+    set_value!(component, :rating, rating, "MVA")
     set_value!(
         component,
         :discrete_branch_type,

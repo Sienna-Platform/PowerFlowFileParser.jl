@@ -447,7 +447,7 @@ Bus 2 hosts substation nodes 1 and 2; node 2 is out of service and carries the d
      0 / END OF SUBSTATION NODE DATA, BEGIN SUBSTATION SWITCHING DEVICE DATA
      0 / END OF SUBSTATION SWITCHING DEVICE DATA, BEGIN SUBSTATION TERMINAL DATA
      2,  2, 'L',              '1 '
-     2,  2, 'S',              '1 '
+     2,  2, 'F',              '1 '
      2,  2, 'S',              'A '
      2,  2, 'M',              '1 '
      2,  2, 'B',     3,       '1 '
@@ -727,8 +727,8 @@ end
                         "bus" => 10, "status" => 1, "vm" => 1.02, "va" => 0.0),
                 ],
                 "switching_devices" => Dict{String, Any}[],
-                # A fixed shunt and a switched shunt sharing terminal type "S" are only
-                # told apart by their RAW identifier, so the same id on both collides.
+                # Two switched-shunt terminals on one bus with the same RAW identifier
+                # share a key.
                 "terminals" => [
                     Dict{String, Any}("bus" => 10, "node" => 1, "type" => "S",
                         "id" => "1"),
@@ -1361,4 +1361,139 @@ end
     @test primary("TWIN_A") == node_bus(2)
     @test primary("TWIN_B") == node_bus(3)
     @test node_bus(2) != node_bus(3)
+end
+
+@testset "fixed shunt, DC line and FACTS terminals route their devices onto their nodes" begin
+    # Bus 2 is split into seven nodes. Each device sits on its own node, and the fixed and
+    # switched shunts share ID 1, so the shunt terminal type is what tells them apart.
+    # FACTS2 runs from unsplit bus 1 to node 7 of bus 2.
+    file = joinpath(@__DIR__, "fixtures", "synthetic_v35_node_breaker_terminal_types.raw")
+    logs, pm_data = Test.collect_test_logs() do
+        PowerModelsData(file).data
+    end
+    @test !any(r -> occursin("TERMINAL", string(r.message)), logs)
+
+    node_bus(ni) = only([
+        b for b in values(pm_data["bus"])
+        if get(get(b, "ext", Dict{String, Any}()), "nb_node", nothing) == ni
+    ])["bus_i"]
+    @test allunique(node_bus.(1:7))
+
+    fixed = only(values(pm_data["shunt"]))
+    switched = only(values(pm_data["switched_shunt"]))
+    dc = only(values(pm_data["dcline"]))
+    vsc = only(values(pm_data["vscline"]))
+    facts_named(name) = only(f for f in values(pm_data["facts"]) if strip(f["name"]) == name)
+    facts = facts_named("FACTS1")
+    facts2 = facts_named("FACTS2")
+    @test fixed["shunt_bus"] == node_bus(2)
+    @test switched["shunt_bus"] == node_bus(3)
+    # The second converter bus of each line is not split, so it keeps its number.
+    @test (dc["f_bus"], dc["t_bus"]) == (node_bus(4), 3)
+    @test (vsc["f_bus"], vsc["t_bus"]) == (node_bus(5), 4)
+    @test facts["bus"] == node_bus(6)
+    @test (facts2["bus"], facts2["tbus"]) == (1, node_bus(7))
+    @test dc["vf"] == pm_data["bus"][node_bus(4)]["vm"]
+
+    # Identifiers keep the RAW bus numbers.
+    @test dc["source_id"][2:3] == [2, 3]
+    @test vsc["source_id"][2:3] == [2, 4]
+    @test facts["source_id"][2] == 2
+
+    # A bus outage on RAW bus 2 removes every device on any of its nodes.
+    con = joinpath(mktempdir(), "bus2.con")
+    write(con, "CONTINGENCY 'B2'\nDISCONNECT BUS 2\nEND\nEND\n")
+    Logging.with_logger(Logging.NullLogger()) do
+        PFP.add_contingencies!(pm_data, con)
+    end
+    outaged = Set(
+        (e["section"], e["key"]) for e in pm_data["contingency"]["B2"]["elements"]
+    )
+    for (section, device) in
+        (("dcline", dc), ("vscline", vsc), ("facts", facts), ("facts", facts2))
+        key = only(k for (k, e) in pm_data[section] if e === device)
+        @test (section, key) in outaged
+    end
+
+    @test PFP.build_openapi_system(PowerModelsData(file)) isa PFP.OpenAPISystem
+end
+
+@testset "TERMINAL ids match devices case-insensitively" begin
+    file = joinpath(@__DIR__, "fixtures", "synthetic_v35_node_breaker_terminal_types.raw")
+    raw = read_fixture(file)
+    patched = replace(raw, "'FACTS1      '" => "'facts1      '")
+    @test patched != raw
+    logs, pm_data = Test.collect_test_logs() do
+        parse_file(IOBuffer(patched); filetype = "raw")
+    end
+    @test !any(r -> occursin("TERMINAL", string(r.message)), logs)
+    facts = only(f for f in values(pm_data["facts"]) if strip(f["name"]) == "FACTS1")
+    @test pm_data["bus"][facts["bus"]]["ext"]["nb_node"] == 6
+end
+
+@testset "AC line and two-winding transformer TERMINAL codes are interchangeable" begin
+    # Node 2 of bus 2 carries both the branch to bus 3 and transformer T1, so each is
+    # routed off its source bus only when its terminal record matches.
+    raw = OOS_NODE_DEVICE_RAW
+    quiet_parse(text) =
+        Logging.with_logger(Logging.NullLogger()) do
+            parse_file(IOBuffer(text); filetype = "raw")
+        end
+    route(pm_data, kind) = only(
+        (e["f_bus"], e["t_bus"]) for e in values(pm_data["branch"])
+        if e["source_id"][1] == kind && e["source_id"][2:3] == [2, 3]
+    )
+    expected = quiet_parse(raw)
+    @test route(expected, "branch")[1] != 2
+    @test route(expected, "transformer")[1] != 2
+    for (kind, from, to) in (
+        (
+            "branch",
+            "     2,  2, 'B',     3,       '1 '",
+            "     2,  2, '2',     3,       '1 '",
+        ),
+        (
+            "transformer",
+            "     2,  2, '2',     3,       'T1'",
+            "     2,  2, 'B',     3,       't1'",
+        ),
+    )
+        patched = replace(raw, from => to)
+        @test patched != raw
+        @test route(quiet_parse(patched), kind) == route(expected, kind)
+    end
+end
+
+@testset "a TERMINAL record on a node with no bus is reported" begin
+    raw = read_fixture(
+        joinpath(@__DIR__, "fixtures", "synthetic_v35_node_breaker_terminal_types.raw"),
+    )
+    # Node 8 lies on bus 50, which has no BUS record; node 99 is not in the substation.
+    patched = replace(
+        raw,
+        "     0 / END OF SUBSTATION NODE DATA" => "     8,'TERMSUB\$NODE8                           ',    50,     1\n     0 / END OF SUBSTATION NODE DATA",
+        "     0 / END OF SUBSTATION TERMINAL DATA" => "    50,  8, 'L',              '1 '\n     2, 99, 'L',              '2 '\n     0 / END OF SUBSTATION TERMINAL DATA",
+    )
+    @test patched != raw
+    @test_logs (
+        :warn,
+        r"2 substation TERMINAL records name a node that is not in their substation or lies on a bus with no BUS record \(2 of type \"L\"\)",
+    ) match_mode = :any parse_file(IOBuffer(patched); filetype = "raw")
+end
+
+@testset "a TERMINAL record that matches no device is reported" begin
+    raw = read_fixture(
+        joinpath(@__DIR__, "fixtures", "synthetic_v35_node_breaker_terminal_types.raw"),
+    )
+    # A load terminal for a load the file does not contain.
+    patched = replace(
+        raw,
+        "     0 / END OF SUBSTATION TERMINAL DATA" => "     2,  2, 'L',              '9 '\n     0 / END OF SUBSTATION TERMINAL DATA",
+    )
+    @test patched != raw
+    @test_logs (
+        :warn,
+        r"1 substation TERMINAL records match no parsed device \(1 of type \"L\"\)",
+    ) match_mode =
+        :any parse_file(IOBuffer(patched); filetype = "raw")
 end

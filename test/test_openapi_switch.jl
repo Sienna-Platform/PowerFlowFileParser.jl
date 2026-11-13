@@ -1,4 +1,4 @@
-@testset "DiscreteControlledACBranch: switch/breaker r/x/rating/flow verbatim passthrough, no INFINITE_BOUND" begin
+@testset "DiscreteControlledACBranch: switch/breaker r/x/flow passthrough, zero rating unbounded" begin
     pm = fourteen_bus_pm_data()
     sys = PFP.build_openapi_system(pm)
     data = pm.data
@@ -19,10 +19,9 @@
     @test PFP.get_value(switch, :branch_status) == "CLOSED"
     @test PFP.get_value(switch, :r) == switch_d["r"]
     @test PFP.get_value(switch, :x) == switch_d["x"]
-    # Verbatim-oracle passthrough: unlike Line/TransformerCircuit's `_get_rating`, a
-    # switch/breaker's zero `rating` is stored as literal 0.0, not INFINITE_BOUND.
+    # A zero rating bypasses the rating check, so it reads as unbounded, not 0 MVA.
     @test switch_d["rating"] == 0.0
-    @test PFP.get_value(switch, :rating) == 0.0
+    @test PFP.get_value(switch, :rating) == PFP.INFINITE_BOUND * 100.0
     @test PFP.get_value(switch, :active_power_flow) == 0.0
     @test PFP.get_value(switch, :reactive_power_flow) == 0.0
     @test PFP.get_value(switch, :base_power) == 100.0  # sys_mbase

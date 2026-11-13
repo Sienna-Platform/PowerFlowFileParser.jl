@@ -679,3 +679,46 @@ end
         @test occursin("102 -> 104 -> 103", sprint(showerror, err))
     end
 end
+
+@testset "generator ext carries WPF, WMOD and GTAP in every RAW version" begin
+    for file in (
+        joinpath(PSSE_RAW_DIR, "psse_controlled_tap_test_v33.raw"),
+        joinpath(@__DIR__, "fixtures", "synthetic_v34_full.raw"),
+        joinpath(PSSE_RAW_DIR, "psse_controlled_tap_test_v35.raw"),
+    )
+        for gen in values(PowerFlowFileParser.parse_file(file)["gen"])
+            @test issubset(("WPF", "WMOD", "GTAP"), keys(gen["ext"]))
+        end
+    end
+
+    raw = read(joinpath(PSSE_RAW_DIR, "psse_v35_substation.raw"), String)
+    edited = replace(
+        raw,
+        "0.00000E+0,1.00000,1,  100.0" => "0.00000E+0,1.05000,1,  100.0";
+        count = 1,
+    )
+    @test edited != raw
+    gens = values(PowerFlowFileParser.parse_psse(IOBuffer(edited))["gen"])
+    @test count(g -> g["ext"]["GTAP"] == 1.05, gens) == 1
+end
+
+@testset "PSSE v35 branch NAME is kept in ext as psse_name" begin
+    # From v34 on a branch record carries a NAME. It is kept verbatim, padding included,
+    # the way transformers keep theirs.
+    file = joinpath(@__DIR__, "fixtures", "synthetic_v35_node_breaker.raw")
+    pm_data = parse_file(file)
+    names = Dict(
+        (v["source_id"][2], v["source_id"][3], v["source_id"][4]) =>
+            get(v["ext"], "psse_name", nothing) for
+        v in values(pm_data["branch"]) if !v["transformer"]
+    )
+    @test names[(2, 1, "1 ")] == "BRANCH_2_1                              "
+    @test names[(2, 3, "2 ")] == "BRANCH_2_3                              "
+end
+
+@testset "PSSE v33 branch has no NAME and no psse_name" begin
+    pm_data = parse_file(FOURTEEN_BUS_FIXTURE)
+    lines = [v for v in values(pm_data["branch"]) if !v["transformer"]]
+    @test !isempty(lines)
+    @test all(v -> !haskey(v["ext"], "psse_name"), lines)
+end

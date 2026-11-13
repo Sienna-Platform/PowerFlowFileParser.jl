@@ -16,14 +16,17 @@ const _NB_SWITCH = NamedTuple{
 }
 
 # The node-breaker tables `_prepare_node_breaker!` produces. Routing reads
-# `terminal_node` (a PSS(R)E TERMINAL key -> the node-bus it selects) and
-# `nb_bus_numbers` (the source bus numbers that were split, a fast path that skips the
+# `terminal_node` (a PSS(R)E TERMINAL key -> the node-bus it selects), records each key
+# it resolves in `matched_terminals`, lists in `unplaced_terminals` each record whose
+# node no bus was built for, and reads `nb_bus_numbers` (the source bus numbers that were split, a fast path that skips the
 # lookup for untouched buses); `_create_node_breaker_switch_entries!` reads `switches`.
 # `node_number` maps (substation index, NI) -> assigned bus number and has no
 # production consumer: it exists for tests and debugging.
 _new_node_breaker() = (;
     node_number = Dict{Tuple{Int, Int}, Int}(),
     terminal_node = Dict{Tuple{Int, String, Int, Int, String}, Int}(),
+    matched_terminals = Set{Tuple{Int, String, Int, Int, String}}(),
+    unplaced_terminals = Tuple{Int, String, Int, Int, String}[],
     nb_bus_numbers = Set{Int}(),
     switches = _NB_SWITCH[],
 )
@@ -160,7 +163,6 @@ function _prepare_node_breaker!(pm_data::Dict)
             end
         end
         for t in get(sub, "terminals", [])
-            haskey(ni_to_no, t["node"]) || continue
             # A negative bus number in the secondary-bus column marks the metered end,
             # the same convention the BRANCH and TRANSFORMER sections use; the bus is
             # its magnitude, and routing compares against those normalized endpoints.
@@ -173,13 +175,18 @@ function _prepare_node_breaker!(pm_data::Dict)
                 t["bus"],
                 String(t["type"]),
                 minmax(secondary, tertiary)...,
-                String(t["id"]),
+                _psse_id(t["id"]),
             )
+            # The node is missing from the substation, or sits on a bus with no BUS
+            # record; either way no device can be placed on it.
+            if !haskey(ni_to_no, t["node"])
+                push!(nb.unplaced_terminals, key)
+                continue
+            end
             target = ni_to_no[t["node"]]
-            # Two sections can legitimately share a terminal type (fixed and switched
-            # shunts both use "S"), so the RAW identifier is what separates them. When
-            # two records collide on the same key the later one wins, which silently
-            # misroutes one of them.
+            # PSS(R)E requires a device identifier to be unique among devices of its type
+            # at a bus, so two records on one key point to malformed data. The later
+            # record wins, and the warning names both nodes.
             previous = get(nb.terminal_node, key, nothing)
             if previous !== nothing && previous != target
                 @warn "Substation $idx has two TERMINAL records with key $key selecting different nodes (bus $previous and bus $target). The later record wins; the device matching the earlier one will be attached to bus $target."
@@ -208,26 +215,60 @@ function _prepare_node_breaker!(pm_data::Dict)
     return nb
 end
 
-_nb_id(id) = String(strip(string(id)))
-
 """
 The node-bus a section record attaches to, given the PSS(R)E bus number it declares,
-the TERMINAL type code for its section, the opposite bus number the RAW stores in the
+the TERMINAL type code for its section (or a tuple of codes, tried in order), the opposite bus number the RAW stores in the
 terminal's secondary-bus column (`nothing` for injectors), and the record's RAW
 identifier. Falls back to the declared bus number when no terminal claims it.
 """
 function _nb_target(nb, busno::Int, typ::String, other, id)
+    return _nb_target(nb, busno, (typ,), other, id)
+end
+
+function _nb_target(nb, busno::Int, typs::Tuple, other, id)
     busno in nb.nb_bus_numbers || return busno
-    key = (busno, typ, minmax(something(other, 0), 0)..., _nb_id(id))
-    ni = get(nb.terminal_node, key, nothing)
-    return something(ni, busno)
+    for typ in typs
+        key = (busno, typ, minmax(something(other, 0), 0)..., _psse_id(id))
+        ni = get(nb.terminal_node, key, nothing)
+        ni === nothing && continue
+        push!(nb.matched_terminals, key)
+        return ni
+    end
+    return busno
 end
 
 # A type-"3" terminal is keyed on its winding's two sibling buses, in sorted order.
 function _nb_target_3w(nb, busno::Int, ckt, others)
     busno in nb.nb_bus_numbers || return busno
-    ni = get(nb.terminal_node, (busno, "3", minmax(others...)..., _nb_id(ckt)), nothing)
-    return something(ni, busno)
+    key = (busno, "3", minmax(others...)..., _psse_id(ckt))
+    ni = get(nb.terminal_node, key, nothing)
+    ni === nothing && return busno
+    push!(nb.matched_terminals, key)
+    return ni
+end
+
+function _terminal_counts_by_type(keys)
+    counts = Dict{String, Int}()
+    for (_, typ, _, _, _) in keys
+        counts[typ] = get(counts, typ, 0) + 1
+    end
+    return join(("$n of type \"$typ\"" for (typ, n) in sort!(collect(counts))), ", ")
+end
+
+# A TERMINAL record no device looked up leaves that device on its source bus, or
+# belongs to a section the parser does not convert. A record whose node has no bus
+# cannot place its device at all. Either way the substation wiring is not what the file
+# declares, so report each kind once per case.
+function _warn_unmatched_terminals(nb)
+    unplaced = sort(nb.unplaced_terminals)
+    if !isempty(unplaced)
+        @warn "$(length(unplaced)) substation TERMINAL records name a node that is not in their substation or lies on a bus with no BUS record ($(_terminal_counts_by_type(unplaced))), e.g. (bus, type, sorted other buses, id) = $(first(unplaced)). Devices they describe stay on their source bus."
+    end
+    unmatched = sort!(collect(setdiff(keys(nb.terminal_node), nb.matched_terminals)))
+    if !isempty(unmatched)
+        @warn "$(length(unmatched)) substation TERMINAL records match no parsed device ($(_terminal_counts_by_type(unmatched))), e.g. (bus, type, sorted other buses, id) = $(first(unmatched)). Devices they describe stay on their source bus."
+    end
+    return
 end
 
 """
