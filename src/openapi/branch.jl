@@ -182,6 +182,38 @@ function _ordered_band(lo, hi, lo_col, hi_col, record, suffix)
 end
 
 """
+Assign `regulated_bus` and `regulated_bus_orientation` from PSS/E `CONT`. Only the voltage
+objectives regulate a bus. `|CONT|` is the bus number. The sign of `CONT` states the
+direction, and the schema keeps it only for a bus that is not an end of the arc: negative is
+`FROM`, positive is `TO`. A bus that is an end of the arc, or no `CONT`, is `UNDEFINED`.
+"""
+function _set_transformer_regulated_bus!(
+    circuit,
+    reg::IdRegistry,
+    cont::Int,
+    objective::AbstractString,
+    from_id::Int,
+    to_id::Int,
+)
+    regulates = objective in ("VOLTAGE", "VOLTAGE_DISABLED") && !iszero(cont)
+    if !regulates
+        _set_nullable!(circuit, :regulated_bus, nothing)
+        set_value!(circuit, :regulated_bus_orientation, "UNDEFINED")
+        return
+    end
+    regulated_id = get_bus_id(reg, abs(cont))
+    set_value!(circuit, :regulated_bus, regulated_id)
+    if regulated_id == from_id || regulated_id == to_id
+        set_value!(circuit, :regulated_bus_orientation, "UNDEFINED")
+    elseif cont < 0
+        set_value!(circuit, :regulated_bus_orientation, "FROM")
+    else
+        set_value!(circuit, :regulated_bus_orientation, "TO")
+    end
+    return
+end
+
+"""
 Assign a `TransformerCircuit`'s flat control block from a pm transformer dict `d` for
 winding `suffix` (1/2/3). The objective selects one actuator band and one target band
 (`_CONTROL_BAND_FIELDS`); every other band stays absent, and so does every band under
@@ -196,13 +228,18 @@ fabricated value. `record` names the site in the inverted-limits warnings.
 """
 function _set_transformer_control_fields!(
     circuit,
+    reg::IdRegistry,
     d::Dict,
     suffix::Int,
     record::AbstractString,
+    from_id::Int,
+    to_id::Int,
 )
     objective = _transformer_control_objective(get(d, "COD$suffix", -99))
     set_value!(circuit, :control_objective, objective)
-    set_value!(circuit, :regulated_bus_number, Int(get(d, "CONT$suffix", 0)))
+    _set_transformer_regulated_bus!(
+        circuit, reg, Int(get(d, "CONT$suffix", 0)), objective, from_id, to_id,
+    )
     set_value!(circuit, :number_of_tap_positions, Int(get(d, "NTP$suffix", 33)))
     bands = _CONTROL_BAND_FIELDS[objective]
     isnothing(bands) && return
@@ -277,7 +314,9 @@ function _make_transformer_circuit!(
     set_value!(circuit, :parameter_units, "COMPONENT_BASE")
     set_value!(circuit, :r, r, "pu")
     set_value!(circuit, :x, x, "pu")
-    _set_transformer_control_fields!(circuit, d, control_suffix, record)
+    _set_transformer_control_fields!(
+        circuit, reg, d, control_suffix, record, from_id, to_id,
+    )
     set_value!(circuit, :base_power, base_power, "MVA")
     set_value!(circuit, :rating, rating, "MVA")
     set_optional_value!(circuit, :rating_b, rating_b, "MVA")
@@ -366,6 +405,10 @@ function make_switch_from_zero_impedance_branch!(
     set_value!(component, :r, d["br_r"], "pu")
     set_value!(component, :x, d["br_x"], "pu")
     set_value!(component, :rating, _get_rating(name, d, "rate_a") * sys_mbase, "MVA")
+    set_optional_value!(component, :rating_b,
+        _natural_value(_get_rating(name, d, "rate_b"), sys_mbase), "MVA")
+    set_optional_value!(component, :rating_c,
+        _natural_value(_get_rating(name, d, "rate_c"), sys_mbase), "MVA")
     set_value!(component, :discrete_branch_type, "SWITCH")
     set_value!(component, :branch_status, status)
     add_component!(sys, component)
@@ -390,7 +433,7 @@ function make_series_compensator!(
         rating_b = _natural_value(_get_rating(name, d, "rate_b"), sys_mbase),
         rating_c = _natural_value(_get_rating(name, d, "rate_c"), sys_mbase))
     _add_series_compensator!(sys, reg, name, available, add_arc!(sys, from_id, to_id),
-        (r = d["br_r"], x = d["br_x"]), "FIXED", rating, sys_mbase;
+        (r = d["br_r"], x = d["br_x"]), false, rating, sys_mbase;
         active_power_flow = get(d, "pf", 0.0) * sys_mbase,
         reactive_power_flow = get(d, "qf", 0.0) * sys_mbase,
         ext = get(d, "ext", Dict{String, Any}()))
@@ -406,7 +449,7 @@ function _add_series_compensator!(
     available::Bool,
     arc_id::Int,
     impedance::NamedTuple,
-    control_mode::AbstractString,
+    bypassed::Bool,
     rating::NamedTuple,
     sys_mbase::Float64;
     active_power_flow = 0.0,
@@ -426,7 +469,7 @@ function _add_series_compensator!(
     set_value!(component, :rating, rating.rating, "MVA")
     set_optional_value!(component, :rating_b, get(rating, :rating_b, nothing), "MVA")
     set_optional_value!(component, :rating_c, get(rating, :rating_c, nothing), "MVA")
-    set_value!(component, :control_mode, control_mode)
+    set_value!(component, :bypassed, bypassed)
     set_value!(component, :base_power, sys_mbase, "MVA")
     add_component!(sys, component)
     set_component_ext!(sys, component, ext)

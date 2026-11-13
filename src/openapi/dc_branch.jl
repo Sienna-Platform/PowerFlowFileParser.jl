@@ -227,10 +227,10 @@ store; `power_factor_weighting_fraction_from`/`to` are bare fractions and pass t
 The pm dict's `dc_setpoint_from`/`to` is per-unit on `rated_dc_voltage` when the converter
 controls DC voltage, or on `sys_mbase` when it controls DC power; each lands on the one wire
 field its mode selects, `dc_voltage_setpoint_*` (kV) or `dc_power_setpoint_*` (MW), and the
-other stays absent. Likewise `ac_setpoint_from`/`to` lands on `ac_voltage_setpoint_*` under AC
-voltage control or `power_factor_setpoint_*` otherwise. The schema keeps HVDC voltages in kV
-only, so a DC voltage setpoint is multiplied by `rated_dc_voltage` and an AC voltage setpoint
-by the converter's AC bus base kV (`base_voltage_from`/`to`).
+other stays absent. Likewise `ac_setpoint_from`/`to` lands on `power_factor_setpoint_*`
+under reactive control. Under AC voltage control the setpoint is the regulated bus's
+`ACBus.voltage_setpoint` (see `_bus_voltage_setpoints`), not a converter field. The schema
+keeps HVDC voltages in kV, so a DC voltage setpoint is multiplied by `rated_dc_voltage`.
 
 `psse.jl` also captures each converter's own AC bus base kV as `base_voltage_from`/
 `base_voltage_to`, threaded onto the document as `rated_ac_voltage_from`/
@@ -272,12 +272,6 @@ function make_vscline!(
     end
     if d["ac_voltage_control_from"]
         set_value!(component, :ac_control_from, "AC_VOLTAGE")
-        set_value!(
-            component,
-            :ac_voltage_setpoint_from,
-            d["ac_setpoint_from"] * d["base_voltage_from"],
-            "kV",
-        )
     else
         set_value!(component, :ac_control_from, "AC_REACTIVE_POWER")
         set_value!(component, :power_factor_setpoint_from, d["ac_setpoint_from"], "1")
@@ -297,7 +291,11 @@ function make_vscline!(
         (min = d["qminf"] * sys_mbase, max = d["qmaxf"] * sys_mbase), "MVAr")
     set_value!(component, :power_factor_weighting_fraction_from,
         d["power_factor_weighting_fraction_from"], "1")
-    _set_nullable!(component, :remote_bus_control_from, _psse_remote_bus(d, "REMOT_FROM"))
+    _set_nullable!(
+        component,
+        :remote_regulated_bus_from,
+        _remote_regulated_bus(reg, _psse_remote_bus(d, "REMOT_FROM"), from_id),
+    )
     set_value!(component, :reactive_power_to, get(d, "qt", 0.0) * sys_mbase, "MVAr")
     if d["dc_voltage_control_to"]
         set_value!(component, :dc_control_to, "DC_VOLTAGE")
@@ -315,12 +313,6 @@ function make_vscline!(
     end
     if d["ac_voltage_control_to"]
         set_value!(component, :ac_control_to, "AC_VOLTAGE")
-        set_value!(
-            component,
-            :ac_voltage_setpoint_to,
-            d["ac_setpoint_to"] * d["base_voltage_to"],
-            "kV",
-        )
     else
         set_value!(component, :ac_control_to, "AC_REACTIVE_POWER")
         set_value!(component, :power_factor_setpoint_to, d["ac_setpoint_to"], "1")
@@ -340,7 +332,11 @@ function make_vscline!(
         (min = d["qmint"] * sys_mbase, max = d["qmaxt"] * sys_mbase), "MVAr")
     set_value!(component, :power_factor_weighting_fraction_to,
         d["power_factor_weighting_fraction_to"], "1")
-    _set_nullable!(component, :remote_bus_control_to, _psse_remote_bus(d, "REMOT_TO"))
+    _set_nullable!(
+        component,
+        :remote_regulated_bus_to,
+        _remote_regulated_bus(reg, _psse_remote_bus(d, "REMOT_TO"), to_id),
+    )
     set_value!(component, :rated_dc_voltage, d["rated_dc_voltage"], "kV")
     set_value!(component, :base_power, sys_mbase, "MVA")
     add_component!(sys, component)
@@ -354,7 +350,7 @@ the optional-field placeholder every generated field also carries): units.jl's
 `_concrete_field_type` always strips both `Absent` and `Nothing` before computing the
 single concrete type `_coerce` builds, on the assumption that `Nothing` is only ever that
 placeholder, so `_coerce` cannot construct a bare `nothing` for a field like
-`remote_bus_control_from`/`_to`, whose schema spells "regulates its own terminal bus" as an
+`remote_regulated_bus_from`/`_to`, whose schema spells "regulates its own terminal bus" as an
 explicit `null` rather than an absent field. Only these two fields need this today; a
 non-`nothing` value still goes through the normal `set_value!` enforcement.
 """
@@ -367,15 +363,10 @@ function _set_nullable!(s::Staged, prop::Symbol, value)
     return
 end
 
-"""PSS/E encodes "no remote regulated bus" as `REMOT = 0`; the schema's
-`remote_bus_control_*` is nullable with a valid range `>= 1` and spells local-terminal-bus
-regulation as `nothing`."""
+"""PSS/E `REMOT`: the number of the bus a VSC converter regulates, `0` for its own bus.
+`_remote_regulated_bus` turns it into the schema's nullable bus id."""
 function _psse_remote_bus(d::Dict, key::AbstractString)
-    remote_bus = get(get(d, "ext", Dict()), key, 0)
-    if iszero(remote_bus)
-        return nothing
-    end
-    return remote_bus
+    return Int(get(get(d, "ext", Dict()), key, 0))
 end
 
 """

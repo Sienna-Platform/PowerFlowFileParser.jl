@@ -143,11 +143,10 @@ function make_switched_admittance!(
         unit = band == :voltage_limits ? "pu" : "1"
         set_value!(component, band, (min = lo, max = hi), unit)
     end
-    set_value!(
+    _set_nullable!(
         component,
-        :regulated_bus_number,
-        Int(get(d, "regulated_bus_number", 0)),
-        "1",
+        :remote_regulated_bus,
+        _remote_regulated_bus(reg, Int(get(d, "regulated_bus_number", 0)), bus_id),
     )
     if haskey(d, "number_engaged")
         set_value!(component, :number_engaged, d["number_engaged"])
@@ -176,7 +175,7 @@ const FACTS_CONTROL_MODE_NAMES =
     Dict(0 => "OOS", 1 => "NML", 2 => "BYP", 3 => "NML", 4 => "NML")
 
 # FACTS MODEs whose series link is a `SeriesCompensator`: bypassed, or at constant impedance.
-const FACTS_SERIES_COMPENSATOR_MODES = Dict(2 => "BYPASSED", 3 => "FIXED")
+const FACTS_SERIES_COMPENSATOR_BYPASSED = Dict(2 => true, 3 => false)
 
 function _facts_control_mode(code::Integer)
     if !haskey(FACTS_CONTROL_MODE_NAMES, code)
@@ -207,16 +206,13 @@ function make_facts!(
     set_value!(component, :bus, bus_id)
     set_value!(component, :base_power, get_base_power(sys), "MVA")
     set_value!(component, :control_mode, control_mode)
-    set_value!(component, :voltage_setpoint_units, "COMPONENT_BASE")
-    set_value!(component, :voltage_setpoint, d["voltage_setpoint"], "pu")
     set_value!(component, :max_shunt_current, d["max_shunt_current"], "MVA")
     set_value!(component, :reactive_power_required, get(d, "reactive_power_required", 0.0),
         "1")
-    set_value!(
+    _set_nullable!(
         component,
-        :regulated_bus_number,
-        Int(get(d, "regulated_bus_number", 0)),
-        "1",
+        :remote_regulated_bus,
+        _remote_regulated_bus(reg, Int(get(d, "regulated_bus_number", 0)), bus_id),
     )
     add_component!(sys, component)
     set_component_ext!(sys, component, get(d, "ext", Dict{String, Any}()))
@@ -231,8 +227,8 @@ function _make_facts_series_link!(
     from_id::Int,
 )
     mode = Int(d["control_mode"])
-    control_mode = get(FACTS_SERIES_COMPENSATOR_MODES, mode, nothing)
-    if isnothing(control_mode)
+    bypassed = get(FACTS_SERIES_COMPENSATOR_BYPASSED, mode, nothing)
+    if isnothing(bypassed)
         mode == 0 ||
             @warn "Series link of FACTS $name in MODE $mode is not supported; dropping it"
         return
@@ -244,7 +240,7 @@ function _make_facts_series_link!(
     rating = (rating = iszero(imx) ? INFINITE_BOUND * sys_mbase : imx,)
     to_id = get_bus_id(reg, Int(d["tbus"]))
     _add_series_compensator!(sys, reg, name, Bool(d["available"]),
-        add_arc!(sys, from_id, to_id), impedance, control_mode, rating, sys_mbase)
+        add_arc!(sys, from_id, to_id), impedance, bypassed, rating, sys_mbase)
     return
 end
 

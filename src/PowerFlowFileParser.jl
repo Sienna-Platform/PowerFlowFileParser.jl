@@ -25,9 +25,11 @@ import OpenAPI
 import InfrastructureCoreOpenAPIModels
 import PowerCoreOpenAPIModels
 import PowerOperationsOpenAPIModels
+import PowerDynamicsOpenAPIModels
 const IC = InfrastructureCoreOpenAPIModels
 const PC = PowerCoreOpenAPIModels
 const PO = PowerOperationsOpenAPIModels
+const PD = PowerDynamicsOpenAPIModels
 
 import OpenAPI.Runtime: Absent, ABSENT
 
@@ -53,6 +55,7 @@ include("openapi/topology.jl")
 include("openapi/cost.jl")
 include("openapi/load.jl")
 include("openapi/generation.jl")
+include("openapi/dynamics.jl")
 include("openapi/branch.jl")
 include("openapi/switch_breaker.jl")
 include("openapi/dc_branch.jl")

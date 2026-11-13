@@ -424,8 +424,7 @@ end
         "UnregisteredType",
         :r,
     )
-    @test PFP._devicebase_instance_dispatched("FACTSControlDevice", :voltage_setpoint) ==
-          :skip
+    @test PFP._devicebase_instance_dispatched("TransformerCircuit", :r) == :skip
 end
 
 @testset "read_generation! on case5_strg.m builds real EnergyReservoirStorage entries" begin

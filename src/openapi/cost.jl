@@ -181,3 +181,41 @@ make_load_cost() =
         variable_operation_cost = _zero_cost_curve(),
         fixed = 0.0,
     )
+
+"""
+The offer curve PowerSystems writes for an unoffered import or export side: a zero
+piecewise incremental curve (`PSY.ZERO_OFFER_CURVE`). PowerSystems' `ImportExportCost` holds
+piecewise incremental curves only, so any other shape fails its import.
+"""
+function _zero_offer_curve()
+    return PC.CostCurve(;
+        power_units = IC.UnitSystem("NATURAL_UNITS"),
+        variable_cost_type = "COST",
+        value_curve = PC.ValueCurve(
+            PC.IncrementalCurve(;
+                curve_type = "INCREMENTAL",
+                function_data = PC.IncrementalCurveFunctionData(
+                    IC.PiecewiseStepData(;
+                        function_type = "PIECEWISE_STEP",
+                        x_coords = [0.0, 0.0],
+                        y_coords = [0.0],
+                    ),
+                ),
+                initial_input = 0.0,
+            ),
+        ),
+        vom_cost = _zero_vom_cost(),
+    )
+end
+
+"""Operation cost for a `Source`: PowerSystems' default `ImportExportCost`, as it exports it."""
+make_source_cost() =
+    PO.SourceOperationCost(
+        PC.ImportExportCost(;
+            cost_type = "IMPORTEXPORT",
+            import_offer_curves = _zero_offer_curve(),
+            export_offer_curves = _zero_offer_curve(),
+            energy_import_weekly_limit = 1.0e6,
+            energy_export_weekly_limit = 1.0e6,
+        ),
+    )
