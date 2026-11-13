@@ -176,9 +176,21 @@ function _psse2pm_branch!(pm_data::Dict, pti_data::Dict, import_all::Bool, nb)
                 to_bus_number = abs(pop!(branch, "J"))
                 ckt = branch["CKT"]
                 sub_data["f_bus"] =
-                    _nb_target(nb, from_bus_number, "B", to_bus_number, ckt)
+                    _nb_target(
+                        nb,
+                        from_bus_number,
+                        _BRANCH_TERMINAL_TYPES,
+                        to_bus_number,
+                        ckt,
+                    )
                 sub_data["t_bus"] =
-                    _nb_target(nb, to_bus_number, "B", from_bus_number, ckt)
+                    _nb_target(
+                        nb,
+                        to_bus_number,
+                        _BRANCH_TERMINAL_TYPES,
+                        from_bus_number,
+                        ckt,
+                    )
                 bus_from = pm_data["bus"][sub_data["f_bus"]]
                 sub_data["base_voltage_from"] = bus_from["base_kv"]
                 bus_to = pm_data["bus"][sub_data["t_bus"]]
@@ -315,7 +327,8 @@ function _switching_device_line_shunts!(pm_data::Dict, branch::Dict, nb)
         shunt_data = Dict{String, Any}()
         # Same terminal lookup the branch itself uses, so under a node-breaker
         # model the shunt lands on the node the switching device attaches to.
-        shunt_data["shunt_bus"] = _nb_target(nb, bus_number, "B", other_bus, ckt)
+        shunt_data["shunt_bus"] =
+            _nb_target(nb, bus_number, _BRANCH_TERMINAL_TYPES, other_bus, ckt)
         mva_base = pm_data["baseMVA"]
         shunt_data["gs"] = gs * mva_base
         shunt_data["bs"] = bs * mva_base
@@ -1148,7 +1161,7 @@ function _psse2pm_transformer!(pm_data::Dict, pti_data::Dict, import_all::Bool, 
                 transformer["I"],
                 transformer["J"],
                 transformer["K"],
-                uppercase(strip(transformer["CKT"])),
+                _psse_id(transformer["CKT"]),
             )
             if identity in seen_transformers
                 @warn "Duplicate TRANSFORMER record between buses $(_transformer_identity_label(identity)) with circuit id '$(identity[4])'; keeping the record read first and dropping this one."
@@ -1199,7 +1212,7 @@ function _psse2pm_transformer!(pm_data::Dict, pti_data::Dict, import_all::Bool, 
                     _nb_target(
                         nb,
                         transformer["I"],
-                        "2",
+                        _TRANSFORMER_2W_TERMINAL_TYPES,
                         transformer["J"],
                         transformer["CKT"],
                     )
@@ -1207,7 +1220,7 @@ function _psse2pm_transformer!(pm_data::Dict, pti_data::Dict, import_all::Bool, 
                     _nb_target(
                         nb,
                         transformer["J"],
-                        "2",
+                        _TRANSFORMER_2W_TERMINAL_TYPES,
                         transformer["I"],
                         transformer["CKT"],
                     )
@@ -2337,10 +2350,15 @@ function _psse2pm_facts!(pm_data::Dict, pti_data::Dict, import_all::Bool, nb)
             end
             sub_data["control_mode"] = facts["MODE"]
 
-            # Sending end bus. The PSS(R)E TERMINAL record of a FACTS device names only
-            # this bus, so the terminal end J keeps its bus number.
+            # Sending end bus I and terminal end bus J, each routed by its own "A"
+            # TERMINAL record. J = 0 marks a device with no series element.
             sub_data["bus"] = _nb_target(nb, facts["I"], "A", nothing, sub_data["name"])
-            sub_data["tbus"] = facts["J"] # Terminal end bus number
+            if iszero(facts["J"])
+                sub_data["tbus"] = facts["J"]
+            else
+                sub_data["tbus"] =
+                    _nb_target(nb, facts["J"], "A", nothing, sub_data["name"])
+            end
             sub_data["available"] = _determine_injector_status(
                 facts,
                 pm_data,
@@ -2404,8 +2422,10 @@ function _build_switch_breaker_sub_data(
     from_bus_number = pop!(dict_object, "I")
     to_bus_number = pop!(dict_object, "J")
     ckt = dict_object["CKT"]
-    sub_data["f_bus"] = _nb_target(nb, from_bus_number, "B", to_bus_number, ckt)
-    sub_data["t_bus"] = _nb_target(nb, to_bus_number, "B", from_bus_number, ckt)
+    sub_data["f_bus"] =
+        _nb_target(nb, from_bus_number, _BRANCH_TERMINAL_TYPES, to_bus_number, ckt)
+    sub_data["t_bus"] =
+        _nb_target(nb, to_bus_number, _BRANCH_TERMINAL_TYPES, from_bus_number, ckt)
     if pm_data["has_isolated_type_buses"]
         push!(pm_data["connected_buses"], sub_data["f_bus"])
         push!(pm_data["connected_buses"], sub_data["t_bus"])
@@ -2526,7 +2546,14 @@ function _psse2pm_switch_breaker!(pm_data::Dict, pti_data::Dict, import_all::Boo
     return
 end
 
-_segment_ckt(ckt::AbstractString) = uppercase(strip(ckt))
+# PSS(R)E compares device identifiers stripped and case-folded.
+_psse_id(id::AbstractString) = String(uppercase(strip(id)))
+_psse_id(id) = _psse_id(string(id))
+
+# PSS(R)E accepts either code on the TERMINAL record of an AC line or a two-winding
+# transformer; each device tries its own code first.
+const _BRANCH_TERMINAL_TYPES = ("B", "2")
+const _TRANSFORMER_2W_TERMINAL_TYPES = ("2", "B")
 
 function _segment_lookup(pm_data::Dict)
     lookup = Dict{Tuple{Int, Int}, Vector{Tuple{String, Int}}}()

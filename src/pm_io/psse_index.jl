@@ -13,9 +13,9 @@ end
 # The source_id of a transformer has a winding-3 bus slot, so its circuit is one place later.
 function _branch_ckt(sid::Vector)
     if sid[1] == "transformer"
-        return _segment_ckt(sid[5])
+        return _psse_id(sid[5])
     end
-    return _segment_ckt(sid[4])
+    return _psse_id(sid[4])
 end
 
 function _index_add!(index::Dict, key, target)
@@ -51,8 +51,15 @@ function _in_service(e::Dict, section::String)
     return !iszero(e[_CON_STATUS_KEY[section]])
 end
 
+# A node-bus split off a PSS(R)E bus records that bus in `ext["nb_bus"]`; its own
+# `source_id` holds the node-bus's assigned number.
 function _raw_bus(pm::Dict, key::Integer)
-    return _sid_bus(pm["bus"][key]["source_id"][2])
+    bus = pm["bus"][key]
+    raw = get(get(bus, "ext", Dict{String, Any}()), "nb_bus", nothing)
+    if raw === nothing
+        return _sid_bus(bus["source_id"][2])
+    end
+    return Int(raw)
 end
 
 function _facts_buses(pm::Dict, e::Dict)
@@ -136,7 +143,7 @@ function _PsseIndex(pm::Dict)
         sid = e["source_id"]
         _index_add!(
             index.transformer3w,
-            (_triple(sid[2], sid[3], sid[4]), _segment_ckt(sid[5])),
+            (_triple(sid[2], sid[3], sid[4]), _psse_id(sid[5])),
             ("3w_transformer", key),
         )
     end
@@ -147,14 +154,14 @@ function _PsseIndex(pm::Dict)
     )
         for (key, e) in get(pm, section, empty)
             sid = e["source_id"]
-            _index_add!(table, (_sid_bus(sid[2]), _segment_ckt(sid[3])), (section, key))
+            _index_add!(table, (_sid_bus(sid[2]), _psse_id(sid[3])), (section, key))
         end
     end
     for (key, e) in get(pm, "switched_shunt", empty)
         sid = e["source_id"]
         _index_add!(
             index.switched_shunt,
-            (_sid_bus(sid[2]), _segment_ckt(get(e, "sw_id", "1"))),
+            (_sid_bus(sid[2]), _psse_id(get(e, "sw_id", "1"))),
             ("switched_shunt", key),
         )
     end
@@ -165,7 +172,7 @@ function _PsseIndex(pm::Dict)
         sid = e["source_id"]
         _index_add!(
             index.multisection,
-            (_pair(sid[2], sid[3]), _segment_ckt(sid[4])),
+            (_pair(sid[2], sid[3]), _psse_id(sid[4])),
             [(String(s[1]), String(s[2])) for s in e["segments"]],
         )
     end
