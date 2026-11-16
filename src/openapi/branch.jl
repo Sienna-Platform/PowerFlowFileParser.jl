@@ -559,7 +559,6 @@ function make_generic_arc_impedance!(
     set_optional_value!(component, :operational_flow_limit,
         _generic_arc_flow_limit(_get_rating(name, d, "rate_a"), sys_mbase), "MW")
     set_value!(component, :arc, arc_id)
-    set_value!(component, :parameter_units, "COMPONENT_BASE")
     set_value!(component, :r, d["br_r"], "pu")
     set_value!(component, :x, d["br_x"], "pu")
     set_value!(component, :base_power, sys_mbase, "MVA")

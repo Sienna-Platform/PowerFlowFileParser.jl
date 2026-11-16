@@ -514,7 +514,6 @@ end
         @test PFP.get_value(branch, :available)
         @test PFP.get_value(branch, :r) == -0.00798
         @test PFP.get_value(branch, :x) == 0.0501
-        @test PFP.get_value(branch, :parameter_units) == "COMPONENT_BASE"
         @test PFP.get_value(branch, :base_power) == 100.0
         @test PFP.get_value(branch, :active_power_flow) == 0.0
         @test PFP.get_value(branch, :reactive_power_flow) == 0.0
@@ -569,8 +568,9 @@ end
 end
 
 @testset "SeriesCompensator and GenericArcImpedance build under COMPONENT_BASE" begin
-    # Both types carry `parameter_units`-discriminated r/x, which the COMPONENT_BASE pass
-    # must know to leave alone; their power fields rescale onto the system base.
+    # SeriesCompensator carries `parameter_units`-discriminated r/x, which the COMPONENT_BASE
+    # pass must leave alone. GenericArcImpedance r/x are per unit only. Their power fields
+    # rescale onto the system base.
     raw = _negative_r_raw("  250.00,")
     record = "   109,   401,'1 ', 1.23000E-3, 7.10000E-3,   0.00340,    0.00,"
     @test occursin(record, raw)
