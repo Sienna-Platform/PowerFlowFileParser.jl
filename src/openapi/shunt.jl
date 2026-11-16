@@ -230,7 +230,7 @@ function _make_facts_series_link!(
     bypassed = get(FACTS_SERIES_COMPENSATOR_BYPASSED, mode, nothing)
     if isnothing(bypassed)
         mode == 0 ||
-            @warn "Series link of FACTS $name in MODE $mode is not supported; dropping it"
+            @warn "Series link of FACTS $name in MODE $mode is not supported; dropping it. A controlled series link awaits a UPFC type"
         return
     end
     sys_mbase = get_base_power(sys)

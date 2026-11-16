@@ -438,7 +438,7 @@ end
     )
 end
 
-@testset "a PSS/E branch with R = 0, X < 0 and no charging becomes a FIXED SeriesCompensator" begin
+@testset "a PSS/E branch with R = 0, X < 0 and no charging becomes a SeriesCompensator" begin
     raw = read(joinpath(@__DIR__, "modified_14bus_system.raw"), String)
     record = "   107,   108,'1 ', 7.98000E-3, 5.01000E-2,   0.00056,"
     @test occursin(record, raw)
