@@ -109,3 +109,45 @@ function build_openapi_system(
     _check_unconsumed_sections(data)
     return sys
 end
+
+"""
+    build_openapi_system(raw_file; kwargs...)
+    build_openapi_system(raw_file, dyr_file; kwargs...)
+
+Read a PSS/E `.raw` file, and optionally its `.dyr` dynamic data file, into an
+`OpenAPISystem`. The `kwargs` are those of the `PowerModelsData` method of `build_openapi_system`.
+
+With a `.dyr` file, each generator that has a record gets a dynamic injection and its
+function blocks, and names the injection in `dynamic_injector`. The system frequency in Hz
+comes from the `.raw` case header (`BASFRQ`). A generator without a record, or a classical
+machine with zero inertia, becomes a `Source`. A generator type that cannot carry dynamic
+data and has a record is an error.
+"""
+function build_openapi_system(raw_file::AbstractString; kwargs...)
+    return build_openapi_system(PowerModelsData(raw_file); kwargs...)
+end
+
+function build_openapi_system(
+    raw_file::AbstractString,
+    dyr_file::AbstractString;
+    kwargs...,
+)
+    return build_openapi_system(
+        PowerModelsData(raw_file);
+        dyr = parse_dyr(dyr_file),
+        kwargs...,
+    )
+end
+
+"""
+    build_openapi_system(pm_data, dyr; kwargs...)
+
+As `build_openapi_system(raw_file, dyr_file)`, with `dyr` from `parse_dyr`.
+"""
+function build_openapi_system(
+    pm_data::PowerModelsData,
+    dyr::DynamicRecords;
+    kwargs...,
+)
+    return build_openapi_system(pm_data; dyr = dyr, kwargs...)
+end

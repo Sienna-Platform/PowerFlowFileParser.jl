@@ -104,7 +104,6 @@ const _DEVICEBASE_INSTANCE_DISPATCHED = Dict{Tuple{String, Symbol}, Symbol}(
     ("Line", :g) => :skip,
     ("SeriesCompensator", :r) => :skip,
     ("SeriesCompensator", :x) => :skip,
-    ("SeriesCompensator", :reactance_limits) => :skip,
     ("GenericArcImpedance", :r) => :skip,
     ("GenericArcImpedance", :x) => :skip,
     ("ThreeWindingTransformer", :r_12) => :skip,
@@ -115,7 +114,6 @@ const _DEVICEBASE_INSTANCE_DISPATCHED = Dict{Tuple{String, Symbol}, Symbol}(
     ("ThreeWindingTransformer", :x_31) => :skip,
     ("TwoWindingTransformer", :magnetizing_shunt) => :skip,
     ("ThreeWindingTransformer", :magnetizing_shunt) => :skip,
-    ("FACTSControlDevice", :voltage_setpoint) => :skip,
     # The VSC voltage setpoints are voltages in kV (dc_branch.jl), not powers, so neither
     # document convention scales them.
     # `TransformerCircuit`'s five control bands each carry a fixed unit and take the
@@ -123,8 +121,6 @@ const _DEVICEBASE_INSTANCE_DISPATCHED = Dict{Tuple{String, Symbol}, Symbol}(
     # MVAr bands convert on the circuit's own base like `active_power_flow`.
     ("TwoTerminalVSCLine", :dc_voltage_setpoint_from) => :skip,
     ("TwoTerminalVSCLine", :dc_voltage_setpoint_to) => :skip,
-    ("TwoTerminalVSCLine", :ac_voltage_setpoint_from) => :skip,
-    ("TwoTerminalVSCLine", :ac_voltage_setpoint_to) => :skip,
     # admittance_units always "COMPONENT_MVAR" (shunt.jl) -- PowerSystems' own to_openapi
     # confirms this is fixed-natural, multiplied by the SYSTEM base in both document
     # conventions (export_handwritten.jl's FixedAdmittance section), not document-unit-

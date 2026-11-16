@@ -195,6 +195,86 @@ function read_loadzones!(sys::OpenAPISystem, data::Dict; kwargs...)
 end
 
 """
+Record `value` as the voltage setpoint (pu on the bus base) of bus `number`, for the device
+`source`. A second device that asks for a different value keeps the first and warns.
+"""
+function _add_voltage_setpoint!(
+    setpoints::Dict{Int, Float64},
+    number::Int,
+    value::Real,
+    source::AbstractString,
+)
+    if !haskey(setpoints, number)
+        setpoints[number] = Float64(value)
+    elseif !isapprox(setpoints[number], value; atol = 1e-6)
+        @warn "$source regulates bus $number to $value pu, but the setpoint is already $(setpoints[number]) pu; keeping $(setpoints[number])"
+    end
+    return
+end
+
+"""
+`ACBus.voltage_setpoint` by bus number: the target of every in-service device that regulates
+the bus, at the bus or from a remote terminal. The schema removed the device-level setpoints
+(generator `VS`, FACTS `VSET`, VSC AC voltage setpoint), so each lands here.
+
+- A generator regulates when it is in service and its own bus is PV or slack. It regulates
+  `IREG`, or its own bus for `IREG = 0`, to `vg`.
+- A FACTS device in normal mode regulates `FCREG`, or its sending end bus, to `voltage_setpoint`.
+- A VSC converter under AC voltage control regulates `REMOT`, or its terminal bus, to its setpoint.
+"""
+function _bus_voltage_setpoints(data::Dict)
+    setpoints = Dict{Int, Float64}()
+    bus_types =
+        Dict{Int, Int}(Int(d["bus_i"]) => Int(d["bus_type"]) for d in values(data["bus"]))
+    for (_, d) in _sorted_pm_entries(get(data, "gen", Dict{String, Any}()))
+        gen_bus = Int(d["gen_bus"])
+        if !Bool(d["gen_status"]) || !(get(bus_types, gen_bus, 1) in (2, 3))
+            continue
+        end
+        ireg = Int(get(get(d, "ext", Dict{String, Any}()), "IREG", 0))
+        target = gen_bus
+        if !iszero(ireg)
+            target = ireg
+        end
+        _add_voltage_setpoint!(setpoints, target, d["vg"], "generator at bus $gen_bus")
+    end
+    for (_, d) in _sorted_pm_entries(get(data, "facts", Dict{String, Any}()))
+        if !Bool(d["available"]) || _facts_control_mode(Int(d["control_mode"])) != "NML"
+            continue
+        end
+        target = Int(get(d, "regulated_bus_number", 0))
+        if iszero(target)
+            target = Int(d["bus"])
+        end
+        _add_voltage_setpoint!(
+            setpoints,
+            target,
+            d["voltage_setpoint"],
+            "FACTS device at bus $(d["bus"])",
+        )
+    end
+    for (_, d) in _sorted_pm_entries(get(data, "vscline", Dict{String, Any}()))
+        if !Bool(d["available"])
+            continue
+        end
+        for (side, terminal) in (("from", "f_bus"), ("to", "t_bus"))
+            if !d["ac_voltage_control_$side"]
+                continue
+            end
+            target = _psse_remote_bus(d, "REMOT_$(uppercase(side))")
+            if iszero(target)
+                target = Int(d[terminal])
+            end
+            _add_voltage_setpoint!(
+                setpoints, target, d["ac_setpoint_$side"],
+                "VSC converter ($side) of VSC line $(d["index"])",
+            )
+        end
+    end
+    return setpoints
+end
+
+"""
 Create an `ACBus` per pm dict bus row.
 
 Every bus resolves its `Area` (created lazily here, per the oracle) and its `LoadZone`
@@ -210,6 +290,8 @@ function read_bus!(sys::OpenAPISystem, data::Dict; kwargs...)
     _get_bus_name = get(kwargs, :bus_name_formatter, default_naming)
     _get_area_name = get(kwargs, :area_name_formatter, string)
     _get_zone_name = get(kwargs, :loadzone_name_formatter, string)
+
+    voltage_setpoints = _bus_voltage_setpoints(data)
 
     for (bus_key, d) in bus_data
         name = strip(_get_bus_name(d))
@@ -229,6 +311,11 @@ function read_bus!(sys::OpenAPISystem, data::Dict; kwargs...)
         set_value!(bus, :base_voltage, d["base_kv"], "kV")
         set_value!(bus, :angle, d["va"], "rad")
         set_value!(bus, :magnitude, d["vm"], "pu")
+        if haskey(voltage_setpoints, number)
+            set_value!(bus, :voltage_setpoint, voltage_setpoints[number], "pu")
+        else
+            set_value!(bus, :voltage_setpoint, nothing, "pu")
+        end
         set_value!(bus, :voltage_limits, (min = d["vmin"], max = d["vmax"]), "pu")
 
         # PSS/E's extended-bus-number slack convention (ISW), mapped onto "area_slack"
