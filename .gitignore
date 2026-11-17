@@ -133,3 +133,8 @@ SSWG/
 
 # Claude working plans — never commit
 .claude/plans/
+
+# Local agent files (never committed)
+.claude/drafts/
+.claude/worktrees/
+.claude/settings.local.json
