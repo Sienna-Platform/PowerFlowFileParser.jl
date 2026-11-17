@@ -236,6 +236,31 @@ end
     @test PFP.get_value(gen, :remote_regulated_bus) == PFP.get_value(bus(104), :id)
 end
 
+@testset "voltage setpoint falls back to the own bus when the regulated bus is missing" begin
+    pm = fourteen_bus_pm_data()
+    for entry in values(pm.data["gen"])
+        if entry["gen_bus"] == 110
+            entry["ext"]["IREG"] = 99999
+            entry["vg"] = 1.03
+        end
+    end
+    setpoints = PFP._bus_voltage_setpoints(pm.data)
+    @test setpoints[110] == 1.03
+    @test !haskey(setpoints, 99999)
+
+    pm.data["vscline"] = Dict{String, Any}(
+        "1" => Dict{String, Any}(
+            "index" => 1, "available" => true, "f_bus" => 104, "t_bus" => 105,
+            "ac_voltage_control_from" => true, "ac_setpoint_from" => 1.01,
+            "ac_voltage_control_to" => false, "ac_setpoint_to" => 1.0,
+            "ext" => Dict{String, Any}("REMOT_FROM" => 99998),
+        ),
+    )
+    setpoints = PFP._bus_voltage_setpoints(pm.data)
+    @test setpoints[104] == 1.01
+    @test !haskey(setpoints, 99998)
+end
+
 @testset "TransformerCircuit regulated_bus and orientation from CONT" begin
     sys = PFP.OpenAPISystem(100.0)
     reg = PFP.get_registry(sys)

@@ -213,6 +213,17 @@ function _add_voltage_setpoint!(
 end
 
 """
+Bus number that receives a device's voltage setpoint: `remote` when it is a bus of the case,
+else `own`. Mirrors `_remote_regulated_bus`, which already warns once per device.
+"""
+function _setpoint_bus(bus_types::Dict{Int, Int}, remote::Int, own::Int)
+    if iszero(remote) || !haskey(bus_types, remote)
+        return own
+    end
+    return remote
+end
+
+"""
 `ACBus.voltage_setpoint` by bus number: the target of every in-service device that regulates
 the bus, at the bus or from a remote terminal. The schema removed the device-level setpoints
 (generator `VS`, FACTS `VSET`, VSC AC voltage setpoint), so each lands here.
@@ -221,6 +232,9 @@ the bus, at the bus or from a remote terminal. The schema removed the device-lev
   `IREG`, or its own bus for `IREG = 0`, to `vg`.
 - A FACTS device in normal mode regulates `FCREG`, or its sending end bus, to `voltage_setpoint`.
 - A VSC converter under AC voltage control regulates `REMOT`, or its terminal bus, to its setpoint.
+
+A regulated bus number that is not a bus of the case falls back to the device's own bus, as
+the component builders do.
 """
 function _bus_voltage_setpoints(data::Dict)
     setpoints = Dict{Int, Float64}()
@@ -232,20 +246,16 @@ function _bus_voltage_setpoints(data::Dict)
             continue
         end
         ireg = Int(get(get(d, "ext", Dict{String, Any}()), "IREG", 0))
-        target = gen_bus
-        if !iszero(ireg)
-            target = ireg
-        end
+        target = _setpoint_bus(bus_types, ireg, gen_bus)
         _add_voltage_setpoint!(setpoints, target, d["vg"], "generator at bus $gen_bus")
     end
     for (_, d) in _sorted_pm_entries(get(data, "facts", Dict{String, Any}()))
         if !Bool(d["available"]) || _facts_control_mode(Int(d["control_mode"])) != "NML"
             continue
         end
-        target = Int(get(d, "regulated_bus_number", 0))
-        if iszero(target)
-            target = Int(d["bus"])
-        end
+        target = _setpoint_bus(
+            bus_types, Int(get(d, "regulated_bus_number", 0)), Int(d["bus"]),
+        )
         _add_voltage_setpoint!(
             setpoints,
             target,
@@ -261,10 +271,10 @@ function _bus_voltage_setpoints(data::Dict)
             if !d["ac_voltage_control_$side"]
                 continue
             end
-            target = _psse_remote_bus(d, "REMOT_$(uppercase(side))")
-            if iszero(target)
-                target = Int(d[terminal])
-            end
+            target = _setpoint_bus(
+                bus_types, _psse_remote_bus(d, "REMOT_$(uppercase(side))"),
+                Int(d[terminal]),
+            )
             _add_voltage_setpoint!(
                 setpoints, target, d["ac_setpoint_$side"],
                 "VSC converter ($side) of VSC line $(d["index"])",
