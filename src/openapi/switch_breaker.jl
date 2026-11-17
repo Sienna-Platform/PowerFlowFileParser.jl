@@ -41,6 +41,19 @@ function _discrete_branch_status(code::Integer)
 end
 
 """
+Optional switch `rating_b`/`rating_c` in MVA. A missing or zero value means unset
+(`nothing`), so a consumer of the emergency rating falls back to `rating`. Lines follow the
+same rule: the PSS/E parser deletes a zero `rate_b`/`rate_c` (`pm_io/psse.jl`), and
+`_get_rating` returns `nothing` for a missing optional rating.
+"""
+function _optional_switch_rating(d::Dict, key::AbstractString)
+    if !haskey(d, key) || iszero(d[key])
+        return nothing
+    end
+    return Float64(d[key])
+end
+
+"""
 A switch, breaker, or generic connector as a `DiscreteControlledACBranch`. Ported from
 PSCB's `make_switch_breaker`. `base_power` is set explicitly here because
 the oracle's constructor leaves it to PSY's `add_component!`, which back-fills the system
@@ -72,6 +85,8 @@ function make_switch_breaker!(
     # Switching Device Rating Table), so it is unbounded, as for a `Line`.
     rating = iszero(d["rating"]) ? INFINITE_BOUND * sys_mbase : d["rating"]
     set_value!(component, :rating, rating, "MVA")
+    set_optional_value!(component, :rating_b, _optional_switch_rating(d, "rating_b"), "MVA")
+    set_optional_value!(component, :rating_c, _optional_switch_rating(d, "rating_c"), "MVA")
     set_value!(
         component,
         :discrete_branch_type,
