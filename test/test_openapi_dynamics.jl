@@ -261,6 +261,33 @@ end
     @test !haskey(setpoints, 99998)
 end
 
+@testset "generators with machine control mode 2 or 3 set no voltage setpoint" begin
+    pm = fourteen_bus_pm_data()
+    gens = [e for e in values(pm.data["gen"]) if e["gen_bus"] == 110]
+    @test !isempty(gens)
+    for mode in (0, 1, 4)
+        for e in gens
+            e["m_control_mode"] = mode
+            e["vg"] = 1.04
+        end
+        @test PFP._bus_voltage_setpoints(pm.data)[110] == 1.04
+    end
+    for mode in (2, 3)
+        for e in gens
+            e["m_control_mode"] = mode
+        end
+        @test !haskey(PFP._bus_voltage_setpoints(pm.data), 110)
+    end
+
+    # A regulating generator on the same bus still sets it.
+    template = first(gens)
+    other = deepcopy(template)
+    other["m_control_mode"] = 1
+    other["vg"] = 1.05
+    pm.data["gen"]["999"] = other
+    @test PFP._bus_voltage_setpoints(pm.data)[110] == 1.05
+end
+
 @testset "TransformerCircuit regulated_bus and orientation from CONT" begin
     sys = PFP.OpenAPISystem(100.0)
     reg = PFP.get_registry(sys)

@@ -223,13 +223,21 @@ function _setpoint_bus(bus_types::Dict{Int, Int}, remote::Int, own::Int)
     return remote
 end
 
+# PSS/E WMOD 2 (fixed Q from WPF) and 3 (fixed power factor) renewables leave the bus voltage
+# floating. MATPOWER generators carry no `m_control_mode` and regulate.
+const _NON_REGULATING_MACHINE_MODES = (2, 3)
+
+function _regulates_voltage(gen::Dict)
+    return !(Int(get(gen, "m_control_mode", 0)) in _NON_REGULATING_MACHINE_MODES)
+end
+
 """
 `ACBus.voltage_setpoint` by bus number: the target of every in-service device that regulates
 the bus, at the bus or from a remote terminal. The schema removed the device-level setpoints
 (generator `VS`, FACTS `VSET`, VSC AC voltage setpoint), so each lands here.
 
-- A generator regulates when it is in service and its own bus is PV or slack. It regulates
-  `IREG`, or its own bus for `IREG = 0`, to `vg`.
+- A generator regulates when it is in service, its own bus is PV or slack, and its machine
+  control mode (`m_control_mode`, PSS/E WMOD) is not 2 or 3. It regulates `IREG`, or its own bus for `IREG = 0`, to `vg`.
 - A FACTS device in normal mode regulates `FCREG`, or its sending end bus, to `voltage_setpoint`.
 - A VSC converter under AC voltage control regulates `REMOT`, or its terminal bus, to its setpoint.
 
@@ -242,7 +250,8 @@ function _bus_voltage_setpoints(data::Dict)
         Dict{Int, Int}(Int(d["bus_i"]) => Int(d["bus_type"]) for d in values(data["bus"]))
     for (_, d) in _sorted_pm_entries(get(data, "gen", Dict{String, Any}()))
         gen_bus = Int(d["gen_bus"])
-        if !Bool(d["gen_status"]) || !(get(bus_types, gen_bus, 1) in (2, 3))
+        if !Bool(d["gen_status"]) || !(get(bus_types, gen_bus, 1) in (2, 3)) ||
+           !_regulates_voltage(d)
             continue
         end
         ireg = Int(get(get(d, "ext", Dict{String, Any}()), "IREG", 0))
