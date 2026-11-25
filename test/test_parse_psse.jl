@@ -31,4 +31,12 @@
     # Note: Since we removed PowerSystems.System constructor,
     # we just verify the data structure is valid
     @test !haskey(pm_data.data, "ref_buses") || isempty(pm_data.data["ref_buses"])
+
+    @info "Testing PSEE v31 .raw Parsing"
+    ENV["PTI_VERSION"] = "v31" # set for v31 version and test
+    sys11_v31 = PowerModelsData(joinpath(@__DIR__, "11BUS_KUNDUR_v31.raw"))
+    @test haskey(sys11_v31.data, "bus") && length(sys11_v31.data["bus"]) == 11
+    @test haskey(sys11_v31.data, "branch") && length(sys11_v31.data["branch"]) == 12
+    ENV["PTI_VERSION"] = "" # unset and test failure
+    @test_throws Nothing PowerModelsData(joinpath(@__DIR__, "11BUS_KUNDUR_v31.raw"))
 end
