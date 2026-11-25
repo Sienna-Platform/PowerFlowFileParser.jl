@@ -195,7 +195,7 @@ function _psse2pm_branch!(pm_data::Dict, pti_data::Dict, import_all::Bool)
                     "LEN" => pop!(branch, "LEN"),
                 )
 
-                if pm_data["source_version"] ∈ ("32", "33")
+                if pm_data["source_version"] ∈ ("31", "32", "33")
                     sub_data["rate_a"] = pop!(branch, "RATEA")
                     sub_data["rate_b"] = pop!(branch, "RATEB")
                     sub_data["rate_c"] = pop!(branch, "RATEC")
@@ -421,7 +421,7 @@ function _psse2pm_generator!(pm_data::Dict, pti_data::Dict, import_all::Bool)
                     "NREG" => pop!(gen, "NREG"),
                     "BASLOD" => pop!(gen, "BASLOD"),
                 )
-            elseif pm_data["source_version"] ∈ ("32", "33")
+            elseif pm_data["source_version"] ∈ ("31", "32", "33")
                 sub_data["ext"] = Dict{String, Any}(
                     "IREG" => pop!(gen, "IREG"),
                     "WPF" => pop!(gen, "WPF"),
@@ -535,8 +535,10 @@ function _psse2pm_bus!(pm_data::Dict, pti_data::Dict, import_all::Bool)
             sub_data["bus_i"] = bus["I"]
             sub_data["bus_type"] = pop!(bus, "IDE")
             if sub_data["bus_type"] == 4
-                @warn "The PSS(R)E data contains buses designated as isolated. The parser will check if the buses are connected or topologically isolated."
-                pm_data["has_isolated_type_buses"] = true
+                if pm_data["has_isolated_type_buses"] == false # only warn the first time encountered
+                    @warn "The PSS(R)E data contains buses designated as isolated. The parser will check if the buses are connected or topologically isolated."
+                    pm_data["has_isolated_type_buses"] = true
+                end
                 sub_data["bus_status"] = false
                 pm_data["connected_buses"] = Set{Int}()
                 pm_data["candidate_isolated_to_pq_buses"] = Set{Int}()
@@ -597,7 +599,7 @@ function _psse2pm_load!(pm_data::Dict, pti_data::Dict, import_all::Bool)
             sub_data["interruptible"] = pop!(load, "INTRPT")
             sub_data["ext"] = Dict{String, Any}()
 
-            if pm_data["source_version"] ∈ ("32", "33")
+            if pm_data["source_version"] ∈ ("31", "32", "33")
                 sub_data["ext"]["LOADTYPE"] = ""
             elseif pm_data["source_version"] == "35"
                 sub_data["ext"]["LOADTYPE"] = pop!(load, "LOADTYPE", "")
@@ -718,7 +720,7 @@ function _psse2pm_shunt!(pm_data::Dict, pti_data::Dict, import_all::Bool)
                     sub_data["initial_status"][1:length(sub_data["step_number"])]
 
                 sub_data["ext"]["NREG"] = pop!(switched_shunt, "NREG")
-            elseif pm_data["source_version"] ∈ ("32", "33")
+            elseif pm_data["source_version"] ∈ ("31", "32", "33")
                 sub_data["ext"]["SWREM"] = switched_shunt["SWREM"]
                 sub_data["initial_status"] = ones(Int, length(sub_data["y_increment"]))
             else
@@ -977,7 +979,7 @@ function _psse2pm_transformer!(pm_data::Dict, pti_data::Dict, import_all::Bool)
                     "MAG2" => transformer["MAG2"],
                 )
 
-                if pm_data["source_version"] ∈ ("32", "33")
+                if pm_data["source_version"] ∈ ("31", "32", "33")
                     sub_data["rate_a"] = pop!(transformer, "RATA1")
                     sub_data["rate_b"] = pop!(transformer, "RATB1")
                     sub_data["rate_c"] = pop!(transformer, "RATC1")
@@ -1350,7 +1352,7 @@ function _psse2pm_transformer!(pm_data::Dict, pti_data::Dict, import_all::Bool)
                 sub_data["r_tertiary"] = Zr_t
                 sub_data["x_tertiary"] = Zx_t
 
-                if pm_data["source_version"] ∈ ("32", "33")
+                if pm_data["source_version"] ∈ ("31", "32", "33")
                     sub_data["rating_primary"] =
                         min(
                             transformer["RATA1"],
@@ -1519,7 +1521,7 @@ function _psse2pm_transformer!(pm_data::Dict, pti_data::Dict, import_all::Bool)
                 for prefix in TRANSFORMER3W_PARAMETER_NAMES
                     for i in 1:length(WINDING_NAMES)
                         key = "$prefix$i"
-                        if pm_data["source_version"] ∈ ("32", "33")
+                        if pm_data["source_version"] ∈ ("31", "32", "33")
                             sub_data["ext"][key] = transformer[key]
                         else
                             continue
@@ -1704,7 +1706,7 @@ function _psse2pm_dcline!(pm_data::Dict, pti_data::Dict, import_all::Bool)
             sub_data["inverter_capacitor_reactance"] = dcline["XCAPI"] / ZbaseI
             sub_data["r"] = dcline["RDC"] / ZbaseR
 
-            if pm_data["source_version"] ∈ ("32", "33")
+            if pm_data["source_version"] ∈ ("31", "32", "33")
                 sub_data["ext"] = Dict{String, Any}(
                     "psse_name" => dcline["NAME"],
                 )
@@ -1901,7 +1903,7 @@ function _psse2pm_facts!(pm_data::Dict, pti_data::Dict, import_all::Bool)
             if pm_data["source_version"] == "35"
                 sub_data["ext"]["NREG"] = facts["NREG"]
                 sub_data["ext"]["MNAME"] = facts["MNAME"]
-            elseif pm_data["source_version"] ∈ ("32", "33")
+            elseif pm_data["source_version"] ∈ ("31", "32", "33")
                 sub_data["ext"] = Dict{String, Any}(
                     "J" => facts["J"],
                 )
